@@ -1,0 +1,67 @@
+{
+  "last_updated": "2026-07-18",
+  "note": "Model names below are verified as of last_updated. The landscape shifts monthly, refresh via a research pass when stale. Concrete backend call refs (e.g. a service's model id) are confirmed when a backend is wired, not guessed here. Sora-family video is deliberately absent: in sunset as of last_updated.",
+  "principle": "The model is the constant, the backend a swappable transport. The heavy models are shared third-party weights (e.g. a Google image model, a ByteDance video model) reachable through more than one service, so the same model may be served by more than one backend and the prompt craft keys to the model, not the platform. When a backend is wired, record here which services can serve a given model, and which models and functions the wired plan actually exposes, a listed model is a candidate, not a guarantee.",
+  "services": {
+    "connector_cinematic": { "class": "a", "auth": "oauth_connector", "interactive": true, "niche": "cinematic, character continuity, social" },
+    "connector_postproduction": { "class": "a", "auth": "oauth_connector", "interactive": true, "niche": "upscale/relight/layer-edit, large asset library" },
+    "key_pipeline": { "class": "b", "auth": "api_key", "interactive": false, "niche": "own-the-pipeline, per-call, runs unattended/headless" }
+  },
+  "routing": "interactive design -> a connector service; unattended/scheduled runs -> the key service",
+  "capabilities": {
+    "note": "Operations a media backend can offer beyond plain generation. Loki reads this to route the user's intent to the right tool and to offer what is possible; which of these a wired backend actually exposes is detected at runtime (tools_show / model listing), and is plan-gated.",
+    "operations": [
+      "generate, text-to-image / image-to-image at a chosen resolution",
+      "edit, reference-guided change on an existing image (outfit, object) keeping identity",
+      "upscale, make a good image larger/more detailed (a premium op, not a preview trick)",
+      "variations, a grid of the same subject in different angles/expressions/age from one image",
+      "remove_background, cutout",
+      "relight / style_transfer, change lighting or aesthetic of an existing image",
+      "expand / outpaint, extend the canvas beyond the original frame",
+      "change_camera, re-angle / re-zoom a subject",
+      "image_to_svg / generate_svg, vector output (note: editable vector is the sister expert's domain)",
+      "video_generate, image-to-video / text-to-video (async, per-second cost)",
+      "audio_tts / audio_music, voice and music",
+      "models3d, 3D asset generation",
+      "character_library, build a reusable character from 1-6 images and reference it by id so a person stays consistent across shots (reference-based, no training)",
+      "spaces / flows (Magnific strength), node-canvas workflows Loki can build and run, and saved parameterised recipes it can execute; reach for them where they do a job better than chaining single operations"
+    ],
+    "principle": "Use each backend's unique strengths where they win, Magnific Spaces/Flows, Higgsfield Soul characters, and so on, not only the portable common core. Flattening everything to the lowest common denominator wastes the platform. Portable craft is the baseline; platform specialties are used on the platform that has them."
+  },
+  "tasks": {
+    "text_to_image": {
+      "default": "nano-banana-2",
+      "options": [
+        { "model": "gpt-image-2", "why": "only model with paragraph-length legible text; slowest and dearest" },
+        { "model": "nano-banana-2", "why": "sub-second, cheap, vivid colour/HDR; weak on small text" },
+        { "model": "nano-banana-pro", "why": "layout control + long readable text; text-to-image only, ignores references" },
+        { "model": "seedream-5", "why": "faithful real objects/places, native 4K; pseudo-text in long blocks" },
+        { "model": "recraft-v4", "why": "design-taste raster; use the raster side only, vector is the sister expert" }
+      ]
+    },
+    "image_edit_reference": {
+      "default": "nano-banana-pro-edit",
+      "options": [
+        { "model": "nano-banana-pro-edit", "why": "actually reads reference images for identity/composition (plain nano-banana-pro ignores them)", "ref_confirm": "reference-guided edit endpoint" },
+        { "model": "soul", "why": "superior face/emotion consistency, stable character identity across scenes" }
+      ]
+    },
+    "image_to_video": {
+      "default": "seedance-2",
+      "options": [
+        { "model": "seedance-2", "why": "general default: control + length + cheap, audio reference, precise lip-sync" },
+        { "model": "kling-3", "why": "best motion-per-cost, native 4K, character storytelling" },
+        { "model": "veo-3.1", "why": "cinematic polish, native audio" },
+        { "model": "hailuo-2.3", "why": "human performance, micro-expression, body stability" }
+      ]
+    },
+    "text_to_video": { "default": "seedance-2", "see": "image_to_video options" },
+    "upscale": {
+      "axis": "fidelity vs reinvention",
+      "options": [
+        { "model": "topaz", "why": "faithful restoration for real photos/footage; aspect-preserving single factor" },
+        { "model": "magnific", "why": "hallucinated detail + relight/restyle for AI art / low-res illustration" }
+      ]
+    }
+  }
+}

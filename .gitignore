@@ -1,0 +1,40 @@
+# Your vault content is yours and stays out of version control.
+#
+# This matters when the vault is a clone: without these rules every note you
+# write would show up as an untracked file, one `git add -A` would commit your
+# private material, and a later update could no longer fast-forward cleanly.
+# Zanmai's own files are the only thing this repository tracks.
+
+# what you keep
+/inbox/
+/quick/
+/assets/
+/archive/
+/trash/
+/INDEX.md
+
+# material on its way in or out
+/_import/
+/_export/
+
+# your profile, memory and everything the system writes for itself
+/.zanmai/user.md
+/.zanmai/vault-config.md
+/.zanmai/update-history.md
+/.zanmai/extensions/
+/.zanmai/connections/
+/.zanmai/memory/
+/.zanmai/design/
+/.zanmai/logs/
+/.zanmai/snapshots/
+/.zanmai/work/
+/.zanmai/runtime/
+
+# host and editor state
+/.claude/
+/.zennotes/
+
+# operating system and interpreter leftovers
+.DS_Store
+__pycache__/
+*.pyc

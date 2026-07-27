@@ -1,0 +1,71 @@
+# Frontmatter schema v1
+#
+# Read by kind-required.py hook and by templates.
+# Required fields refuse writes that lack them; optional fields are guidance only.
+
+version: "0.1.0"
+
+common:
+  # every bundle file and entity file carries these
+  required:
+    - kind         # one of: focus, habit, knowledge, contact/person, contact/organization
+    - slug         # kebab-case, ASCII, matches filename without .md
+    - created      # YYYY-MM-DD
+  optional:
+    - updated      # YYYY-MM-DD; defaults to created when absent
+    - source       # enum: organic (user wrote it), collaborative (user + AI together), ai-generated (AI wrote it).
+    - source_detail # free-text refinement when relevant (e.g. "import:<source>-<YYYY-MM>", "session:close-<YYYY-MM-DD>")
+    - tags         # array of strings
+    - mentioned_in # array of source slugs where an auto-stubbed entity surfaced (set by `contact create --mentioned-in <slug>`).
+
+kinds:
+
+  focus:
+    description: active attention bundles. user is working on this.
+    # Only the bundle's truth file (`<bundle-slug>.md`) is required to carry goal/status.
+    # Member files inside the bundle inherit kind: focus from the bundle path but do not
+    # need their own goal/status. They are material, not separate focus instances.
+    required_for_hub_only:
+      - goal       # one-line statement of the outcome
+      - status     # enum: planning, active, wrap-up
+    required: []
+    optional:
+      - goal
+      - status
+      - due        # YYYY-MM-DD when applicable
+
+  habit:
+    description: recurring routines. user does this regularly.
+    # Same hub/member split as focus.
+    required_for_hub_only:
+      - cadence    # enum: daily, weekly, monthly, quarterly, irregular
+    required: []
+    optional:
+      - cadence
+      - last_done  # YYYY-MM-DD
+
+  knowledge:
+    description: persistent reference. default class for unsure material.
+    required: []
+    optional:
+      - topic      # one-line topic descriptor
+
+  contact/person:
+    description: people the user knows.
+    required: []
+    optional:
+      - nickname   # how the user addresses this person (a short form or nickname distinct from the real first name). Empty when first name is the natural address.
+      - role       # job title or relationship
+      - org        # slug of the organization (resolves to inbox/contacts/organizations/<slug>.md)
+      - email
+      - phone
+      - birthday   # YYYY-MM-DD
+      - address    # postal
+      - website    # URL or LinkedIn
+
+  contact/organization:
+    description: organizations the user interacts with.
+    required: []
+    optional:
+      - kind_of    # e.g. employer, vendor, club, school
+      - website
