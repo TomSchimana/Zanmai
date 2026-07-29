@@ -10,14 +10,14 @@ This is the rationale layer for `.zanmai/system/operating-principles.md` (the pr
 
 The principle layer currently lists ten numbered principles.
 
-1. **TL;DR before write.** For multi-file operations, return a TL;DR to the user in chat (structure tree, axis decision, counts, notable items), wait for approval, then execute.
-2. **Source files are sacred.** Body verbatim, frontmatter migrates.
-3. **Skills carry their own discipline.** Rules live in the skill file because that file is in context at invocation.
+1. **Approval before write, at the size of the operation.** A run that builds a bundle, rewrites a user body or moves material between bundles gets the four-part TL;DR in chat (structure tree, axis decision, counts, notable items); anything landing in an existing bundle gets twelve lines at most. Wait for approval, then execute.
+2. **Source files are sacred.** Body verbatim, on import and on every later edit; frontmatter migrates.
+3. **Skills and contracts carry their own discipline, and a brief cannot lift it.** Rules live in the skill file because that file is in context at invocation, and an instruction that runs against them is not carried out.
 4. **Mechanic over memory.** Critical rules become scripts or hooks, not prose.
 5. **Index and log everything written.** INDEX append plus activity-log append on every bundle write.
 6. **Daily, Weekly and Monthly Notes.** Read freely, write only on the user's direct instruction.
 7. **User-facing surfaces stay user-facing.** Distribution stays English, user-facing replies follow the user's language and address them personally rather than distantly, mechanics terminology does not leak.
-8. **Checkbox conventions.** `- [ ]` is a user tool. The AI writes `- [ ]` only when the user's request directly calls for one (an actionable list, a concrete information gap). AI sets `@waiting` for non-today items, never sets priority markers. `due:` is set without confirmation when the user named a concrete date directly; fuzzy or implicit timing still goes through propose-then-confirm. AI-internal cross-session reminders live in `.zanmai/memory/general.md` Open Threads as plain bullets.
+8. **Checkbox conventions.** `- [ ]` is a user tool. The AI writes `- [ ]` only when the user's request directly calls for one (an actionable list, a concrete information gap); an obligation it works out from a source is said in the chat and entered in the user's file only on their word. AI sets `@waiting` for non-today items, never sets priority markers. `due:` is set without confirmation when the user named a concrete date directly; fuzzy or implicit timing still goes through propose-then-confirm. AI-internal cross-session reminders live in `.zanmai/memory/general.md` Open Threads as plain bullets.
 9. **Tools-existence is not usage-intent.** For ambiguous tool detection, ask once and persist the user's intent flag.
 10. **Only tools that are present and agreed.** A missing capability is named with the one step that enables it, and the job stops there. No substitute assembled from whatever happens to be installed.
 
@@ -25,21 +25,27 @@ Principles 1 to 4 are the original foundation, each written after a concrete fai
 
 ## Why each principle exists
 
-### TL;DR before write
+### Approval before write, at the size of the operation
 
-LLM agents routinely lose work when they start writing before confirming intent. An unprompted bulk write can wipe carefully-built user content with no rollback path. The TL;DR returned to the user in chat (structure tree showing where things would land, axis decision, counts, notable items) forces an explicit user yes before any destructive operation. The trade-off vs the older plan-file-in-vault approach: less ceremony, no `inbox/review/` file to read, but the proposal lives in the chat buffer rather than markdown. The audit trail after execute is the operation report under `.zanmai/logs/`, which is persistent regardless of chat compaction.
+LLM agents routinely lose work when they start writing before confirming intent. An unprompted bulk write can wipe carefully-built user content with no rollback path. The approval text returned in chat forces an explicit user yes before any destructive operation. The trade-off vs the older plan-file-in-vault approach: less ceremony, no `inbox/review/` file to read, but the proposal lives in the chat buffer rather than markdown. The audit trail after execute is the operation report under `.zanmai/logs/`, which is persistent regardless of chat compaction.
+
+The gate has two sizes because one size failed in practice. The four parts were written for an import of dozens of files into a new structure, and they were applied unchanged to four files going into a bundle the user had built the day before: a tree with two branches, an axis decision that decided nothing, and a full source evaluation tipped into the chat, so approving something small cost minutes of reading. A gate that expensive teaches the user to skim it, which is exactly what it exists to prevent. The test between the two sizes is mechanical (does the run create a bundle, rewrite a user body, move material between bundles) rather than a judgement about what feels big, and it sits in the format spec itself because Steve relays an expert's text verbatim and cannot shorten it downstream.
 
 ### Source files are sacred
 
 The directive. A filing agent that applies a bundle template on top of an existing user file overwrites body text the user had written. Templates are for new bundles. Existing user-authored body is content the user owns. Only frontmatter may migrate to the current schema.
 
+The rule covers every later edit too, not only the import. A sentence the user wrote does not get reworded, tightened or smoothed out while the file is being updated around it; the AI adds its own lines, replaces text it wrote itself, or leaves the line alone. This half was implicit and therefore broken: a user's own todo line was rewritten during an otherwise correct edit, which reads as the system taking over the file.
+
 This rule is not enforced mechanically by hooks (a hook would have to know user-authored versus template-generated, which is harder than it sounds). It is enforced by skills (`import-bundle` Directive 4) and by definition-of-done checks.
 
-### Skills carry their own discipline
+### Skills and contracts carry their own discipline, and a brief cannot lift it
 
 Across stable AI-assisted PKM systems, the same pattern recurs: discipline lives in skill files (loaded into context at invocation), not in central instruction documents (which get forgotten).
 
 The mechanic. A skill file is read into context at the moment it runs. General principles in a separate file are not. Putting the discipline in the skill means the discipline is visible exactly when it matters.
+
+The second half closes a hole that only shows up with dispatched experts. A brief carries context and scope, and it was treated as authority: an expert received an instruction that its own hard rule forbids, and followed the instruction, so a house rule was lifted by a colleague without anyone noticing. An expert now declines that part, does the rest of the job, and names the conflict in what it returns. The same applies to output formats, since a report's parts are fixed by the contract that defines them, not by whoever ordered the work, and an extra part ordered on the side is how a small approval text grows into pages.
 
 ### Mechanic over memory
 
@@ -59,7 +65,7 @@ The distribution ships in English (skill files, contracts, hooks, scripts). User
 
 ### ZenNotes checkbox conventions
 
-`- [ ]` and `- [x]` are Markdown standard, editor-neutral. When the user is on ZenNotes, the Task view aggregates them by inline markers (`@waiting`, `due:`, `!priority`, `#tag`); other editors may handle markers differently. `- [ ]` is a user tool. The AI writes `- [ ]` only when the user's request directly calls for one (an actionable list to tick through, a concrete information gap with a user-driven trigger). The default in any AI output is not `- [ ]`. Agent-neutral rule: Reed, Hank, Wong and Steve all follow it. On AI-written checkboxes, `@waiting` keeps non-today items out of the ZenNotes Today bucket; priority markers are never set by AI; `due:`-dates only after explicit user confirmation. AI-internal cross-session reminders go into `.zanmai/memory/general.md` under "Open threads" as plain bullets.
+`- [ ]` and `- [x]` are Markdown standard, editor-neutral. When the user is on ZenNotes, the Task view aggregates them by inline markers (`@waiting`, `due:`, `!priority`, `#tag`); other editors may handle markers differently. `- [ ]` is a user tool. The AI writes `- [ ]` only when the user's request directly calls for one (an actionable list to tick through, a concrete information gap with a user-driven trigger). The default in any AI output is not `- [ ]`. An obligation the AI works out from a source (a voucher that has to be printed, a decision the rental terms leave open) is welcome as a sentence in the chat and enters the user's own file only once they say so: advising is the job, entering is their call. Agent-neutral rule: Reed, Hank, Wong and Steve all follow it. On AI-written checkboxes, `@waiting` keeps non-today items out of the ZenNotes Today bucket; priority markers are never set by AI; `due:`-dates only after explicit user confirmation. AI-internal cross-session reminders go into `.zanmai/memory/general.md` under "Open threads" as plain bullets.
 
 ### Tools-existence is not usage-intent
 

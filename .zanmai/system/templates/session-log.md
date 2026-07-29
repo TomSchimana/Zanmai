@@ -21,8 +21,8 @@ session_type: close-session
 
 ## Realignments
 
-<User corrections, verbatim. In quotes. Not paraphrased. If none, write "none this session".>
+<What each correction established: what was off, and the rule now in force. Never the user's wording, no quotes. If none, write "none this session".>
 
-> "<user correction 1>"
+- **<rule now in force>** <what was off, and what was changed because of it.>
 
-> "<user correction 2>"
+- **<rule now in force>** <what was off, and what was changed because of it.>

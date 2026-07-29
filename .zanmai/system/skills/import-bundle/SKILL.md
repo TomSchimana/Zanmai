@@ -1,6 +1,6 @@
 ---
 name: zanmai:import
-description: Import a source folder, zip or file into Zanmai bundles. Triggers when the user asks to file material from `_import/` or an external path, or via `/zanmai:import`. Three mandatory questions (mode, scope, conflict-policy), the rest smart-default. State changes go through `.zanmai/system/scripts/zanmai.py`, the AI plans, the script executes.
+description: Import a source folder, zip or file into Zanmai bundles. Triggers when the user asks to file material from `_import/` or an external path, or via `/zanmai:import`. Asks mode, scope and conflict-policy where the target state leaves them open, the rest smart-default. State changes go through `.zanmai/system/scripts/zanmai.py`, the AI plans, the script executes.
 ---
 
 # import-bundle
@@ -13,7 +13,7 @@ Filing for material from outside the vault. The AI plans and dialogues, `zanmai.
 2. Existing bundle wins. If `inbox/<kind>/<theme-slug>/` already exists and the new material fits the theme, append. Do not create a sibling bundle for the same theme.
 3. State changes via `zanmai.py` only. Never use `Write` or `Edit` directly for filing operations. The script handles created-date, source field, INDEX updates, activity-log appends, master-INDEX refresh and non-schema-field migration to the body.
 4. Body verbatim under both modes. "Body verbatim" means user-written prose is preserved. Convention adaption (slug rename, wikilink updates after move, embed-path updates after move, frontmatter migration) is mechanic, not body edit.
-5. Mandatory questions: exactly three, every time, via `AskUserQuestion` form. Q1 mode (convention or one-to-one). Q2 scope (narrowest sensible default). Q3 conflict-policy. The form is the canonical decision capture and runs every time, also when a prior Steve-user chat dialog discussed the import. Chat dialog is preparation, the form captures the answers, the TL;DR returned in Step 4 records them. If a question feels missing, the answer is a smart-default the TL;DR's notable section names, not a fourth question. If a mandatory question feels unnecessary, the TL;DR still records the default.
+5. Mandatory questions: the ones the target state leaves open, via `AskUserQuestion` form, never a fourth. Q2 scope is asked every time, it is the one thing the vault cannot derive. Q1 mode applies when a bundle is created; material going into a bundle that already exists follows the conventions that bundle already carries. Q3 conflict-policy applies when `index find` reports a slug collision, and is not asked when there is none. A question the state answers is not asked and its default is named in the approval text (Step 4); a question the state leaves open is asked even when a prior Steve-user chat dialog already discussed it, because chat dialog is preparation and the form is the decision capture. Dropping a question because the user "clearly wants" something is silent inference and stays forbidden, the state decides, not the impression.
 6. `_import/` is transit. After filing, the source files in `_import/` are dealt with via the explicit trash question at the end of the workflow (Step 7). The two valid outcomes are trashing them or leaving them in place by default.
 7. Snapshot if more than five files will be touched. Invoke the `snapshot` skill first.
 8. Structured notes can only be created from a template. Five kinds exist; unmappable concepts file as knowledge.
@@ -42,11 +42,11 @@ Filing for material from outside the vault. The AI plans and dialogues, `zanmai.
 - A single-line capture into a daily note (the `notes` skill handles that).
 - Renaming or moving an existing bundle (manual operation).
 
-## The three mandatory questions
+## The mandatory questions
 
 ### Q1: mode
 
-Two options, runtime translates the form labels to the user's writing language.
+Two options, runtime translates the form labels to the user's writing language. Skipped when the material lands in a bundle that already exists, that bundle's conventions are the answer.
 
 > A. Use Zanmai conventions (recommended). Bundle structure created, slugs follow the schema, wikilinks and embed paths updated after the move, frontmatter migrated to the schema. Body stays verbatim. Non-schema source fields move to a body section "Original metadata".
 >
@@ -64,7 +64,7 @@ Once the user has confirmed the scope, Hank does not silently shrink it further 
 
 ### Q3: conflict-policy
 
-If a target file with the same slug already exists in the vault, what should happen? Three options, runtime translates the form labels.
+Asked when `index find` reports that a target slug already exists in the vault, and skipped when it reports none. Three options, runtime translates the form labels.
 
 > A. Keep both, the new file gets a suffix (recommended). The existing file is untouched, the imported one lands beside it with `-imported` appended to the slug. Safe, decision-by-pile-later.
 >
@@ -74,7 +74,7 @@ If a target file with the same slug already exists in the vault, what should hap
 
 Default option: A.
 
-These three answers shape the plan. Everything below is smart-default.
+These answers shape the plan. Everything below is smart-default.
 
 ## Smart defaults
 
@@ -119,13 +119,13 @@ These are decisions the skill makes silently and reports in the plan. The user c
 
 5. Query the patterns for the union of user-stated tokens and folder-path tokens via `zanmai.py index find --tokens "..."`. Output: existing bundles already covering the material, wikilink hubs at the centre of the import, emerging themes with signal strength, co-occurring tokens, weak-signal bridge bundles.
 
-6. Summarise in five to eight chat lines. The full detail lands in Hank's four-part TL;DR before execute, not in this chat summary. The chat summary names scope, file count, top themes and existing-bundle matches if any.
+6. Summarise in five to eight chat lines. The full detail lands in Hank's approval text before execute, not in this chat summary. The chat summary names scope, file count, top themes and existing-bundle matches if any.
 
 No `find _import/` walk, no `grep -r` across the vault, no per-file `Read` of source bodies in Step 1. Body reads happen later in Step 4 for at most a handful of candidates the index already flagged.
 
-### Step 2: ask the three mandatory questions
+### Step 2: ask the questions the state leaves open
 
-In order. One at a time. The recommended option in each question is marked with one half-sentence reason.
+In order, one at a time, only the ones Directive 5 keeps for this run. The recommended option in each question is marked with one half-sentence reason.
 
 ### Step 3: snapshot if risky
 
@@ -141,11 +141,11 @@ This list goes into the plan as a separate section. Decorative or illegible embe
 
 The point of this step is that copying a business-card photo into a contact file as a pasted image is the lazy result. The information on the card belongs in the contact's frontmatter, the photo is the source artefact in the bundle the user came from. Two files with structured fields, connected by wikilink, not one file with a binary blob pasted in.
 
-### Step 4: return the TL;DR to Steve
+### Step 4: return the approval text to Steve
 
-No bundle is created yet. TL;DR-first-then-create is the sequence. If the user says no, there are no leftover folders to clean up. No file is written, the TL;DR lives in the chat.
+Nothing is written yet. Approve-first-then-write is the sequence. If the user says no, there are no leftover folders to clean up. No file is written, the text lives in the chat.
 
-Build the TL;DR per Hank's contract (`hank.md` § "TL;DR structure"). Four parts, in order, with English canonical labels and runtime translation to the user's writing language.
+Build it per Hank's contract (`hank.md` § "TL;DR structure"), at the size the operation calls for. When this run creates a bundle, rewrites a user-written body or moves material between bundles, it is the four parts below, in order, with English canonical labels and runtime translation to the user's writing language. When the material only lands in a bundle that already exists, it is the short form instead: twelve lines at most holding what changes, in which file, and the findings that shift the user's expectation, with the rest of the evaluation left for the operation report in Step 6.
 
 1. **Structure tree.** ASCII tree showing where things would land. Top-level under `inbox/`, indented sub-bundles, one or two representative members per bundle, the rest elided with `… (N more)`. Truth files marked `(Truth)`. Member files can carry a one-phrase parenthetical role hint. Asset bundles show count plus kind: `(5 ticket PDFs)`. Stub folders show count plus sample slugs: `(9 stubs: <slug-1>, <slug-2>, …)`. Each top-level bundle gets `← <one-line context>` after its slug. This is the part the user reads first.
 2. **Axis decision.** One sentence naming the chosen grouping axis and the rejected alternatives in one phrase each. Even a flat-bundle case states the decision ("flat, no non-trivial axis").
@@ -269,8 +269,8 @@ All of the following must hold, or the run is not done.
 | "The source body has a typo, let me fix it." | No. Body verbatim. Typos live in the user's content. |
 | "Three options as equals so the user picks." | If one is recommended, mark it as such with a reason. If they are truly equal, the question is malformed, drop it or use a smart default. |
 | "The user did not ask about contacts so I will not propose any." | Detection plus stub is the skill's job. Persons and organisations in the imported material are surfaced in the plan, with stubs by default per Directive 18. |
-| "I'll add a question about the images, or about moving versus copying, or about which structure." | The mandatory three are mode, scope and conflict. Anything else is smart-default. A fourth question violates Hank's operating discipline. Attachments are handled by the Step 1 embed scan, not by asking. |
-| "I'll skip Q1 mode because the user clearly wants the convention." | Skip is silent inference, not user input. Q1 stays. Mark convention as recommended, the user confirms in one keystroke. |
+| "I'll add a question about the images, or about moving versus copying, or about which structure." | The candidates are mode, scope and conflict, and only where the state leaves them open. Anything else is smart-default. A fourth question violates Hank's operating discipline. Attachments are handled by the Step 1 embed scan, not by asking. |
+| "I'll skip Q1 mode because the user clearly wants the convention." | An impression is not an answer. Q1 drops only when the target bundle already exists and carries the conventions itself (Directive 5). Otherwise it stays, convention marked as recommended, one keystroke to confirm. |
 | "I'll write the plan into a file because that is what we used to do." | The current contract is TL;DR-in-chat: Hank returns the four-part TL;DR (tree, axis, counts, notable) as the subagent's final message. Steve relays. No file in `inbox/review/`, no plan file. The chat is the gate. |
 | "The greeting can use the user's first name from session history." | Greet from `.zanmai/user.md`'s `preferred_address` or `first_name` field, freshly read by the hook. No inference from email, no recall from prior sessions. |
 

@@ -151,7 +151,7 @@ Init writes the owner-contact at `inbox/contacts/people/<slug>.md` with an Engli
 Take the first snapshot silently using the detected `<python_cmd>`:
 
 ```
-<python_cmd> .zanmai/system/scripts/zanmai.py snapshot create . .zanmai/snapshots/ post-init
+<python_cmd> .zanmai/system/scripts/zanmai.py snapshot create --reason post-init
 ```
 
 Then tell the user, in their writing language, that setup is done. The confirmation has three parts: a substantive Zanmai-identity paragraph (not just a place to remember but a system that orders, thinks, creates and does, sorted by the three attention layers), the collaboration model in one sentence, and the instruction to open a fresh session. Tone: written prose, not chat. No em-dashes as stylistic markers. No casual filler.

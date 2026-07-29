@@ -26,13 +26,15 @@ Filenames are cleaned on the way in: random ID suffixes dropped, dates that are 
 
 ## The plan you approve
 
-Before anything is written you get a short overview in the chat: a tree of what lands where, one sentence on which grouping was chosen and which were rejected and why, the counts, and the notable items, meaning anything ambiguous, anything left out, and every renamed file. Nothing is created until you say go.
+Before anything is written you get an overview in the chat, and it is as big as the job. When something new is built, an existing text rewritten, or material moved between themes: a tree of what lands where, one sentence on which grouping was chosen and which were rejected and why, the counts, and the notable items, meaning anything ambiguous, anything left out, and every renamed file. When something simply goes into a theme you already have: a dozen lines at most, what changes, in which file, and whatever turned up that changes what you were expecting. Nothing is created until you say go.
 
-Mechanical detail does not clutter that overview. It goes into an operation report afterwards, kept as a log, so you can check exactly what happened without having to read it up front.
+Mechanical detail does not clutter that overview, and neither does the rest of what was read. It goes into an operation report afterwards, kept as a log, so you can check exactly what happened without having to read it up front.
+
+You are asked the questions the material actually leaves open, not a fixed set. Scope every time. How to file only when a new theme is being created, since an existing one already answers it. What to do about a name clash only when there is one.
 
 ## Your text stays your text
 
-Imported files keep their body exactly as it was. Only the metadata at the top is brought in line with the vault's schema, and anything from the source that does not fit is preserved in the file rather than discarded. Templates apply to newly created themes, never to your existing content.
+Imported files keep their body exactly as it was. Only the metadata at the top is brought in line with the vault's schema, and anything from the source that does not fit is preserved in the file rather than discarded. Templates apply to newly created themes, never to your existing content. It holds afterwards too: a sentence you wrote is not reworded or tidied up later, in an edit any more than in an import.
 
 At the end you are asked once whether the source files in `_import` should be moved to trash or left where they are. Leaving them is the default.
 

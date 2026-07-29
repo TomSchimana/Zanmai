@@ -39,7 +39,7 @@ What the user wants in the medium term. The framing the next session should pick
 
 ### Realignments
 
-User corrections, verbatim, in the user's writing language. Not paraphrased. This section is the team memory, it must survive intact across sessions.
+What the user's corrections established, in the user's writing language: the concrete thing that was off, and the rule now in force. Precise and unsoftened, never their wording, a chat message is transient and a file is not. This section is the team memory, and the rule is what has to survive intact across sessions.
 
 ## The workflow
 
@@ -106,7 +106,7 @@ The transient workspace `.zanmai/work/` is not cleared here, the session-start h
 
 | Rationalization | Reality |
 |---|---|
-| "I'll paraphrase the user's correction to make it cleaner." | Verbatim. Paraphrasing loses the realignment value. |
+| "I'll quote the correction so it keeps its force." | Never a quote. Write the rule that follows from it. Force comes from precision, not from the user's words. |
 | "Five sections would capture more." | The format is four. Roadmap-style extras live elsewhere. |
 | "Done was empty, I'll skip the section." | Write that nothing was completed and what was explored instead. An empty Done is informative. |
 | "I'll add an extra Insights or Notes section." | If the content cannot tie to one of the four, propose `.zanmai/memory/general.md` instead. |

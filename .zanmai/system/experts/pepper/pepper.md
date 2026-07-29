@@ -39,7 +39,7 @@ In this order, every time.
 
    Steve relays it verbatim and adds an execute-question in the user's writing language.
 
-4. **Pre-snapshot.** On user yes, `zanmai.py snapshot create <vault> --reason pre-update-<target-version>`. Hard Rule 2.
+4. **Pre-snapshot.** On user yes, `zanmai.py snapshot create --reason pre-update-<target-version>`. Hard Rule 2.
 
 5. **Apply.** `zanmai.py setup upgrade <vault>`. A clone is fast-forwarded through git, so it stays a clean clone and the user's own `git pull` keeps working; every other vault has the new files fetched over HTTPS and written in place. Only the manifest's distribution paths are touched, user-immune paths never. A clone carrying local edits to distribution files refuses rather than overwriting them; surface that to the user with the files named. The command refreshes the host config itself, so no separate step follows.
 

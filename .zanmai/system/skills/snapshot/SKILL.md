@@ -40,7 +40,7 @@ Avoid generic slugs like `snapshot`, `backup` or `tmp`. They tell future readers
 From the vault root:
 
 ```
-<python_cmd> .zanmai/system/scripts/zanmai.py snapshot create . .zanmai/snapshots/ <reason-slug>
+<python_cmd> .zanmai/system/scripts/zanmai.py snapshot create --reason <reason-slug>
 ```
 
 The script creates `.zanmai/snapshots/YYYY-MM-DD-HHMM-<reason-slug>/` and exits 0 on success. On non-zero exit, stop and report.
@@ -86,7 +86,7 @@ When the user says they lost something, want an older version back, want to roll
 1. **Ask what is being recovered.** A specific file, a folder, a single body section, a deleted entity. Steve needs to know which artefact, at file-level granularity, not just a topic name. One question, no list of options yet.
 2. **Ask which state / which time window.** Different recovery descriptions point at different snapshots. Steve restates the time-window assumption explicitly and waits for the user to confirm before listing candidates.
 3. **List candidate snapshots.** Run `zanmai.py snapshot list` and show only snapshots that bracket the user's described time window. Read the relevant artefact in two or three candidates and show short excerpts so the user can identify the right snapshot. Never assume the most recent matching slug is correct.
-4. **Take a fresh snapshot of the current state.** Before any file is overwritten, `zanmai.py snapshot create . .zanmai/snapshots/ pre-restore-<short-reason>`. Non-negotiable, restoring without a fresh baseline trades one loss for another. State to the user that this just happened, in one line.
+4. **Take a fresh snapshot of the current state.** Before any file is overwritten, `zanmai.py snapshot create --reason pre-restore-<short-reason>`. Non-negotiable, restoring without a fresh baseline trades one loss for another. State to the user that this just happened, in one line.
 5. **Restore surgically, not wholesale.** Copy back only the artefacts the user identified. Never `cp -R` the whole snapshot folder over the vault, that re-introduces every other change since the snapshot was taken. One artefact at a time.
 6. **Confirm at every step.** Before the copy, Steve states exactly which source file goes over which target file, what the user will lose from the current version (it lives in the pre-restore snapshot), and waits for the user's yes. After the copy, Steve names what was restored and the pre-restore snapshot, and asks whether further recovery is needed.
 7. **Stop when the user says stop.** No silent additional restores. Each restored artefact is its own confirmed turn.

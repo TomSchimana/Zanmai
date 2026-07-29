@@ -2,6 +2,21 @@
 
 All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning: semver. The 0.x series is pre-stable.
 
+## [0.3.3] - 2026-07-29
+
+### Fixed
+
+- **Nothing is written into your files that you did not ask for.** Obligations worked out from a booking, a print-the-voucher, a decision still open in the terms, were entered into your own notes as open items. They now belong in the chat as a sentence: advising is the job, putting it in your file is your call. The same holds for a line you wrote yourself, which no longer gets reworded or tidied up while the file is updated around it, in a later edit as much as in an import.
+- **A hand-over cannot switch off a house rule.** Each specialist follows rules that protect your material, and an instruction from the concierge was able to override them without anyone noticing, which is how those unasked items got written in the first place. A specialist now declines that part, finishes the rest of the job, and says what it refused and why. It also means nobody can order an extra section into a report that its own format does not have.
+- **Corrections are kept as the rule they set, not as what you said.** Closing a session recorded your corrections word for word, including how they were phrased in the moment, and that ended up in a file in your vault. What gets written now is the concrete thing that was off and the rule that holds from here, precise and unsoftened, without quoting you. A chat message is fleeting, a file is not.
+- **Taking a snapshot works the way every other command does.** Asking for a backup by hand failed with an argument error, because this one command still expected two paths spelled out while the rest simply act on the vault you are in. It now takes the current vault and a short reason, which is also the form the house-keeper was already documented to use before an update, so the safety copy before applying one no longer depends on getting an undocumented spelling right.
+- **A vault refreshed without a fresh install is complete again.** Empty folders cannot travel in a repository, so a vault that had its files renewed rather than installed came out missing the drop folder for incoming material and two internal ones, and the structure check reported it as broken. The refresh now creates whatever the distribution requires.
+
+### Changed
+
+- **What you approve is as big as the job.** Filing four files into a theme you already have was presented like an import of dozens into a new structure: a tree with two branches, a grouping decision that decided nothing, and everything the sources gave up, so saying yes to something small cost minutes of reading. Building something new still gets the full picture. Anything landing in a theme that exists gets a dozen lines at most, what changes, in which file, and whatever turned up that changes what you expected. The rest of what was read goes into the log, where you can follow it if you want to.
+- **You are only asked what the material actually leaves open.** Three questions ran every time, including the two the situation had already answered. Scope is still asked every time. How to file is asked when a new theme is being created, since an existing one already answers it. What to do about a name clash is asked when there is one. Whatever is settled by default is named in the approval instead.
+
 ## [0.3.2] - 2026-07-27
 
 ### Fixed

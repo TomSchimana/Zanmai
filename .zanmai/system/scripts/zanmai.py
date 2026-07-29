@@ -3677,8 +3677,9 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
     user-facing TL;DR preview gate). After the working tree carries the new
     distribution, this command refreshes the host-side state that does not
     live in git: agent symlinks under `.claude/agents/`, skill symlinks under
-    `.claude/skills/`, and `.claude/settings.json`. Idempotent, safe to run
-    repeatedly on the same merged state."""
+    `.claude/skills/`, `.claude/settings.json`, and the top-level folders the
+    manifest requires (empty ones carry no files, so git cannot deliver them).
+    Idempotent, safe to run repeatedly on the same merged state."""
     vault = Path(args.vault_root).resolve()
     if not vault.exists():
         print(f"fail: vault root does not exist: {vault}", file=sys.stderr)
@@ -3698,6 +3699,11 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
             python_cmd = fm["python_cmd"]
     except OSError:
         pass
+
+    manifest_path = vault / ".zanmai" / "system" / "manifest.yaml"
+    if manifest_path.exists():
+        for rel in _parse_manifest_lists(manifest_path)[1]:
+            (vault / rel).mkdir(parents=True, exist_ok=True)
 
     _install_agent_symlinks(vault, _AGENT_NAMES)
     _install_skill_symlinks(vault, _SKILL_SYMLINK_MAP)
@@ -3908,15 +3914,17 @@ def _read_auto_snapshots_flag(vault_root: Path) -> bool:
 
 
 def cmd_snapshot_create(args: argparse.Namespace) -> int:
-    """Make a timestamped copy of <source> under <target-base>/. The target
-    folder name is YYYY-MM-DD-HHMM-<reason-slug>. Used as builder-snapshot
-    (before dist/ changes) and user-vault-snapshot (before risky operations).
+    """Make a timestamped copy of the vault under `<vault>/.zanmai/snapshots/`.
+    The folder name is YYYY-MM-DD-HHMM-<reason-slug>. The vault argument
+    defaults to the current directory like every other vault subcommand;
+    `--root` moves the target elsewhere.
 
     Respects `auto_snapshots: false` in `.zanmai/user.md`, when set,
     exits 0 with `skip: auto_snapshots disabled` and writes nothing. The
     user has their own backup discipline."""
-    source = Path(args.source).resolve()
-    target_base = Path(args.target_base).resolve()
+    source = Path(args.vault).resolve()
+    target_base = (Path(args.root).resolve() if args.root
+                   else source / ".zanmai" / "snapshots")
     reason_slug = args.reason.strip().replace(" ", "-").lower()
     if not _read_auto_snapshots_flag(source):
         print("skip: auto_snapshots disabled in .zanmai/user.md")
@@ -5841,10 +5849,10 @@ def main(argv: list[str]) -> int:
     p_snap = sub.add_parser("snapshot", help="Vault and dist snapshots.")
     sub_snap = p_snap.add_subparsers(dest="subcmd", required=True)
 
-    ps_create = sub_snap.add_parser("create", help="Timestamped copy of a source directory under a target base. Respects auto_snapshots flag in .zanmai/user.md.")
-    ps_create.add_argument("source")
-    ps_create.add_argument("target_base")
-    ps_create.add_argument("reason")
+    ps_create = sub_snap.add_parser("create", help="Timestamped copy of the vault under `<vault>/.zanmai/snapshots/`. Respects auto_snapshots flag in .zanmai/user.md.")
+    ps_create.add_argument("vault", nargs="?", default=".")
+    ps_create.add_argument("--reason", required=True, help="Short slug naming why the snapshot is taken; becomes the folder suffix.")
+    ps_create.add_argument("--root", default=None, help="Override snapshots root (default: `<vault>/.zanmai/snapshots/`).")
     ps_create.set_defaults(func=cmd_snapshot_create)
 
     ps_enable = sub_snap.add_parser("enable", help="Turn auto_snapshots ON in .zanmai/user.md.")

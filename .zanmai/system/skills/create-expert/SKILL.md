@@ -23,7 +23,7 @@ One sentence: what this expert does that no current expert does. Steve settles i
 Steve dispatches Reed for a role-research pass: how an excellent version of this role operates day to day, its core competencies, the anti-patterns a mediocre version falls into, the real deliverables, the boundaries it holds, and name candidates. This is the step that prevents a generic spec, a contract written from model knowledge alone mirrors every other AI agent. Stan drafts from this research, not from memory.
 
 ### 3. Snapshot
-`python3 .zanmai/system/scripts/zanmai.py snapshot create . .zanmai/snapshots/ add-expert-<name>` before any write.
+`python3 .zanmai/system/scripts/zanmai.py snapshot create --reason add-expert-<name>` before any write.
 
 ### 4. Draft the contract, role-specific
 Match the shape of the shipped experts (identity and why-it-exists, how-you-work steps, a few hard rails, a return format, pointers). The contract is the spec: the research stays as reference, it is not pasted in. Write it in the contract voice (instructions to the model), not as prose about the expert.
