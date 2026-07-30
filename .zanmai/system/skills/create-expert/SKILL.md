@@ -55,6 +55,8 @@ An expert is not real until all of these are in lockstep. Miss one and it crashe
 ### 8. Report
 Stan returns the contract path, the adapter, what the research surfaced, the registration points wired, the validate result, and anything open. For a core expert the draft is shown for approval before it ships.
 
+The report says one more thing, in the user's own terms: the new expert can be reached from the next session on, not from the next sentence. Claude Code reads its roster of agents when a session opens, so a freshly written adapter is on disk and not yet dispatchable, and a changed contract keeps running under its previous wording until then. Trying it in the same session gets an unknown-agent error and reads as a broken build, which is why this is said up front rather than discovered.
+
 ## Common failures this procedure prevents
 
 - **Generic spec**, skipping the research pass; the contract reads like every other AI agent.

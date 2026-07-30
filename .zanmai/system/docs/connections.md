@@ -14,7 +14,7 @@ Keeping Zanmai thin and safe. Owning heavy integrations would mean owning token 
 
 ## How to use
 
-You do not type commands. You say what you want, "what's in my calendar this week", "use my wiki", and Wong drives it: if the host exposes that source, Wong uses it and answers; if not, Wong says so and sets it up only when the task needs it. A discovery scan lets Wong show you what the machine exposes.
+You do not type commands. You say what you want, "what's in my calendar this week", "use my wiki", and Wong drives it: if the host exposes that source, Wong uses it and answers; if not, Wong says so and sets it up only when the task needs it. A discovery scan lets Wong show you what the machine exposes. If you already set that source up for a different folder on your computer, that existing access is reused rather than built a second time. A source set up now becomes usable once you restart the session, and you are told that instead of being told it already works.
 
 Reading is the everyday case: a connection reads the source and answers in chat, nothing is copied into your files by Wong. A read that should become a note goes to Hank. If you chose read and write when it was set up, Zanmai can also write back, and every write is shown to you before it goes out. Continuous sync is out of scope; that would be a separate extension, not the core.
 

@@ -23,6 +23,25 @@ the way content facts are raised, a substance question, not a consent ritual):
 Also settle, in the same dialog: audience, purpose, and what matters to the user
 for this piece. Thin answers are a real problem to name, not to pad around.
 
+**The medium is chosen by what gives the best result for this piece, never by what
+is easiest to drive.** That is not a preference, it is the lesson from a 62-page
+document that went to a browser because a browser is easy to script, and came out
+with 22 pages half empty. So ask what the piece has to be able to do, and let the
+answer pick:
+
+- Anything paged, from a birthday card to a manual, is set with `typst`. Real flow
+  across pages, a block that does not fit deferred instead of leaving a hole,
+  hyphenation, folios, colour to the edge.
+- A piece a person will keep editing by hand, or a real press run with an exact
+  colour profile and crop marks, goes to `affinity`; an editable presentation to
+  `powerpoint`.
+- `html` is for a deliverable that is itself a web page.
+
+If the medium the piece needs is not on the machine, that is a prerequisite to
+report, not a reason to quietly take the second best (operating-principles section
+10). Taking the easier tool and working around what it cannot do is how a
+workaround catalogue grows instead of a document getting better.
+
 ## 1. Shape the piece from the content
 Before any template is opened, the structure of the piece is decided by the
 **shape of the content**, not by a template's boxes. A template that was built for
@@ -54,9 +73,24 @@ structure, derived from the content, ready to carry the kit's values.
 ## 2. Decompose to concrete values, brand, then format
 Design reads two files under `.zanmai/design/<brand>/`: `brand.md`, the durable
 identity (colour, type, voice, imagery, shape tokens, the never-list; `design-brand`
-template), and the per-format kit `<format>.md` (block geometry and page density;
-`design-kit` template). Load what exists and add only what the newly given material
-adds; both accumulate, curated, never rebuilt from zero.
+template), and the per-format kit `<format>.md` (block geometry, page density and
+the form ceiling; `design-kit` template). Load what exists and add only what the
+newly given material adds; both accumulate, curated, never rebuilt from zero.
+
+**Those two paths are the only place a kit lives.** A kit written next to the
+deliverable in `_export/` is not a kit, it is a file that gets carried off with the
+piece, and the next document starts from nothing again. So the kit is written under
+`.zanmai/design/<brand>/` before the piece is built, and the build reads it from
+there.
+
+**The kit is the truth; the build file is one realization of it.** `<format>.md`
+holds values and forms, which belong to no medium. Beside it sits what the chosen
+medium actually reads, `<format>.css` for a browser, `<format>.typ` for Typst. So a
+brand is not married to the tool its first piece happened to use: a second
+realization is a translation of the same truth, and both are checked by the same
+script. No kit for this brand and format yet means building one is the first step of
+the job, not an optional extra; a piece set without one is the failure this step
+exists to prevent.
 
 If a file does not exist, build it: open every given template or CI reference (as
 copies, via the render medium's field notes) and read the brand out as **concrete
@@ -68,6 +102,18 @@ ask for one.
 
 The point is fixed values, not description. "Card = 2 mm radius, #e6e6f0, title
 11 pt" cannot drift mid-build the way "rounded lavender cards" can.
+
+**The form ceiling is part of the kit, and it binds.** Each component (quote, table,
+code surface, opener, figure) carries a fixed number of forms, and the kit names it.
+Sorting content across many forms by an explicit rule feels like craftsmanship and
+reads as arbitrariness: a reader recognises structure by repetition, so five kinds of
+quote in one document means there is no quote form at all. When a case fits none of
+the existing forms, widen a form so every existing instance moves with it, or take
+the closest fit. A new form enters the kit only in place of another, and the count
+stays where the kit put it. Where the kit has a machine-readable CSS form, the
+ceiling is declared in it as one comment line, so `design-check.py` can hold the
+build to it:
+`/* zanmai-kit: quote=q- 2, table=t- 2 */` plus `/* zanmai-sizes: 4 */`.
 
 ## 3. Compose from the kit
 Build the block plan from step 1 using the kit's values from step 2.
@@ -86,7 +132,47 @@ Build the block plan from step 1 using the kit's values from step 2.
   content does not need (a leftover icon, a template's decoration) is removed, not
   left floating. Medium mechanics live in the render medium's field notes (`html`, `affinity`, `powerpoint`).
 
-## 4. Check each render, measurable by you, taste by fresh eyes
+## 4. Prove the look, then spend the effort
+A piece of more than a handful of surfaces is not finished in one go. A designer
+shows a few surfaces, gets a decision, and only then does the rest of the work.
+Which surfaces those are depends on whether they stand alone, and getting that
+wrong makes the whole step incoherent.
+
+**Surfaces that stand alone** (a flyer, a deck, a card series): pick five at most,
+the ones that decide the look rather than the prettiest. The opening surface, a
+plain one carrying ordinary content, and the two or three hardest cases this content
+brings (the widest table, the longest quote, an image that must run full width).
+Build those and stop.
+
+**A continuous document** (a guide, a report, a manual) cannot be proved that way,
+and pretending otherwise wastes the step. Page breaks are global: what sits on page
+27 follows from everything before it, so five hand-picked pages are either not real
+pages, or everything ahead of them had to be built anyway. What is expensive here is
+also not the building and not the rendering, which is seconds for sixty pages. It is
+the polishing loop afterwards. So: build the whole thing once, deliberately
+unpolished, render all of it, run the check, and stop there. The user then sees real
+pages out of the real flow, with their real numbers, and a contact sheet of every
+page so the shape of the whole is visible rather than five excerpts. Their answer
+changes the kit, and re-rendering everything is one command.
+
+The mistake to avoid is not "built too much", it is "polished before anyone looked".
+
+The return is the gate. It carries the proof renders (for a continuous document the
+contact sheet as well), the check output as it came, not as a summary of it, what the
+kit now fixes, the cost figures the build itself can see (surfaces done, wall time,
+what is left), and one question: does this look carry the rest? What a run has spent in
+tokens is not visible from inside it, it is reported to whoever dispatched the run,
+so the estimate for the remaining surfaces is theirs to do, and the number comes back
+with the go, to be written into the kit then. A subagent cannot ask the user mid-run,
+and it does not need to; the open point rides up in the return and the run is
+continued on the answer, with the kit and the decisions still in context (Steve keeps
+the dispatch warm). What comes back as "almost, but" is answered by changing the kit,
+not by hand-tuning the surface it was noticed on.
+
+Whoever ordered the piece owns the go. Setting the remaining surfaces before it
+arrives is the same mistake as skipping the proof.
+
+## 5. Check each render, measurable by you, taste by fresh eyes
 Two different things get checked, and conflating them is what shipped bad work. The
 **measurable** ones you check yourself, on the pixels of every render, this is not
 the self-flattery trap, because each point is a concrete pass/fail on what is
@@ -105,6 +191,24 @@ fresh eyes: the user, on a preview, early rather than at the very end.
 - **Kit honoured**, equal margins, gaps on the unit, the type levels present,
   radius right, accent only where its job allows, the *never*-list respected,
   contrast legible.
+- **Surface filled or deliberately open**, a page that runs out of content halfway
+  is a fault, not a measurement. Say what fills it (an image the material already
+  holds, a surface fewer) rather than reporting a percentage.
+- **Nothing split that reads as one thing**, a box, quote or figure that begins in
+  one column and ends in the next.
+- **Everything the file needs travels inside it**, every face embedded, every image
+  placed rather than linked. A document that only names its font is right on the
+  machine it was built on and wrong in the hands it was made for, and nothing about
+  that is visible from here. A piece that cannot be handed on is not a deliverable.
+
+The ones a script can decide are decided by a script, not by looking:
+`python3 .zanmai/system/scripts/design-check.py <kit> --tokens <palette> --pdf <render>`
+counts the forms per component against the kit's ceiling, finds colour and size
+values that are in neither the brand file nor the kit, verifies that every font is
+embedded, flags container forms with no break-inside guard, and measures how much of
+each rendered page is covered. It takes the kit as CSS or as Typst. Run it on the
+proof and again before delivery, and read its numbers: a check that could not run
+says so instead of passing. Red means not finished, whatever the piece looks like.
 
 Every point is pass or fail against what is on screen; "looks fine" is not a
 verdict. Any fail goes back to step 3 and re-renders. A render with an open fail is
@@ -125,4 +229,10 @@ not taste.
 What this run taught about the brand goes back into the **kit** as updated values
 or a new block, scoped to this brand × format, not as growing rule-prose.
 Stale patterns the user flags as no-longer-valid are removed, not appended around.
-The kit stays curated, not just larger.
+The kit stays curated, not just larger. The measured cost per surface is written
+there too, so the next piece of this kind is quoted from a number instead of a guess.
+
+A value the piece needed and the brand had not decided is a third state, neither
+settled nor open: it is recorded in the kit as set for this format and pending the
+user's decision, and it goes into the return so they can settle it. Left only in the
+piece, the same question gets answered differently every time.

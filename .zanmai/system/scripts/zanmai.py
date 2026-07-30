@@ -3016,6 +3016,18 @@ Each entry, newest on top, datestamped:
 - **Holds when:** the concrete situation this applies to.
 - **Does not hold when:** where it would mislead, the boundary that keeps it from being over-applied.
 - **Why:** the run or user-correction that taught it.
+- **Standing:** `confirmed` once the user has judged the result it came from, `provisional` until then.
+
+A lesson drawn from the agent's own view of its work is `provisional`: the run
+looked good from the inside, and nobody has seen the result yet. Self-assessment
+is the weakest evidence there is, so a provisional lesson is re-checked the next
+time the topic comes up, and confirmed or struck then.
+
+Later feedback that contradicts a lesson does not silently replace it. The entry
+keeps its place and gains a **Disproven:** line with the date and what the
+feedback showed, and it stops applying from that moment. A wrong lesson left
+standing is worse than no lesson, because every run that follows it collects more
+evidence for itself.
 
 """
 
@@ -3108,6 +3120,12 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
                         {"type": "command", "command": f'{python_cmd} "{zb}" hook permission-guard'},
                     ],
                 },
+                {
+                    "matcher": "Agent",
+                    "hooks": [
+                        {"type": "command", "command": f'{python_cmd} "{zb}" hook dispatch-guard'},
+                    ],
+                },
             ],
             "PostToolUse": [
                 {
@@ -3120,6 +3138,22 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
         },
     }
     return json.dumps(config, indent=2) + "\n"
+
+
+def _shipped_hook_commands() -> set[str]:
+    """The `hook <name>` fragments this distribution expects to find wired in
+    `.claude/settings.json`, read out of the renderer itself so the two cannot
+    drift apart. Used by `setup validate` to catch a host config that was written
+    by an older version of this script."""
+    config = json.loads(_render_settings_json(Path("."), python_cmd="python3"))
+    found: set[str] = set()
+    for groups in (config.get("hooks") or {}).values():
+        for group in groups:
+            for hook in group.get("hooks") or []:
+                match = re.search(r"(hook\s+[a-z-]+)\s*$", hook.get("command") or "")
+                if match:
+                    found.add(match.group(1))
+    return found
 
 
 def _mcp_tools_from_experts(vault_root: Path) -> list[str]:
@@ -3436,21 +3470,38 @@ def _upgrade_via_git(vault: Path, branch: str) -> tuple[bool, str]:
 def _refresh_host_config(vault: Path, quiet: bool = False) -> None:
     """Re-run the host-side refresh so adapters and settings match the new files.
 
+    **In a separate process, and that is the whole point.** This runs right after
+    an update replaced the distribution, so the module in memory is still the
+    previous version. Rendering the host config from it writes the old shape and
+    reports success, which is how a release that adds a hook, a matcher or a slash
+    command can arrive with that addition silently missing: the function is in the
+    new script on disk and nothing ever calls it. Worse, the caller then records the
+    new version as the one the host config was built for, so the session-start
+    check sees no drift and never repairs it. The script on disk is already the new
+    one, so it is the one that must do the writing.
+
     Quiet when called from a hook, whose stdout is the session briefing and must
     not carry mechanical progress lines.
     """
-    import contextlib
-    import io
-
+    script = vault / ".zanmai" / "system" / "scripts" / "zanmai.py"
+    if not script.is_file():
+        print(f"warning: cannot refresh host config, no script at {script}", file=sys.stderr)
+        return
     try:
-        if quiet:
-            with contextlib.redirect_stdout(io.StringIO()):
-                cmd_setup_update(argparse.Namespace(vault_root=str(vault)))
-        else:
-            cmd_setup_update(argparse.Namespace(vault_root=str(vault)))
-    except Exception as exc:  # noqa: BLE001
+        result = subprocess.run(
+            [sys.executable, str(script), "setup", "update", str(vault)],
+            capture_output=True, text=True,
+        )
+    except OSError as exc:
         print(f"warning: host config refresh failed ({exc}), run 'setup update' by hand",
               file=sys.stderr)
+        return
+    if result.returncode != 0:
+        print(f"warning: host config refresh failed ({result.stderr.strip()}), "
+              "run 'setup update' by hand", file=sys.stderr)
+        return
+    if not quiet and result.stdout.strip():
+        print(result.stdout.strip())
 
 
 def _record_host_config_version(vault: Path, version: str) -> None:
@@ -3664,6 +3715,24 @@ def cmd_setup_validate(args: argparse.Namespace) -> int:
                 ours = False
             if ours and entry.stem not in roster:
                 fails.append(f"stale agent adapter (not in roster): {entry.relative_to(vault)}")
+    # Every hook this distribution wires must actually be in settings.json. That
+    # file is machine-local and gitignored, so git delivers nothing there and a
+    # missing entry is invisible from outside: the hook function sits in the script
+    # and is never called. Presence is checked, not equality, so hooks the user
+    # added themselves survive.
+    settings_file = vault / ".claude" / "settings.json"
+    if settings_file.is_file():
+        try:
+            wired = settings_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            fails.append(f"cannot read .claude/settings.json ({exc})")
+            wired = ""
+        for expected in sorted(_shipped_hook_commands()):
+            if expected not in wired:
+                fails.append(
+                    f"hook not wired in .claude/settings.json: '{expected}'. "
+                    "Run 'setup update' to rebuild the host config."
+                )
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
@@ -3995,11 +4064,15 @@ def _scan_load_json(path: Path) -> dict:
 
 
 def _discover_mcp_servers(vault: Path) -> list[tuple[str, str]]:
-    """MCP servers reachable for THIS vault, read from Claude Code's config:
+    """MCP servers Claude Code knows on this machine, read from its config:
     global servers (settings.json, ~/.claude.json top-level), this project's
-    servers (~/.claude.json projects[<vault>] and a project-local .mcp.json).
-    Returns sorted (name, scope) pairs. Coupled to Claude Code's private layout
-    by necessity, every read is defensive, a layout change just yields fewer."""
+    servers (~/.claude.json projects[<vault>] and a project-local .mcp.json),
+    plus servers configured for ANOTHER folder (scope "other folder"). The last
+    group is not reachable here, but it is an access the user already has and
+    that already works, so it is reused for this vault instead of establishing a
+    second one beside it. Returns sorted (name, scope) pairs. Coupled to Claude
+    Code's private layout by necessity, every read is defensive, a layout change
+    just yields fewer."""
     home = Path.home()
     found: dict[str, str] = {}
     for name in (_scan_load_json(home / ".claude" / "settings.json").get("mcpServers") or {}):
@@ -4007,11 +4080,17 @@ def _discover_mcp_servers(vault: Path) -> list[tuple[str, str]]:
     cj = _scan_load_json(home / ".claude.json")
     for name in (cj.get("mcpServers") or {}):
         found.setdefault(name, "global")
-    proj = (cj.get("projects") or {}).get(str(vault)) or {}
+    projects = cj.get("projects") or {}
+    for key, entry in projects.items():
+        if key == str(vault) or not isinstance(entry, dict):
+            continue
+        for name in (entry.get("mcpServers") or {}):
+            found.setdefault(name, "other folder")
+    proj = projects.get(str(vault)) or {}
     for name in (proj.get("mcpServers") or {}):
         found[name] = "project"
     for name in (_scan_load_json(vault / ".mcp.json").get("mcpServers") or {}):
-        found.setdefault(name, "project")
+        found[name] = "project"
     return sorted(found.items())
 
 
@@ -4035,13 +4114,21 @@ def cmd_connection_scan(args: argparse.Namespace) -> int:
     print("# Connection scan")
     print(f"# platform: {sys.platform}")
     print()
+    reachable = [(name, scope) for name, scope in mcp if scope != "other folder"]
+    elsewhere = [name for name, scope in mcp if scope == "other folder"]
     print("## MCP servers (reachable from this vault)")
-    if mcp:
-        for name, scope in mcp:
+    if reachable:
+        for name, scope in reachable:
             print(f"  {name:<34} ({scope})")
     else:
         print("  none found")
     print()
+    if elsewhere:
+        print("## Already configured for another folder (not reachable here)")
+        for name in elsewhere:
+            print(f"  {name}")
+        print("  A working access the user already has: reuse it for this vault, do not build a second one.")
+        print()
     print("## Enabled plugins (may provide tools or skills)")
     if plugins:
         for name in plugins:
@@ -4065,7 +4152,8 @@ def cmd_connection_scan(args: argparse.Namespace) -> int:
             print(f"  {desc}")
         print()
     print("These are available host sources. A host-configured source is usable directly; "
-          "recording or establishing one happens only when a concrete task needs it.")
+          "recording or establishing one happens only when a concrete task needs it. A source "
+          "registered now becomes usable in a new session, not the running one.")
     return 0
 
 
@@ -4262,6 +4350,44 @@ def cmd_hook_permission_guard(args: argparse.Namespace) -> int:
             print(f"permission-guard: refusing {payload.get('tool_name')} on '{file_path}'. This path is in the never-do bucket. {advice}", file=sys.stderr)
             return 2
     return 0
+
+
+def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
+    """PreToolUse Agent hook: refuse a main-thread expert dispatch that asks to
+    run synchronously. An expert's job runs for minutes and
+    `run_in_background: false` holds the whole turn, so the user sits in front of
+    a concierge who cannot answer until the expert is done. The prose rule lives
+    in Steve's Routing section; this is the mechanic behind it (operating
+    principles section 4).
+
+    The check is on the parameter, not on who is being addressed. Scoping it to
+    the vault's own experts left the identical outage one agent name away: a
+    generic helper agent blocks the loop exactly as long as a named expert does.
+
+    A nested dispatch is exempt. The payload carries `agent_id` only when the
+    hook fires inside a subagent, and an expert that pulls in another expert does
+    need that result inside its own turn: a background child only reports back
+    while the parent's turn is still open."""
+    payload = _hook_read_payload()
+    if not payload:
+        return 0
+    if payload.get("tool_name") != "Agent":
+        return 0
+    if payload.get("agent_id"):
+        return 0
+    tool_input = payload.get("tool_input") or {}
+    if tool_input.get("run_in_background") is not False:
+        return 0
+    subagent = str(tool_input.get("subagent_type") or "agent")
+    print(
+        f"dispatch-guard: refusing this {subagent} dispatch because it sets "
+        "run_in_background: false, which holds this turn until the job returns, so "
+        "nothing the user writes meanwhile reaches you. Call the Agent tool again "
+        "with run_in_background: true, say in one line what is running, and relay "
+        "the return when the notification lands.",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def _hook_extract_text_from_content(content) -> str:
@@ -5525,7 +5651,17 @@ def _detect_tool(vault: Path, tid: str, spec: dict, osname: str) -> dict:
         return {"present": all(os.environ.get(e) for e in envs), "note": "env " + ",".join(envs)}
     if method in ("which", "runtime"):
         osspec = (spec.get("os") or {}).get(osname) or {}
-        return _detect_binary(osspec.get("invoke") or tid, det.get("version_flag"))
+        name = osspec.get("invoke") or tid
+        # A binary this vault fetched itself lives in the runtime tree and is not
+        # on PATH, so PATH alone would report it missing right after it was
+        # installed, and every job would fetch it again. The vault's own copy is
+        # looked at first, then the host's.
+        own = vault / ((spec.get("provision") or {}).get("into") or ".zanmai/runtime/bin") / name
+        if own.is_file():
+            found = _detect_binary(str(own), det.get("version_flag"))
+            if found.get("present"):
+                return found
+        return _detect_binary(name, det.get("version_flag"))
     if spec.get("kind") == "mcp":
         return {"present": None, "note": "host-configured (check the host)"}
     return {"present": None, "note": "no detector"}
@@ -5578,6 +5714,96 @@ def _ensure_runtime_venv(vault: Path) -> tuple[Path | None, str]:
     return _runtime_venv_python(vault), "created"
 
 
+def _fetch_pinned_binary(vault: Path, tool_id: str, spec: dict, os_spec: dict, prov: dict) -> dict:
+    """Fetch one self-contained binary at the pinned version, unpack it into the
+    machine-local runtime tree, and prove it works before calling it installed.
+
+    Three things make this dependable rather than hopeful. The version is pinned,
+    so a render is reproducible and an upstream release cannot move the typesetting
+    under a document. The binary is executed and its version matched, because an
+    archive that unpacked badly still leaves a file of the right name in the right
+    place. And where the spec names a canary, that canary is compiled, since the
+    question is never "does the file exist" but "does the thing it is needed for
+    actually come out".
+    """
+    import platform
+    import subprocess
+    import tarfile
+    import urllib.request
+    import zipfile
+
+    version = spec["version_pin"]
+    arch = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}.get(
+        platform.machine().lower(), platform.machine().lower()
+    )
+    asset = os_spec["asset"].format(arch=arch, version=version)
+    url = prov["release"].format(version=version, asset=asset)
+    target_dir = vault / prov.get("into", ".zanmai/runtime/bin")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    binary_name = os_spec.get("invoke", tool_id)
+
+    tmp = target_dir / f".{tool_id}-download"
+    try:
+        with urllib.request.urlopen(url, timeout=120) as response, tmp.open("wb") as out:
+            shutil.copyfileobj(response, out)
+    except Exception as exc:  # noqa: BLE001
+        tmp.unlink(missing_ok=True)
+        return {"state": "WARNING", "detail": f"download failed: {type(exc).__name__}: {exc}",
+                "url": url, "hint": (os_spec.get("install_hint") or {}).get("text")}
+
+    unpacked = target_dir / f".{tool_id}-unpacked"
+    shutil.rmtree(unpacked, ignore_errors=True)
+    try:
+        if asset.endswith(".zip"):
+            with zipfile.ZipFile(tmp) as archive:
+                archive.extractall(unpacked)
+        else:
+            with tarfile.open(tmp) as archive:
+                archive.extractall(unpacked)
+    except Exception as exc:  # noqa: BLE001
+        return {"state": "WARNING", "detail": f"unpack failed: {type(exc).__name__}: {exc}"}
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    found = next((p for p in unpacked.rglob(binary_name) if p.is_file()), None)
+    if not found:
+        shutil.rmtree(unpacked, ignore_errors=True)
+        return {"state": "WARNING", "detail": f"no '{binary_name}' inside {asset}"}
+    installed = target_dir / binary_name
+    shutil.move(str(found), str(installed))
+    installed.chmod(0o755)
+    shutil.rmtree(unpacked, ignore_errors=True)
+
+    try:
+        probe = subprocess.run([str(installed), "--version"], capture_output=True, text=True, timeout=60)
+    except Exception as exc:  # noqa: BLE001
+        return {"state": "WARNING", "detail": f"cannot run the fetched binary: {type(exc).__name__}: {exc}"}
+    reported = (probe.stdout or probe.stderr).strip()
+    if version not in reported:
+        return {"state": "WARNING", "path": str(installed),
+                "detail": f"fetched binary reports '{reported}', pinned version is {version}"}
+
+    canary = prov.get("canary")
+    if canary:
+        source = vault / canary
+        if not source.is_file():
+            return {"state": "WARNING", "path": str(installed),
+                    "detail": f"canary missing at {canary}, so the install is unproven"}
+        out_pdf = vault / ".zanmai" / "runtime" / f"{tool_id}-canary.pdf"
+        try:
+            run = subprocess.run([str(installed), "compile", str(source), str(out_pdf)],
+                                 capture_output=True, text=True, timeout=180)
+        except Exception as exc:  # noqa: BLE001
+            return {"state": "WARNING", "path": str(installed),
+                    "detail": f"canary run failed: {type(exc).__name__}: {exc}"}
+        if run.returncode != 0 or not out_pdf.is_file() or out_pdf.stat().st_size < 1024:
+            return {"state": "WARNING", "path": str(installed),
+                    "detail": f"canary did not produce a document: {(run.stderr or run.stdout).strip()[:200]}"}
+
+    return {"state": "installed", "version": reported, "path": str(installed),
+            "canary": "compiled" if canary else "none"}
+
+
 def cmd_tools_ensure(args: argparse.Namespace) -> int:
     import subprocess
     vault = Path(args.vault).resolve()
@@ -5619,11 +5845,16 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
                           "pip": pkg, "runtime": str(py), "venv": note}, ensure_ascii=False, indent=2))
         return 0 if ok else 1
     if method == "binary-fetch":
-        hint = ((spec.get("os") or {}).get(osname) or {}).get("install_hint") or {}
-        print(json.dumps({"id": args.id, "state": "not-yet-automated", "tier": tier,
-                          "detail": "standalone-binary auto-fetch is a later build step; install manually for now",
-                          "hint": hint.get("text"), "note": prov.get("note")}, ensure_ascii=False, indent=2))
-        return 0
+        os_spec = ((spec.get("os") or {}).get(osname) or {})
+        hint = os_spec.get("install_hint") or {}
+        if not (prov.get("release") and os_spec.get("asset") and spec.get("version_pin")):
+            print(json.dumps({"id": args.id, "state": "needs-user", "tier": tier,
+                              "detail": "no pinned release for this platform, so nothing is fetched on a guess",
+                              "hint": hint.get("text"), "note": prov.get("note")}, ensure_ascii=False, indent=2))
+            return 0
+        result = _fetch_pinned_binary(vault, args.id, spec, os_spec, prov)
+        print(json.dumps({"id": args.id, **result}, ensure_ascii=False, indent=2))
+        return 0 if result.get("state") == "installed" else 1
     if method == "wong":
         print(json.dumps({"id": args.id, "state": "wong", "detail": "provisioned by Wong",
                           "recipe": prov.get("recipe"), "storage": prov.get("storage")}, ensure_ascii=False, indent=2))
@@ -5728,6 +5959,10 @@ def cmd_tools_preflight(args: argparse.Namespace) -> int:
             notes.append({"id": tid, "why": why, "note": "accelerator, not required"})
         elif tier == "on-demand" and method == "venv-pip":
             auto_provision.append({"id": tid, "why": why})
+        elif tier == "on-demand" and method == "binary-fetch" and (spec.get("provision") or {}).get("release"):
+            # A single pinned binary is Zanmai's to fetch: it needs no package
+            # manager, no admin rights, and it is proven by its canary before use.
+            auto_provision.append({"id": tid, "why": why, "version": spec.get("version_pin")})
         else:
             item = {"id": tid, "tier": tier, "why": why, "how": hint.get("text"), "guide": hint.get("guide")}
             if spec.get("kind") == "mcp" and not item["how"]:
@@ -6110,6 +6345,9 @@ def main(argv: list[str]) -> int:
 
     ph_idx = sub_hook.add_parser("index-consistency", help="PostToolUse Write|Edit. Warns when a bundle file is written without being referenced in the bundle INDEX.md.")
     ph_idx.set_defaults(func=cmd_hook_index_consistency)
+
+    ph_dispatch = sub_hook.add_parser("dispatch-guard", help="PreToolUse Agent. Refuses a main-thread expert dispatch that sets run_in_background: false; nested dispatches from inside an expert pass.")
+    ph_dispatch.set_defaults(func=cmd_hook_dispatch_guard)
 
     ph_voice = sub_hook.add_parser("voice-check", help="Stop hook. Blocks a user-facing reply that contains an em-dash so it gets rewritten (runtime companion to style-check.py).")
     ph_voice.set_defaults(func=cmd_hook_voice_check)

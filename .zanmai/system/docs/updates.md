@@ -23,6 +23,10 @@ You can run `git pull` yourself. Nothing breaks: the files that carry your conte
 
 The one thing a manual pull cannot do is refresh the host-side configuration, the specialist adapters and the settings that Claude Code reads. Zanmai notices at the next session start that the version changed and does that itself, silently. So updating by hand, letting Zanmai do it, or mixing the two all end in the same place.
 
+## When the new version actually takes effect
+
+The files are in place as soon as the update is applied, and most of it works immediately. The specialists are the exception: Claude Code reads their instructions when a session opens, so anything an update changed about how a specialist works applies from your next session, not from your next sentence. That is worth knowing when an update says it fixed something and the very next run still behaves the old way. Close the session and open a new one.
+
 ## When Zanmai asks
 
 Once a day at most, at session start, Zanmai quietly checks whether a newer version exists. If so it offers the update once, in a single line, and drops the subject for that session if you decline. The check has a short timeout and never delays your session.

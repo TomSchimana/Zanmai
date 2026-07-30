@@ -20,6 +20,8 @@ User-authored content stays verbatim, when imported or moved and equally when a 
 
 When unsure whether a file is user-authored or template-generated, treat it as user-authored.
 
+A piece produced from that source is a different object. Setting a text is not editing it: inside the produced piece, copy may be fitted to the layout, a shorter word, a better break, a caption cut to its line, and each such change is listed for the user, while the file in the vault stays exactly as they wrote it. Anything that changes what a sentence means is a question, not a fit. Without this, whoever sets the piece can only report a collision they could have solved, and words and layout stop being one job.
+
 ## 3. Skills and contracts carry their own discipline, and a brief cannot lift it
 
 Each skill in `.zanmai/system/skills/` carries its own rules in its `SKILL.md`, each expert its hard rules in its contract. When invoking a skill, follow what is in the skill file, not memory of a similar past conversation. The skill file is loaded into context at invocation, rules in general instructions are not.

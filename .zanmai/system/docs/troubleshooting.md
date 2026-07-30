@@ -36,7 +36,7 @@ Small helper libraries can be fetched on your go, into Zanmai's own corner of th
 
 ## A document cannot be rendered
 
-The screen and print output needs a Chromium-based browser, any of Chrome, Edge, Brave or Chromium itself. On a machine with only Safari you are told to install one. Windows normally has Edge already.
+A set document needs a typesetting engine, which Zanmai fetches itself at first use, one self-contained file into its own working folder, and checks on a test document before it is used on yours. Nothing to install by hand. A web-page deliverable needs a Chromium-based browser, any of Chrome, Edge, Brave or Chromium itself; on a machine with only Safari you are told to install one, and Windows normally has Edge already.
 
 An exact colour profile, bleed and crop marks for a commercial press run are not produced this way, and are named as a boundary rather than approximated.
 

@@ -76,6 +76,16 @@ If a realignment is a permanent rule, not a one-off correction, append a bullet 
 
 Do not promote everything, this is the high-signal layer.
 
+### Step 3a: hold the feedback against the lessons already there
+
+Appending is the easy half. Where an expert did work this session and the user said something about the result, read that expert's `.zanmai/memory/agents/<name>/lessons.md` and check the standing entries against what the user actually said, before writing anything new.
+
+- Feedback that contradicts an entry adds a **Disproven:** line to it, with the date and what the feedback showed. The entry stays where it is and stops applying. Never delete it silently and never write a second lesson beside it: two entries pointing opposite ways leave the next run free to pick the flattering one.
+- An entry marked `provisional` that this session's feedback bears out becomes `confirmed`. One the user has now contradicted is struck as above.
+- A new lesson from work the user has not seen or judged is written `provisional`, whatever the run looked like from the inside.
+
+The cost of skipping this is not a missing note, it is a wrong instruction that gets more authoritative every session. An agent's own account of its work is the weakest evidence in the vault; the user's reaction to the result is the strongest, and this is the one step where the two meet.
+
 ### Step 4: confirm
 
 One sentence in the user's writing language confirming the close and naming the one-line Next item for the next session. No internal file paths in the reply, the log lives under `.zanmai/logs/`, the user does not navigate there. The Next item is the substance the user actually wants to hear: what the next session will pick up.

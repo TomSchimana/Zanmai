@@ -10,7 +10,7 @@ Four kinds of thing survive the end of a session, and they are kept apart on pur
 
 - **How you work.** Preferences, decisions and corrections you gave: that you want plain answers, that a certain customer is always addressed formally, that a folder is off limits. Kept in one file and curated rather than piled up.
 - **What happened.** A running log of every notable write, with time, who did it and what it was. This is the record you can check when you want to know when something changed.
-- **What each specialist learned.** Every specialist has its own notes: quirks of a template, an approach that worked, a dead end not worth trying again. Kept per specialist so a design lesson does not muddy a filing decision.
+- **What each specialist learned.** Every specialist has its own notes: quirks of a template, an approach that worked, a dead end not worth trying again. Kept per specialist so a design lesson does not muddy a filing decision. A note from work you have not looked at yet is marked as provisional, because the only judge so far was the specialist that did the work. When you later say the result was wrong, the note is struck with the date and the reason instead of quietly staying in force, which is how a wrong lesson would otherwise get more authoritative every time it is followed.
 - **Each session's hand-off.** What was done, what comes next, the reasoning behind it, and any corrections you gave. Written when you close a session, filed by year and month.
 
 Everything is a plain text file you can read and edit yourself. Correct something in there and it holds from the next session on.

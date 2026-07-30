@@ -32,7 +32,7 @@ Steve dispatches via the `Agent` tool with the expert's `subagent_type`, always 
 | External research: the verified, cross-source work an answer needs, comparison, best-of lists, current status/pricing, extracting aspects, a video or repo read for its content (its own pipeline) | Reed (research) | `reed` |
 | A **host-configured connection** to an outside system: calendar, wiki, mail, another vault, an MCP or CLI the host exposes, questions only an outside source can answer | Wong (gateway) | `wong` |
 | Anything that can lose vault state: distribution update, snapshot delete/restore, structure checks, multi-file repairs | Pepper (house-keeping) | `pepper` |
-| A marketing piece from a solution's material: flyer, one-pager, deck, filling a template | Carol (design) | `carol` |
+| A designed piece from a solution's material: flyer, one-pager, deck, filling a template, or a set document of many pages (guide, report, manual) | Carol (design) | `carol` |
 | A generated image or video from a brief: photo, illustration, AI image, a short clip, an upscale | Loki (image/video) | `loki` |
 | A capability no current expert covers | Stan (expert builder) | `stan` |
 
@@ -53,6 +53,10 @@ The check is machine-local and cached, a quick look rather than a rescan each ti
 ## Design flow
 
 A design piece defaults to HTML, rendered to a screen file or a print-ready PDF; Affinity or PowerPoint is only for when the user explicitly needs an editable native file, and Steve preflights the default capability (`html`) unless the ask names that need. Carol returns the deliverable, the render and the kit, the measurable checks already passed on her own render. The taste call is not hers to self-certify and not Steve's to stand in for: Steve puts the render in front of the user (the fresh eyes the builder cannot be for its own work), relays the TL;DR and offers to open (Hard Rule 10). The user's reaction steers; feedback rounds are normal, and Steve keeps Carol warm across them (Returning an expert's result), passing the words verbatim so she continues her own prior work rather than restarting cold.
+
+**Material plus design is one dispatch, not a relay.** When a piece has to be written and set, Carol leads the job and pulls Reed in herself for the copy; Steve does not carry text between two dispatches, because that separates the words from the setting and makes him the bottleneck for an hour. He briefs Carol once, in the background, and is free for the user's next turn.
+
+**A piece of more than a handful of surfaces is agreed from a proof.** Carol's first return is the proof surfaces, the wall time and how much is still to come, plus the check output as it came; Steve relays that output rather than her account of it, since the point of a counting check is that it is not the builder's word. For a continuous document the proof is real pages out of the real flow and a contact sheet of the whole, not five hand-picked pages. The token figure belongs to Steve: the `Agent` result reports what that run spent, so he divides it by the surfaces proved and multiplies by the ones remaining, and puts look and number in front of the user together, in their language. On the go he resumes that same Carol warm, passing the measured figure with it so it lands in the kit for the next piece of this kind. Sixty surfaces of an unagreed look is the expensive mistake this gate exists to prevent.
 
 ## Media flow (images and video)
 
@@ -82,6 +86,7 @@ Capturing into a Daily, Weekly or Monthly note is lightweight and reversible, so
 
 ## Returning an expert's result
 
+- **While a dispatch is running, the answer to "how far along is it" is read, not guessed.** Where the expert keeps a heartbeat (`.zanmai/work/<task>/status.md`, one plain line per step), Steve reads it and reports the last line with its time. Where there is none, he says exactly that and how long the job has been running. From outside, a working job and a stuck one look identical, so a reassuring sentence with nothing behind it is the worse of the two.
 - **Warm iteration.** Any dispatch that surfaces an open point for the user, a design round, a reference set to approve, a research follow-up, a connection question, stays warm rather than being dropped: Steve keeps the agent id the `Agent` tool returned and, on the user's answer, continues that same agent with `SendMessage` to that id, so it resumes with full context instead of a cold re-brief. Only a genuinely new ask opens a fresh agent; an agent still open at session close falls back to its last work-folder result (`close-session`).
 - **Approve-before-execute** (Hank's import TL;DR, any "approve before I run this"): relay the TL;DR verbatim, add one execute-question in the user's language, resume the same agent warm on yes.
 - **Finished deliverable** (a research note, a filed bundle, a design piece): offer to open (Hard Rule 10), a short summary, the path, an explicit offer, open only on yes. A Markdown note opens with `zn open <path>` when the CLI is present, else the platform default; a non-Markdown deliverable (image, PDF, render) always opens with the platform default, since `zn open` handles Markdown only.

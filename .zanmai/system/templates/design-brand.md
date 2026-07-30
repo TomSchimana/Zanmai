@@ -3,6 +3,8 @@
 The durable identity of one brand, read out of its own material and kept as the single home for everything that does not change from piece to piece: how it speaks, who it speaks to, its colour and type, how it looks in images. Format-specific build values (block geometry, page density) live in the per-format kit beside this file; this file is what every format shares. Values, not adjectives. Curated overriding, a corrected value replaces the old one, it does not accrete beside it. Empty beats guessed: an unfilled field reads as "not yet pinned", never as a default to invent.
 
 Store: `.zanmai/design/<brand>/brand.md` · format kits: `.zanmai/design/<brand>/<format>.md`
+The kit path is fixed, so this file never points somewhere else for one. A kit that
+sits next to a delivered piece leaves with it, and the next document starts from zero.
 Read from: <the templates or CI document this was taken from>
 Last refined: <date>, <one line: what changed and why>
 

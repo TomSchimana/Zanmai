@@ -6,16 +6,17 @@
 
 ## What
 
-Zanmai wires four Claude Code hooks via `.claude/settings.json`. Each hook is a subcommand of the single CLI: `zanmai.py hook <name>`. They are deterministic gates that run on tool calls or on conversation events.
+Zanmai wires five Claude Code hooks via `.claude/settings.json`. Each hook is a subcommand of the single CLI: `zanmai.py hook <name>`. They are deterministic gates that run on tool calls or on conversation events.
 
 - `zanmai.py hook kind-required` (PreToolUse Write|Edit): refuses bundle writes that lack valid `kind:` and `slug:` frontmatter.
 - `zanmai.py hook permission-guard` (PreToolUse Write|Edit): refuses writes to never-do paths (`.zanmai/system/`, `.zanmai/user.md`, `archive/`, `trash/`, `.zanmai/snapshots/`).
+- `zanmai.py hook dispatch-guard` (PreToolUse Agent): refuses handing a job to a specialist in the mode that holds the whole conversation until the job is finished. A specialist's work runs for many minutes, and in that mode nothing you write gets an answer for the duration. A specialist that pulls in a second one is exempt, because it does need that answer inside its own step.
 - `zanmai.py hook index-consistency` (PostToolUse Write|Edit): emits a stderr warning when a new bundle file is not referenced by the bundle's `INDEX.md`.
 - `zanmai.py hook session-start` (SessionStart): prepares the briefing context for Steve's first reply (preferred address, language, last-session-end marker, recent Daily, Weekly and Monthly notes within a fixed window, theme signals, inline briefing) so the greet needs zero further tool calls. It also keeps the search index current: it compares the vault against the index by path and modification time and rebuilds if anything changed, including edits the user made directly in ZenNotes, so a fresh session always searches on an up-to-date index. On an uninitialised vault (system tree present, no `user.md`) it instead injects a hard directive to read the setup skill and run it before any greeting, so a fresh session drives setup rather than sliding into a generic reply. Two more things happen here: if the distribution files carry a version the host config was not built for, for example because the user pulled the repository by hand, the adapters and settings are quietly brought in line; and at most once a day the update source is asked whether a newer version exists, with a short timeout and the answer cached, so the offer can be made without ever delaying a session.
 
 ## Why
 
-Operating principles are advisory, hooks are deterministic. These guard failure modes that are either destructive, corrupting, or a repeat offender against a standing rule: invalid frontmatter, writes into the distribution area, bundle drift (files written without INDEX update), and a cold greet without loaded context. Each is cheap and deterministic, a rule that does not need to be remembered.
+Operating principles are advisory, hooks are deterministic. These guard failure modes that are either destructive, corrupting, or a repeat offender against a standing rule: invalid frontmatter, writes into the distribution area, bundle drift (files written without INDEX update), a job that silently locks the conversation for an hour, and a cold greet without loaded context. Each is cheap and deterministic, a rule that does not need to be remembered.
 
 There is deliberately no gate on external (MCP) tool calls. The host only exposes a server as a tool once the user has configured it there, that host configuration is the opt-in, so a second consent gate would be redundant.
 

@@ -15,7 +15,7 @@ A connection is this vault reaching one source outside it, an MCP server or a lo
 
 1. **Vault first.** If the answer is inside, point there and stop.
 2. If the host exposes the source, **use it** and answer in the user's language, no activation ceremony, the host configuration is the opt-in. A subagent reaches host MCP tools through the granted interface.
-3. If the host does not expose it, say so plainly and set it up only when the task needs it, see credentials below. Wong cannot conjure a source the machine does not provide. An MCP is always registered project-locally for the current working directory, never globally and never inside the vault (wong.md hard rule 5), so it loads only for the session that needs it.
+3. If the host does not expose it here, say so plainly and set it up only when the task needs it, see credentials below. A source the scan reports as configured for another folder is an access the user already has and that works: reuse that configuration for this vault instead of establishing a second one. Wong cannot conjure a source the machine does not provide. An MCP is always registered project-locally for the current working directory, never globally and never inside the vault (wong.md hard rule 5), so it loads only for the session that needs it, and it takes effect in a new session, so the restart is named and nothing is reported as connected before it.
 
 A read that should become a vault file goes back to Steve, who dispatches Hank; Wong writes no vault files. Setting one up includes one menu, read only or read and write; Wong configures what the user chose, never a level it picked for them, and puts every outgoing write to them first (wong.md hard rule 4).
 

@@ -10,6 +10,8 @@ Zanmai is not one assistant that does everything a bit. It is a set of specialis
 
 He also owns every question and every approval. A specialist working in the background never interrupts you mid-run; anything only you can settle comes back up to Steve, who asks. That is deliberate: it keeps the conversation in one place instead of scattering prompts across parallel work.
 
+What he does not do is carry work between two specialists. Where a job needs two trades at once, writing a document and setting it, one of them leads and brings the other in directly, so the words and the layout are settled together rather than handed over a wall. Steve stays free for you while that runs.
+
 ## The specialists
 
 | Who | What they own |
