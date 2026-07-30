@@ -81,7 +81,7 @@ Zanmai registers seven user-facing slash commands at install time.
 - `/zanmai:research`: explicit Reed-trigger for sourced research with citations.
 - `/zanmai:journal`: explicit capture trigger; writes the text after the command verbatim into today's Daily Note (or this week's Weekly or this month's Monthly when named). Steve runs the `journal` skill inline. Conditional on the ZenNotes periodic-notes feature being enabled.
 - `/zanmai:update`: explicit Pepper-trigger; checks the distribution origin, previews the change list, snapshots, applies on user yes, verifies, rolls back on failure.
-- `/zanmai:connection`: use of host sources outside the vault via Wong (gateway and security in one role). Wong drives it as a conversation, uses what the host already exposes, and sets up and secures a connection only where a task needs it, with secrets never in the vault. It is not a gate: a host-exposed MCP or CLI is already usable because the user configured it at the host. Access stays read-only where the source allows.
+- `/zanmai:connection`: use of host sources outside the vault via Wong (gateway and security in one role). Wong drives it as a conversation, uses what the host already exposes, and sets up and secures a connection only where a task needs it, with secrets never in the vault. It is not a gate: a host-exposed MCP or CLI is already usable because the user configured it at the host. Where Wong sets one up, the user picks the access level, read only or read and write.
 
 Setup, `classify-note` and `notes` exist as internal skills that Steve and the other experts invoke by reading the corresponding `SKILL.md` and following its workflow. They have no user-facing slash command.
 

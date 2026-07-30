@@ -4,6 +4,10 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 
 ## [0.3.4] - 2026-07-30
 
+### Changed
+
+- **You decide what a new connection may do, not Zanmai.** Setting up access to an outside source silently limited it to reading, so asking for a connection you wanted to write with gave you one that could not, and nobody said so. Setting one up now asks in one menu whether it is for reading only or for reading and writing, and configures exactly that. Writing back to a source is still shown to you before it goes out, and nothing is mirrored continuously.
+
 ### Fixed
 
 - **The ZenNotes command line acts on the vault you are in, not on another one.** Its helper keeps one vault of its own as the default and ignores which folder a command runs from, so archiving or trashing a file could quietly reach into a different vault. Every call now names this vault outright, and the helper is only used once ZenNotes has actually opened this vault, which is what makes it able to act on it. Until then, and whenever the helper is missing, the same operations run as ordinary file moves, which works but does not keep the restore path.
