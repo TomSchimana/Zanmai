@@ -1996,15 +1996,22 @@ def _zen_cli_path() -> str | None:
     return None
 
 
-def _has_zen_cli() -> bool:
-    return _zen_cli_path() is not None
+def _zen_cli_usable(vault: Path) -> bool:
+    """Whether `zn` can act on *this* vault. The binary alone is not enough:
+    zn ignores the working directory and falls back to its own default vault,
+    so a call from an unregistered vault silently hits a different one. The
+    vault is registered once ZenNotes has opened it, which is exactly when
+    `.zennotes/vault.json` exists."""
+    if _zen_cli_path() is None:
+        return False
+    return (vault / ".zennotes" / "vault.json").is_file()
 
 
 def cmd_trash_file(args: argparse.Namespace) -> int:
     """Move a file into vault-relative `trash/<original-path>`.
 
-    Uses `zn trash` when the CLI is available (preserves restore-path natively).
-    Falls back to Unix `mv` with the same target layout.
+    Uses `zn trash` when zn can act on this vault (preserves restore-path
+    natively). Falls back to Unix `mv` with the same target layout.
     """
     vault = Path(args.vault).resolve()
     path = Path(args.path).resolve()
@@ -2021,16 +2028,13 @@ def cmd_trash_file(args: argparse.Namespace) -> int:
 
     rel_str = str(rel).replace("\\", "/")
 
-    if _has_zen_cli():
-        # zn needs ZENNOTES_VAULT env var to know which vault we mean, even
-        # if cwd matches. Otherwise it falls back to the global default vault.
-        import os
+    if _zen_cli_usable(vault):
+        # `--vault` names the target explicitly. zn ignores the working
+        # directory and would otherwise act on its own default vault.
         import subprocess
-        env = {**os.environ, "ZENNOTES_VAULT": str(vault)}
         result = subprocess.run(
-            [_zen_cli_path() or "zn", "trash", rel_str],
+            [_zen_cli_path() or "zn", "trash", rel_str, "--vault", str(vault)],
             cwd=str(vault),
-            env=env,
             capture_output=True,
             text=True,
         )
@@ -2052,7 +2056,7 @@ def cmd_trash_file(args: argparse.Namespace) -> int:
 def cmd_archive_file(args: argparse.Namespace) -> int:
     """Move a file into vault-relative `archive/<original-path>`.
 
-    Uses `zn archive` when available; Unix-fallback otherwise.
+    Uses `zn archive` when zn can act on this vault; Unix-fallback otherwise.
     """
     vault = Path(args.vault).resolve()
     path = Path(args.path).resolve()
@@ -2067,14 +2071,11 @@ def cmd_archive_file(args: argparse.Namespace) -> int:
 
     rel_str = str(rel).replace("\\", "/")
 
-    if _has_zen_cli():
-        import os
+    if _zen_cli_usable(vault):
         import subprocess
-        env = {**os.environ, "ZENNOTES_VAULT": str(vault)}
         result = subprocess.run(
-            [_zen_cli_path() or "zn", "archive", rel_str],
+            [_zen_cli_path() or "zn", "archive", rel_str, "--vault", str(vault)],
             cwd=str(vault),
-            env=env,
             capture_output=True,
             text=True,
         )
@@ -2903,7 +2904,7 @@ Add anything you want Steve to know about you here: preferences, working style, 
 - `auto_snapshots: true`. Master switch for every snapshot the system would otherwise take automatically (session-start snapshot, pre-import snapshot, pre-risky-write snapshot, `/zanmai:snapshot` slash-command). When `false`, all `zanmai.py snapshot create` calls exit silently with `skip: auto_snapshots disabled` and no folder is written, useful when the user has their own backup discipline (git, Time Machine, ...). Flip it with `zanmai.py snapshot enable` / `disable` or by editing this line directly.
 - `python_cmd: "{python_cmd}"`. The Python invocation that worked at setup time. Steve uses this when running scripts, substitutes for `python3` in skill template phrasing. On Windows this is often `py -3` or `python`, on Linux and macOS usually `python3`.
 - `zennotes_installed: {str(zennotes_installed).lower()}`. Whether the ZenNotes app was detected at setup time. Skills check this before invoking ZenNotes-specific features.
-- `zen_cli_installed: {str(zen_cli_installed).lower()}`. Whether the `zn` CLI was in PATH at setup time. Skills fall back to Unix commands when false.
+- `zen_cli_installed: {str(zen_cli_installed).lower()}`. Whether the `zn` CLI can act on this vault: the binary is installed and ZenNotes has opened this vault. Skills fall back to Unix commands when false.
 
 Note templates are ZenNotes' own feature: when configured in ZenNotes settings, ZenNotes applies the template as you create a note. Zanmai's capture is template-independent, it appends below whatever the note already holds and neither requires nor writes a template.
 
@@ -3259,10 +3260,10 @@ def cmd_setup_init(args: argparse.Namespace) -> int:
         python_cmd=args.python_cmd,
         # Detect deterministically, do not trust an AI-passed flag. Store exactly
         # the signals the session-start recheck re-derives (`.zennotes/` dir and
-        # the `zn` CLI), so a fresh install without ZenNotes stores `false` and
+        # a `zn` usable for this vault), so a fresh install without ZenNotes stores `false` and
         # never reports a phantom "was there at setup" drift later.
         zennotes_installed=(vault / ".zennotes").is_dir(),
-        zen_cli_installed=_zen_cli_path() is not None,
+        zen_cli_installed=_zen_cli_usable(vault),
     )
     print(f"ok: vault initialised at {vault}")
     return 0
@@ -4900,13 +4901,13 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     stored_zennotes = fm.get("zennotes_installed", "false").lower() == "true"
     stored_zen_cli = fm.get("zen_cli_installed", "false").lower() == "true"
     live_zennotes = (vault / ".zennotes").is_dir()
-    live_zen_cli = _zen_cli_path() is not None
+    live_zen_cli = _zen_cli_usable(vault)
     env_changes: list[str] = []
     if live_zennotes != stored_zennotes:
         new_state = "now active (the `.zennotes/` vault folder exists)" if live_zennotes else "no longer active (`.zennotes/` folder is gone)"
         env_changes.append(f"ZenNotes for this vault: {new_state}; stored `zennotes_installed` is `{'true' if stored_zennotes else 'false'}`. Ask the user once in their writing language whether to switch the integration, then update `.zanmai/user.md` accordingly.")
     if live_zen_cli != stored_zen_cli:
-        new_state = "now in PATH" if live_zen_cli else "no longer in PATH"
+        new_state = "now usable for this vault" if live_zen_cli else "not usable for this vault (binary missing, or ZenNotes has not opened this vault)"
         env_changes.append(f"`zn` CLI: {new_state}; stored `zen_cli_installed` is `{'true' if stored_zen_cli else 'false'}`. Ask the user once whether to switch the integration, then update `.zanmai/user.md` accordingly.")
     if env_changes:
         lines.append("- Environment change detected since last setup (ask the user, do not flip flags silently):")

@@ -12,7 +12,7 @@ Operations on Daily, Weekly and Monthly Notes. The vault layout (folder name, lo
 1. Read `.zanmai/vault-config.md` before any operation. If the note kind the user named is disabled, or ZenNotes is not configured for this vault, reply once in the user's writing language that the feature is off in their ZenNotes settings, then stop. Do not create folders, do not invent paths, do not propose alternatives.
 2. The AI never initiates a note write on its own judgement. Daily, Weekly and Monthly Notes are the user's writing space. The AI writes there only when the user directly instructed it ("trag das ein", "schreib das in heute", "hak das ab"), or when the `journal` skill writes an automatic period rollup, the one non-destructive exception defined in operating-principles §6. No unsolicited cleanups, no augmentation surveys, no "I noticed a typo, shall I…" proposals.
 3. Path resolution goes through `zanmai.py notes <kind> --print-path` (or `--ensure` / `--append`). Never compute a note filename by translating `titlePattern` in the AI head. The script honours `primaryNotesLocation` and the chosen kind's `directory` and `titlePattern` from `.zennotes/vault.json`.
-4. Writes go through `zanmai.py notes <kind> --append` or `--ensure`. Use `Edit` only for in-place edits the script does not cover (toggling an existing checkbox via `zn task --toggle`, multi-line restructuring on user instruction).
+4. Writes go through `zanmai.py notes <kind> --append` or `--ensure`. Use `Edit` only for in-place edits the script does not cover (toggling an existing checkbox via `zn task toggle`, multi-line restructuring on user instruction).
 5. Zanmai never writes `.zennotes/vault.json`. That file is ZenNotes' own settings store. The skill reads it via `zanmai.py`, never edits it.
 
 ## When to use
@@ -54,7 +54,7 @@ For an append:
 
 The script creates the note file if it does not exist (with the right path and any subfolders the `titlePattern` requires), appends the line, and writes one activity-log entry.
 
-For toggling an existing checkbox, use `zn task --toggle` when the zn CLI is installed (per the tool-hierarchy in `operating-principles.md`). Otherwise an in-place `Edit`.
+For toggling an existing checkbox, use `zn task toggle <id> --vault <vault path>` when `zen_cli_installed: true` (per the tool-hierarchy in `operating-principles.md`). Otherwise an in-place `Edit`.
 
 If the user's instruction is genuinely ambiguous (no wording for the line they want, no clear target date), ask one short clarifying question, then act. Not a propose-and-approve loop, a one-shot clarification.
 

@@ -2,6 +2,13 @@
 
 All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning: semver. The 0.x series is pre-stable.
 
+## [0.3.4] - 2026-07-30
+
+### Fixed
+
+- **The ZenNotes command line acts on the vault you are in, not on another one.** Its helper keeps one vault of its own as the default and ignores which folder a command runs from, so archiving or trashing a file could quietly reach into a different vault. Every call now names this vault outright, and the helper is only used once ZenNotes has actually opened this vault, which is what makes it able to act on it. Until then, and whenever the helper is missing, the same operations run as ordinary file moves, which works but does not keep the restore path.
+- **"The command line is available" now means available for this vault.** The setting recorded whether the helper was installed on the computer, which reads as usable and was not, so anything relying on it worked on the wrong material. It records usability for this vault instead, and the session-start check switches it on by itself the first time you open the vault in ZenNotes.
+
 ## [0.3.3] - 2026-07-29
 
 ### Fixed

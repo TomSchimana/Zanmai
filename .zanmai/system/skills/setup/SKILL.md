@@ -85,15 +85,17 @@ Zanmai reads the current state live from `.zennotes/vault.json` on every session
 
 If any of Daily, Weekly or Monthly is currently off in `vault.json`, one short orientation line in the user's writing language explains the value of having them on, and one short line tells the user where to flip the switch in ZenNotes (Settings, Vault, Periodic Notes). No `AskUserQuestion`, no persistence, the ZenNotes switch is the actual feature and Zanmai never writes `vault.json` from outside.
 
-**Check 2: zn CLI in PATH.**
+**Check 2: zn CLI usable for this vault.**
 
 Only run if Check 1 set `zennotes_installed: true` (Cases A or B-yes).
 
-`command -v zn` returns 0 if installed.
+Two conditions, both required: `command -v zn` returns 0, and `.zennotes/vault.json` exists at the vault root. The second one is what makes the CLI act on this vault, ZenNotes writes it once it has opened the vault, and without it zn silently works on whichever vault is its own default.
 
-If found, stay silent and set `zen_cli_installed: true` in user.md.
+If both hold, stay silent and set `zen_cli_installed: true` in user.md.
 
-If not found, tell the user in their writing language, in one or two short lines, that ZenNotes is here but its command-line helper is not set up yet, that it is optional and Zanmai works fine without it, and that they can add it later from the ZenNotes settings. Continue setup. Set `zen_cli_installed: false` in user.md.
+If the binary is missing, tell the user in their writing language, in one or two short lines, that ZenNotes is here but its command-line helper is not set up yet, that it is optional and Zanmai works fine without it, and that they can add it later from the ZenNotes settings. Continue setup. Set `zen_cli_installed: false` in user.md.
+
+If the binary is there but `vault.json` is not (Case B-yes, ZenNotes has not opened this vault yet), stay silent and set `zen_cli_installed: false`. The session-start check picks the CLI up by itself once the user has opened the vault in ZenNotes.
 
 Do not ask the user to install anything mid-setup. Inform once and continue. The user can re-run setup later when the toolchain is complete.
 

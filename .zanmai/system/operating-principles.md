@@ -99,7 +99,7 @@ Every agent works with the tools this machine actually has and the user has agre
 
 The default for vault operations is Unix (`cp`, `mv`, `rm`, `grep`, `find`, `printf`). ZenNotes re-indexes in the background when the app is open, so file-level changes propagate.
 
-The `zn` CLI is used when the operation has ZenNotes semantics that Unix breaks.
+The `zn` CLI is used when the operation has ZenNotes semantics that Unix breaks, and only when `zen_cli_installed: true` in `.zanmai/user.md`, which means the binary is installed **and** ZenNotes has opened this vault. Every vault-scoped call ends with `--vault <absolute vault path>` (after the subcommand and its arguments), because zn ignores the working directory and otherwise acts on whichever vault is its own default. `zn open <absolute path>` is the exception, it takes any path.
 
 - `zn trash <path>` and `zn archive <path>` preserve the original path for restore. `rm` and `mv` do not.
 - `zn restore` and `zn unarchive` for inverse operations.
@@ -108,8 +108,6 @@ The `zn` CLI is used when the operation has ZenNotes semantics that Unix breaks.
 - `zn search --json` when the result is consumed structurally.
 
 MCP servers are not loaded by default. The token cost of permanent tool definitions outweighs the use case for this vault.
-
-Always pass the vault path explicitly to `zn` or `cd` first. Multi-vault setups break silently otherwise.
 
 ## Permission buckets
 
