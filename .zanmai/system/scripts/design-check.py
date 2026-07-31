@@ -248,6 +248,140 @@ def check_break_guards(css: str, components: dict[str, tuple[str, int]]) -> list
     return failures
 
 
+def installed_font_families() -> set[str]:
+    """Font family names this machine plausibly has, taken from the filenames in
+    the standard font folders. Filename matching is coarse, but it needs no
+    fontconfig and no extra library, and it answers the only question here: is a
+    face the deck asks for present at all."""
+    roots = [
+        Path("/System/Library/Fonts"), Path("/Library/Fonts"), Path.home() / "Library/Fonts",
+        Path("/usr/share/fonts"), Path("/usr/local/share/fonts"), Path.home() / ".fonts",
+        Path.home() / ".local/share/fonts", Path("C:/Windows/Fonts"),
+    ]
+    names: set[str] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for file in root.rglob("*"):
+            if file.suffix.lower() in {".ttf", ".otf", ".ttc", ".dfont"}:
+                names.add(re.split(r"[-_.]", file.stem)[0].lower())
+    return names
+
+
+def check_pptx(deck: Path, tokens_css: str) -> tuple[list[str], list[str]]:
+    """A deck is judged by reading it, because only PowerPoint renders a .pptx the
+    way PowerPoint shows it and driving the running application is the user's
+    screen, not ours (operating-principles section 11). So no picture is taken:
+    these are the questions the file itself answers, and each one is a count."""
+    try:
+        from pptx import Presentation
+        from pptx.util import Emu  # noqa: F401
+    except ImportError:
+        return (["deck not verified: python-pptx is not installed, so nothing about this file was checked"], [])
+
+    try:
+        deck_file = Presentation(str(deck))
+    except Exception as exc:  # noqa: BLE001
+        return ([f"deck not readable: {type(exc).__name__}: {exc}"], [])
+
+    allowed = {c.lower() for c in HEX_COLOUR.findall(tokens_css)}
+    allowed |= {c * 2 for c in allowed if len(c) == 3}
+
+    failures: list[str] = []
+    faces_used: set[str] = set()
+    slides = list(deck_file.slides)
+    if not slides:
+        return (["the deck holds no slide"], [])
+
+    blank_layouts = 0
+    empty_placeholders = 0
+    overrides: set[str] = set()
+    stray_colours: Counter = Counter()
+
+    for number, slide in enumerate(slides, start=1):
+        layout = slide.slide_layout
+        if layout is None or not (layout.name or "").strip() or (layout.name or "").lower().startswith("blank"):
+            blank_layouts += 1
+            failures.append(f"slide {number} is built on a blank rather than a master layout")
+        for shape in slide.placeholders:
+            if shape.has_text_frame and not shape.text_frame.text.strip():
+                empty_placeholders += 1
+                failures.append(f"slide {number}: placeholder '{shape.name}' is left empty")
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            # An override only means something where there is something to
+            # inherit. A placeholder takes its face and size from the layout, so
+            # setting them there defeats the design; a free text box has no
+            # layout behind it and must state them.
+            inherits = shape.is_placeholder
+            for paragraph in shape.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    font = run.font
+                    if font.name:
+                        faces_used.add(font.name)
+                    if font.size is not None and inherits:
+                        overrides.add(f"slide {number}: placeholder text '{run.text[:24]}' sets its own size")
+                    try:
+                        rgb = font.color.rgb if font.color and font.color.type is not None else None
+                    except (AttributeError, ValueError):
+                        rgb = None
+                    if rgb is not None:
+                        value = str(rgb).lower()
+                        if allowed and value not in allowed:
+                            stray_colours[value] += 1
+
+    for failure in sorted(overrides):
+        failures.append(failure + ", which overrides the layout it inherits")
+    for value, count in sorted(stray_colours.items()):
+        failures.append(f"#{value} is not in the palette ({count}x in the deck)")
+
+    # A face the machine does not have is silently swapped for another one when
+    # the deck is previewed or opened, so the deck looks wrong for a reason that
+    # has nothing to do with the deck. Verified: a slide asking for an uninstalled
+    # face previews in a substitute without a word.
+    # The master's own theme font decides what every inheriting placeholder gets.
+    # If that face is missing from the machine, every such placeholder is silently
+    # swapped, and pinning a face per run is then a repair rather than a fault,
+    # which is why it is not reported as one. The template is what needs fixing.
+    theme_faces: set[str] = set()
+    for master in deck_file.slide_masters:
+        try:
+            theme = master.part.part_related_by(
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme")
+            theme_faces |= set(re.findall(r'<a:latin typeface="([^"]+)"', theme.blob.decode("utf-8", "ignore")))
+        except Exception:  # noqa: BLE001
+            pass
+    theme_faces = {f for f in theme_faces if f and not f.startswith("+")}
+
+    installed = installed_font_families()
+    for face in sorted(theme_faces):
+        if re.split(r"[ -]", face)[0].lower() not in installed:
+            failures.append(
+                f"the master's theme font is '{face}', which is not installed here, so every placeholder "
+                "that inherits it is silently swapped. Fix the theme in the template, not slide by slide"
+            )
+    missing = sorted(f for f in faces_used if re.split(r"[ -]", f)[0].lower() not in installed)
+    for face in missing:
+        failures.append(
+            f"the deck asks for '{face}', which is not installed here, so it is silently swapped "
+            "for another face wherever it is opened"
+        )
+
+    checked = [
+        f"{len(slides)} slides read",
+        f"{len(theme_faces)} theme faces",
+        f"{len(faces_used)} faces referenced, {len(faces_used) - len(missing)} of them installed",
+        f"{len(allowed)} colours in the palette",
+        f"{len(overrides)} layout overrides",
+        f"{empty_placeholders} empty placeholders",
+    ]
+    # Whether a picture should have been a chart is not decidable from the file:
+    # a photo is a legitimate picture. The rule stays in the skill; this does not
+    # claim to verify it.
+    return (failures, checked)
+
+
 def check_fonts(pdf: Path) -> tuple[list[str], int]:
     """Every face the document uses has to travel inside it. A PDF that only names
     a font looks right on the machine that has that font installed, which is always
@@ -354,12 +488,14 @@ def page_fill(pdf: Path, dpi: int, threshold: float, open_pages: set[int]) -> tu
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Check a design kit and its render against what the kit itself declares.")
-    ap.add_argument("kit", type=Path,
+    ap.add_argument("kit", type=Path, nargs="?",
                     help="the kit for this brand and format, the CSS or the Typst source; a .typ file is read as Typst")
     ap.add_argument("--tokens", type=Path, required=True,
                     help="the brand token CSS, so stray colours can be found; its @import lines are followed")
-    ap.add_argument("--pdf", type=Path, required=True,
-                    help="the rendered PDF, so page fill is measured on real pages")
+    ap.add_argument("--pdf", type=Path,
+                    help="the rendered PDF, so page coverage is measured on real pages")
+    ap.add_argument("--pptx", type=Path,
+                    help="a native deck, checked by reading the file; no render, no application")
     ap.add_argument("--fill", type=float, default=70.0, help="minimum page coverage in percent (default 70)")
     ap.add_argument("--open-pages", default="",
                     help="page numbers that are meant to be open (cover, section openers), comma separated. "
@@ -367,8 +503,29 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--dpi", type=int, default=50, help="render resolution for the fill measurement (default 50)")
     args = ap.parse_args(argv[1:])
 
-    if not args.kit.is_file():
-        print(f"design-check: no kit CSS at {args.kit}", file=sys.stderr)
+    if args.pptx:
+        if not args.pptx.is_file():
+            print(f"design-check: no deck at {args.pptx}", file=sys.stderr)
+            return 2
+        if not args.tokens.is_file():
+            print(f"design-check: no token CSS at {args.tokens}", file=sys.stderr)
+            return 2
+        deck_failures, deck_checked = check_pptx(args.pptx, read_css_with_imports(args.tokens))
+        print("checked: " + "; ".join(deck_checked) if deck_checked else "checked: nothing")
+        if deck_failures:
+            print()
+            for failure in deck_failures:
+                print(f"FAIL: {failure}")
+            print(f"\n{len(deck_failures)} open, the deck is not finished.")
+            return 1
+        print("\nevery point above passes.")
+        return 0
+
+    if not args.kit or not args.kit.is_file():
+        print(f"design-check: no kit at {args.kit}", file=sys.stderr)
+        return 2
+    if not args.pdf:
+        print("design-check: --pdf is required when checking a kit and its render", file=sys.stderr)
         return 2
     if not args.tokens.is_file():
         print(f"design-check: no token CSS at {args.tokens}", file=sys.stderr)

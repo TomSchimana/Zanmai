@@ -83,6 +83,13 @@ piece, and the next document starts from nothing again. So the kit is written un
 `.zanmai/design/<brand>/` before the piece is built, and the build reads it from
 there.
 
+**Where the brand already has finished pieces, they are part of the kit.** A template or an
+approved deck is harvested into `.zanmai/design/<brand>/slides/` (`slide-library.py harvest`),
+which writes down per slide what it is, its text slots, and how much each slot measurably holds.
+A new piece then starts by taking the one that already carries this shape of content and
+swapping the text, and only composes where nothing fits. That is both the cheap path and the one
+that cannot drift, and what gets approved joins the library, so it grows.
+
 **The kit is the truth; the build file is one realization of it.** `<format>.md`
 holds values and forms, which belong to no medium. Beside it sits what the chosen
 medium actually reads, `<format>.css` for a browser, `<format>.typ` for Typst. So a

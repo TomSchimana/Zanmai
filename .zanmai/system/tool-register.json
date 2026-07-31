@@ -672,6 +672,22 @@
         "canary": ".zanmai/system/scripts/typst-canary.typ",
         "note": "One self-contained binary per platform, which is why this tier fits it at all. A host copy that meets the pin is used as it stands; nothing is installed beside it. Identity is proven by running the binary and matching the pinned version, then by compiling the canary, so a half-unpacked archive fails at provisioning rather than during real work."
       }
+    },
+    "python_pptx": {
+      "purpose": "Reads and writes a native .pptx without opening PowerPoint: which layout a slide uses, whether its placeholders are filled, whether a run overrides the layout, which faces and colours are actually in the file. The deck's measurable checks run on the file, because no engine but PowerPoint itself renders a .pptx faithfully.",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "carol"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "pptx"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "python-pptx"
+      }
     }
   },
   "capabilities": {
@@ -690,6 +706,11 @@
       "document": {
         "required": [
           "typst"
+        ]
+      },
+      "powerpoint": {
+        "required": [
+          "python_pptx"
         ]
       }
     }
