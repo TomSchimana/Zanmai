@@ -7,7 +7,7 @@
 # distribution_paths get overwritten on update.
 # user_immune_paths are never touched on update.
 
-distribution_version: "0.3.7"
+distribution_version: "0.3.8"
 phase: "phase-1"
 schema_version: "0.1.0"
 
@@ -163,24 +163,14 @@ user_immune_paths:
   - "archive/**"
   - "trash/**"
 
-required_top_level_folders:
-  # zanmai.py setup init creates these
-  - "inbox/focus"
-  - "inbox/habits"
-  - "inbox/knowledge"
-  - "inbox/contacts/people"
-  - "inbox/contacts/organizations"
-  - "inbox/review"
-  - "quick"
-  - "_import"
-  - "_export"
-  - "archive"
-  - "trash"
-  - ".zanmai/extensions"
-  - ".zanmai/memory"
-  - ".zanmai/logs"
-  - ".zanmai/snapshots"
-  - ".zanmai/work"
+# The folders a set-up vault must have are NOT listed here. They live once, in
+# REQUIRED_FOLDERS_CORE in zanmai.py, and every place that creates or checks them
+# reads that list. They were listed in both, and the two drifted: a release added
+# `_import/recordings` to the script and not here, so a fresh install got the folder
+# and an updated vault did not. The structure check read this copy as well, which is
+# what made the drift invisible instead of merely wrong: whoever creates and whoever
+# checks agreed with each other, both missing the same entry, and a vault without the
+# folder passed validation. Do not reintroduce the list.
 
 # Conditional folders, created only when the corresponding ZenNotes feature is
 # enabled in .zennotes/vault.json (surfaced in .zanmai/vault-config.md).

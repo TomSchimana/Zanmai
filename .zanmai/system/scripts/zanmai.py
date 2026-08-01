@@ -280,8 +280,16 @@ def _append_index(index_path: Path, slug: str, summary: str = "") -> None:
     wikilink_line = f"- [[{slug}]]{suffix}\n"
     if f"[[{slug}]]" in text:
         return
-    # Append under "## Files in this bundle" or "## Knowledge" / "## Focus".
-    for header in ("## Files in this bundle", "## Knowledge", "## Focus", "## Habits"):
+    # Append under the members heading. The known English wordings come first, then
+    # whatever the file's own first `##` heading is, because a bundle index written in
+    # the user's language carries that heading in their words and the members list is
+    # the first section either way. Without that second pass the link landed at the
+    # end of the file, below the activity log.
+    candidates = ["## Files in this bundle", "## Knowledge", "## Focus", "## Habits"]
+    first = re.search(r"^## .+$", text, re.MULTILINE)
+    if first:
+        candidates.append(first.group(0))
+    for header in candidates:
         idx = text.find(header)
         if idx == -1:
             continue
@@ -324,23 +332,38 @@ def _render_truth_file(*, kind: str, slug: str, additions: dict) -> str:
     return f"{fm_text}\n# {title}\n\n(Content to follow.)\n"
 
 
-def _render_bundle_index(*, slug: str, title: str, bundle_kind: str = "knowledge", is_sub_bundle: bool = False) -> str:
+INDEX_HEADING_FILES = "Files in this bundle"
+INDEX_HEADING_ACTIVITY = "Recent activity"
+
+
+def _render_bundle_index(*, slug: str, title: str, bundle_kind: str = "knowledge",
+                         is_sub_bundle: bool = False,
+                         heading_files: str = INDEX_HEADING_FILES,
+                         heading_activity: str = INDEX_HEADING_ACTIVITY) -> str:
     # INDEX inherits the bundle's kind so it stays consistent with the path.
     # The schema does not require goal or status on INDEX files. The
     # kind-required hook exempts INDEX.md from the required-field check.
+    #
+    # The two headings are passed in because this file is the user's, and a vault
+    # written in one language does not want two English headings in the middle of it.
+    # The script cannot know the language, and a table of translations here would grow
+    # with every language Zanmai meets, so the caller supplies the words; English is
+    # the default for a caller that has nothing better.
     fm = {"kind": bundle_kind, "slug": "index", "created": _today(), "source": "ai-generated"}
     if is_sub_bundle:
+        # No claim here about whether a truth file exists. It used to say there was
+        # none, which `bundle add-truth` then made false without correcting it, and
+        # that is the documented path for a sub-bundle with its own theme.
         return _render_frontmatter(fm, list(fm.keys())) + (
             f"\n# {title}, index\n\n"
-            f"This is a sub-bundle. Members are listed below, there is no separate truth file.\n\n"
-            f"## Files in this bundle\n\n"
-            f"## Recent activity\n\n"
+            f"## {heading_files}\n\n"
+            f"## {heading_activity}\n\n"
         )
     return _render_frontmatter(fm, list(fm.keys())) + (
         f"\n# {title}, index\n\n"
-        f"## Files in this bundle\n\n"
+        f"## {heading_files}\n\n"
         f"- [[{slug}]]: the bundle's main file\n\n"
-        f"## Recent activity\n\n"
+        f"## {heading_activity}\n\n"
     )
 
 
@@ -392,7 +415,11 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
 
     bundle_index = bundle_dir / "INDEX.md"
     bundle_index.write_text(
-        _render_bundle_index(slug=slug, title=additions["_title"], bundle_kind=kind, is_sub_bundle=is_sub_bundle),
+        _render_bundle_index(
+            slug=slug, title=additions["_title"], bundle_kind=kind, is_sub_bundle=is_sub_bundle,
+            heading_files=(getattr(args, "heading_files", None) or INDEX_HEADING_FILES),
+            heading_activity=(getattr(args, "heading_activity", None) or INDEX_HEADING_ACTIVITY),
+        ),
         encoding="utf-8",
     )
 
@@ -431,6 +458,14 @@ def cmd_copy_into_bundle(args: argparse.Namespace) -> int:
     target_kind = args.target_kind or bundle_kind
     # Where the file lands decides these two; everything else fills gaps only.
     overrides = {"kind": target_kind, "slug": target_slug}
+    # Provenance stated on the command line is an override, because the caller knows
+    # something the file does not say about itself. Without it the default below
+    # applies, and it only applies to a file that declares no source of its own: a
+    # research note that says it was AI-written keeps saying so.
+    if getattr(args, "source_class", None):
+        overrides["source"] = args.source_class
+    if getattr(args, "source_detail", None):
+        overrides["source_detail"] = args.source_detail
     additions = {
         "created": _today(),
         "source": "organic",
@@ -450,12 +485,13 @@ def cmd_copy_into_bundle(args: argparse.Namespace) -> int:
     # The index line describes the member, so it takes the file's own topic or title
     # where it has one. The bare source stem told the reader nothing the wikilink did
     # not already say, and had to be replaced by hand afterwards.
-    summary = ""
-    for key in ("topic", "goal", "_title", "title"):
-        value = target_fm.get(key)
-        if isinstance(value, str) and value.strip():
-            summary = value.strip()
-            break
+    summary = (getattr(args, "summary", None) or "").strip()
+    if not summary:
+        for key in ("topic", "goal", "_title", "title"):
+            value = target_fm.get(key)
+            if isinstance(value, str) and value.strip():
+                summary = value.strip()
+                break
     _append_index(bundle_dir / "INDEX.md", target_slug, summary=summary or source.stem)
     _append_activity_log(
         vault, "zanmai.py",
@@ -1984,6 +2020,21 @@ def cmd_create_sub_bundle_truth(args: argparse.Namespace) -> int:
         new_body = base_truth + parent_line
     truth_path.write_text(new_body, encoding="utf-8")
 
+    # The sub-bundle's own index has to learn that this file exists, and older indexes
+    # additionally carry a sentence saying there is no truth file, which this command
+    # has just made untrue. Both are dealt with here, so the state on disk matches
+    # what the index claims about it.
+    index_path = bundle_dir / "INDEX.md"
+    if index_path.is_file():
+        try:
+            index_text = index_path.read_text(encoding="utf-8")
+            stale = "This is a sub-bundle. Members are listed below, there is no separate truth file.\n"
+            if stale in index_text:
+                index_path.write_text(index_text.replace(stale, ""), encoding="utf-8")
+        except OSError:
+            pass
+        _append_index(index_path, slug, summary="the bundle's main file")
+
     bundle_rel = bundle_dir.relative_to(vault).as_posix()
     _append_activity_log(
         vault, "zanmai.py",
@@ -2783,16 +2834,6 @@ def _recent_activity_bundles(vault: Path, hours_back: int = 48) -> list[dict]:
     return result
 
 
-_ATTACHMENT_EXTS = {
-    "jpg", "jpeg", "png", "gif", "webp", "svg",
-    "pdf",
-    "vtt", "srt", "txt",
-    "mp3", "m4a", "wav", "ogg", "flac",
-    "mp4", "mov", "webm",
-    "ics", "csv", "json",
-}
-
-
 def _attachment_basenames(vault: Path) -> set[str]:
     """All non-Markdown filenames in the vault (lowercased), used to resolve
     embed-shaped wikilinks like `[[some-frame.jpg]]` against the filesystem.
@@ -2858,13 +2899,15 @@ def _broken_wikilinks(vault: Path) -> list[dict]:
             t_norm = str(t).split("/")[-1].split("#")[0].lower()
             if not t_norm:
                 continue
-            ext = t_norm.rsplit(".", 1)[-1] if "." in t_norm else ""
-            if ext in _ATTACHMENT_EXTS:
-                if t_norm in attachments:
-                    continue
-            else:
-                if t_norm in known_slugs:
-                    continue
+            # Both pools, no extension list deciding which one to look in. The list
+            # was an allowlist of file types, and a target whose type was not on it
+            # got matched against markdown slugs, where a name with an extension can
+            # never appear: every unanticipated type was reported broken with
+            # certainty rather than left unchecked. Two `.eml` attachments sat in a
+            # briefing as broken links for months while both files were on disk.
+            # Present or not present is the whole question, and the disk answers it.
+            if t_norm in attachments or t_norm in known_slugs:
+                continue
             broken.append({
                 "source": source_path,
                 "target": str(t),
@@ -4007,6 +4050,29 @@ REQUIRED_FOLDERS_CORE = [
     ".zanmai/snapshots",
     ".claude",
 ]
+
+
+def _required_folders(vault_root: Path) -> list[str]:
+    """Every folder a set-up vault must have, from the one list above.
+
+    The single source matters more than it looks. This used to be two lists, the one
+    above for a fresh install and a copy of it in the manifest for an existing vault,
+    and they drifted: a release added `_import/recordings` here and not there, so a
+    new vault got the folder and an updated one did not. The structure check read the
+    manifest copy too, which is the part that makes such a drift invisible rather than
+    merely wrong: producer and checker agreed with each other and were both missing
+    the same entry, so a vault without the folder validated with exit code 0. One
+    list, read by whoever creates and whoever checks, cannot disagree with itself.
+
+    Excludes the conditional periodic-note folders (ZenNotes decides whether those
+    exist at all) and `.zanmai/runtime/`, which describes this machine and is created
+    when something needs it.
+    """
+    folders = list(REQUIRED_FOLDERS_CORE)
+    folders += [f".zanmai/memory/agents/{name}" for name in _MEMORY_AGENTS]
+    return folders
+
+
 # Daily Notes and Weekly Notes are conditional, only created when ZenNotes
 # has the corresponding feature enabled in .zennotes/vault.json. The current
 # state is surfaced live in .zanmai/vault-config.md by the session-start
@@ -4463,6 +4529,48 @@ def _shipped_hook_commands() -> set[str]:
     return found
 
 
+def _verify_host_config(vault: Path) -> list[str]:
+    """What the host config must actually carry, measured on disk. Empty means good.
+
+    The distribution ships a hook, an expert or a skill; the host-side wiring for it
+    is written separately and is machine-local, so shipped and arrived are two
+    different facts. Everything that decided whether wiring was needed is off-limits
+    here: this reads `.claude/` and reports what is not there. It does not create
+    anything, because a check that repairs on the way past turns a missing piece into
+    a piece that was never missing, and the gap it covers is then only findable by
+    someone who already suspects it.
+
+    Cheap on purpose, a handful of existence checks and one string search, so it can
+    run on every session start rather than only when a version number moved.
+    """
+    problems: list[str] = []
+
+    settings_file = vault / ".claude" / "settings.json"
+    if not settings_file.is_file():
+        problems.append("no .claude/settings.json, so no hook of this distribution is wired")
+    else:
+        try:
+            wired = settings_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            problems.append(f"cannot read .claude/settings.json ({exc})")
+            wired = ""
+        for expected in sorted(_shipped_hook_commands()):
+            if expected not in wired:
+                problems.append(f"hook not wired in .claude/settings.json: '{expected}'")
+
+    for name in _AGENT_NAMES:
+        if not (vault / ".claude" / "agents" / f"{name}.md").is_file():
+            problems.append(f"expert adapter missing: .claude/agents/{name}.md")
+
+    for claude_folder, source_folder in _SKILL_SYMLINK_MAP:
+        if not (vault / ".zanmai" / "system" / "skills" / source_folder / "SKILL.md").is_file():
+            continue  # not shipped in this version, so nothing to wire
+        if not (vault / ".claude" / "skills" / claude_folder / "SKILL.md").is_file():
+            problems.append(f"skill adapter missing: .claude/skills/{claude_folder}/SKILL.md")
+
+    return problems
+
+
 def _mcp_tools_from_experts(vault_root: Path) -> list[str]:
     """Distinct `mcp__<server>__<tool>` names any registered expert is granted,
     read verbatim from each expert contract's `tools:` frontmatter. Used to
@@ -4511,8 +4619,7 @@ def _run_init_migration(
     folder mkdir step; file writes overwrite. Used by `setup init`."""
     daily_path, weekly_path, monthly_path = _daily_weekly_folder_paths(vault_root)
 
-    folders = list(REQUIRED_FOLDERS_CORE)
-    folders += [f".zanmai/memory/agents/{name}" for name in _MEMORY_AGENTS]
+    folders = _required_folders(vault_root)
     for note_path in (daily_path, weekly_path, monthly_path):
         if note_path:
             folders.append(note_path)
@@ -4610,34 +4717,32 @@ def cmd_setup_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_manifest_lists(manifest_path: Path) -> tuple[list[str], list[str]]:
-    """Tiny YAML extractor for the two list keys validate needs. Avoids a
-    pyyaml dependency; the manifest format is known and stable."""
+def _manifest_distribution_paths(manifest_path: Path) -> list[str]:
+    """Every path the manifest calls distribution. Tiny YAML extractor, so the
+    script needs no pyyaml; the manifest format is known and stable.
+
+    The manifest is the authority on which files an update owns, and nothing else.
+    The required folders deliberately do not live here as well, see
+    `_required_folders`: a second copy of a list is a list that drifts, and when the
+    checker reads the copy the drift stops being visible.
+    """
     dist_paths: list[str] = []
-    top_folders: list[str] = []
-    current: list[str] | None = None
+    collecting = False
     for line in manifest_path.read_text(encoding="utf-8").splitlines():
         stripped = line.rstrip()
         if not stripped or stripped.lstrip().startswith("#"):
             continue
         if stripped.startswith("distribution_paths:"):
-            current = dist_paths
+            collecting = True
             continue
-        if stripped.startswith("required_top_level_folders:"):
-            current = top_folders
-            continue
-        if stripped.startswith("user_immune_paths:"):
-            current = None
-            continue
-        if current is None:
+        if not collecting:
             continue
         if not stripped.startswith("  - "):
-            current = None
-            continue
+            break
         value = stripped[4:].strip().strip('"').strip("'")
         if value:
-            current.append(value)
-    return dist_paths, top_folders
+            dist_paths.append(value)
+    return dist_paths
 
 
 def _manifest_scalar(manifest_path: Path, key: str) -> str:
@@ -4944,6 +5049,96 @@ def _update_offer_due(vault: Path) -> bool:
     return True
 
 
+def _hand_off_to_new_script(vault: Path, from_version: str, to_version: str, *,
+                            origin: str = "", replaced: int | None = None,
+                            withdrawn: int | None = None) -> int:
+    """Everything after the file replacement runs in the new script, not this one.
+
+    This process was started from the previous version and still holds it in memory,
+    so any post-replacement step it performs is performed by the code the release just
+    replaced. That is how a release can arrive with its new hook unwired while
+    reporting success. Wrapping the one step that was known to be affected fixes one
+    symptom and leaves the next step someone adds in the same trap, so the boundary
+    sits here: the file swap is the last thing this side does, and the host refresh,
+    the verification, the version marker and even the success message belong to the
+    new side of it.
+    """
+    script = vault / ".zanmai" / "system" / "scripts" / "zanmai.py"
+    if not script.is_file():
+        print(f"error: the new version left no script at {script}, nothing was verified. "
+              "Run 'setup update' and 'setup validate' by hand.", file=sys.stderr)
+        return 1
+    cmd = [sys.executable, str(script), "setup", "post-upgrade", str(vault),
+           "--from", from_version, "--to", to_version]
+    if origin:
+        cmd += ["--origin", origin]
+    if replaced is not None:
+        cmd += ["--replaced", str(replaced)]
+    if withdrawn is not None:
+        cmd += ["--withdrawn", str(withdrawn)]
+    try:
+        return subprocess.run(cmd).returncode
+    except OSError as exc:
+        print(f"error: the new version's files are in place but could not be run ({exc}). "
+              "Run 'setup update' and then 'setup validate' by hand.", file=sys.stderr)
+        return 1
+
+
+def cmd_setup_post_upgrade(args: argparse.Namespace) -> int:
+    """The tail of an upgrade, run by the new script on its own installation.
+
+    Called by `setup upgrade` right after the files were replaced, never by hand in
+    normal use. Refreshes the host config, then checks what actually arrived, and
+    records the version only when that check passes.
+
+    The order is the point. The version marker used to be written straight after the
+    refresh, whatever the refresh achieved, and the session-start repair triggers on
+    the marker disagreeing with the shipped version: one hopeful write of the marker
+    permanently disarmed the mechanism built to catch exactly this. A marker that
+    means "the host config was verified at this version" cannot do that; one that
+    means "an upgrade to this version was attempted" can.
+    """
+    vault = Path(args.vault_root).resolve()
+    to_version = args.to_version or _distribution_version(vault)
+
+    # A refresh that cannot write, an unreadable permission, a full disk: whatever it
+    # is, it must come out as a sentence and leave the marker alone. A traceback here
+    # would end the upgrade in the one state this whole command exists to prevent,
+    # unexplained and half-applied.
+    try:
+        refreshed = cmd_setup_update(argparse.Namespace(vault_root=str(vault)))
+    except OSError as exc:
+        print(f"error: the new files are in place but the host refresh could not write ({exc})",
+              file=sys.stderr)
+        refreshed = 1
+    if refreshed != 0:
+        print(f"error: the new files are in place but the host refresh failed. The recorded "
+              f"version stays at {args.from_version or 'the previous one'}, so the next session "
+              "repairs it. Run 'setup update' by hand to do it now.", file=sys.stderr)
+        return 1
+
+    problems = _verify_host_config(vault)
+    if problems:
+        print("error: the new files are in place but the host config is incomplete:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        print(f"the recorded version stays at {args.from_version or 'the previous one'}, so the "
+              "next session repairs this instead of considering it done", file=sys.stderr)
+        return 1
+
+    _record_host_config_version(vault, to_version)
+
+    detail = ""
+    if args.replaced is not None:
+        detail = f" ({args.replaced} files replaced"
+        detail += f", {args.withdrawn} withdrawn)" if args.withdrawn else ")"
+    elif args.origin:
+        detail = f" from {args.origin}"
+    print(f"ok: updated to {to_version}{detail}, host config verified")
+    print("your notes, settings and extensions were not touched")
+    return 0
+
+
 def cmd_setup_upgrade(args: argparse.Namespace) -> int:
     """Replace the distribution files with the newest published version.
 
@@ -5004,11 +5199,7 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
         ok, problem = _upgrade_via_git(vault, branch)
         if ok:
             applied = _distribution_version(vault)
-            _refresh_host_config(vault)
-            _record_host_config_version(vault, applied)
-            print(f"ok: updated to {applied} from the repository this vault was cloned from")
-            print("your notes, settings and extensions were not touched")
-            return 0
+            return _hand_off_to_new_script(vault, local, applied, origin="the repository this vault was cloned from")
         print(f"error: {problem}", file=sys.stderr)
         return 1
 
@@ -5029,8 +5220,8 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
             print("error: the downloaded version has no manifest, nothing applied", file=sys.stderr)
             return 1
 
-        new_paths, _ = _parse_manifest_lists(new_manifest)
-        old_paths, _ = _parse_manifest_lists(manifest)
+        new_paths = _manifest_distribution_paths(new_manifest)
+        old_paths = _manifest_distribution_paths(manifest)
 
         # Both path lists come out of a manifest that was just downloaded, so they
         # are input, not fact. Without a containment check, one `../` in a path
@@ -5078,12 +5269,7 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
                 stale.unlink()
                 removed += 1
 
-    _refresh_host_config(vault)
-    _record_host_config_version(vault, remote)
-    print(f"ok: updated to {remote} ({written} files replaced"
-          + (f", {removed} withdrawn" if removed else "") + ")")
-    print("your notes, settings and extensions were not touched")
-    return 0
+    return _hand_off_to_new_script(vault, local, remote, replaced=written, withdrawn=removed)
 
 
 def cmd_setup_validate(args: argparse.Namespace) -> int:
@@ -5096,18 +5282,22 @@ def cmd_setup_validate(args: argparse.Namespace) -> int:
     if not manifest_path.exists():
         fails.append("missing .zanmai/system/manifest.yaml")
     else:
-        dist_paths, top_folders = _parse_manifest_lists(manifest_path)
-        for rel in top_folders:
-            if not (vault / rel).is_dir():
-                fails.append(f"missing folder (manifest required_top_level_folders): {rel}")
-        for rel in dist_paths:
+        for rel in _manifest_distribution_paths(manifest_path):
             if not (vault / rel).exists():
                 fails.append(f"missing distribution file: {rel}")
+    for rel in _required_folders(vault):
+        if not (vault / rel).is_dir():
+            fails.append(f"missing required folder: {rel}. Run 'setup update' to create it.")
     for rel in ["INDEX.md", ".zanmai/memory/general.md", ".zanmai/memory/activity-log.md"]:
         if not (vault / rel).is_file():
             fails.append(f"missing generated file: {rel}")
-    # Host adapters must all be current: no dangling legacy symlink, and no adapter
-    # left over for an expert an update dropped from the roster.
+    # Everything the distribution ships and the host must carry: hooks wired, expert
+    # and skill adapters present. Same function the upgrade and the session start use,
+    # so what passes here is what passes there.
+    for problem in _verify_host_config(vault):
+        fails.append(f"{problem}. Run 'setup update' to rebuild the host config.")
+    # Adapters must also not be left over: no dangling legacy symlink, and nothing
+    # for an expert an update dropped from the roster.
     agents_dir = vault / ".claude" / "agents"
     if agents_dir.is_dir():
         roster = set(_AGENT_NAMES)
@@ -5121,24 +5311,6 @@ def cmd_setup_validate(args: argparse.Namespace) -> int:
                 ours = False
             if ours and entry.stem not in roster:
                 fails.append(f"stale agent adapter (not in roster): {entry.relative_to(vault)}")
-    # Every hook this distribution wires must actually be in settings.json. That
-    # file is machine-local and gitignored, so git delivers nothing there and a
-    # missing entry is invisible from outside: the hook function sits in the script
-    # and is never called. Presence is checked, not equality, so hooks the user
-    # added themselves survive.
-    settings_file = vault / ".claude" / "settings.json"
-    if settings_file.is_file():
-        try:
-            wired = settings_file.read_text(encoding="utf-8")
-        except OSError as exc:
-            fails.append(f"cannot read .claude/settings.json ({exc})")
-            wired = ""
-        for expected in sorted(_shipped_hook_commands()):
-            if expected not in wired:
-                fails.append(
-                    f"hook not wired in .claude/settings.json: '{expected}'. "
-                    "Run 'setup update' to rebuild the host config."
-                )
     # A synced folder is a normal home for a vault, so this is a note rather than a
     # failure. What it reports is the part that is genuinely wrong to copy.
     notes: list[str] = []
@@ -5205,10 +5377,10 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
     except OSError:
         pass
 
-    manifest_path = vault / ".zanmai" / "system" / "manifest.yaml"
-    if manifest_path.exists():
-        for rel in _parse_manifest_lists(manifest_path)[1]:
-            (vault / rel).mkdir(parents=True, exist_ok=True)
+    # Folders an empty release cannot deliver, since git carries no empty directory.
+    # Same list `setup init` creates from and `setup validate` checks against.
+    for rel in _required_folders(vault):
+        (vault / rel).mkdir(parents=True, exist_ok=True)
 
     _install_agent_symlinks(vault, _AGENT_NAMES)
     _install_skill_symlinks(vault, _SKILL_SYMLINK_MAP)
@@ -5430,7 +5602,16 @@ def cmd_snapshot_create(args: argparse.Namespace) -> int:
     source = Path(args.vault).resolve()
     target_base = (Path(args.root).resolve() if args.root
                    else source / ".zanmai" / "snapshots")
-    reason_slug = args.reason.strip().replace(" ", "-").lower()
+    # The reason becomes one path component, so it goes through the same slugify as
+    # every other name in the vault. Hand-rolled lowercasing left a slash intact, and
+    # a reason like "health/bones" then created a nested folder that no longer carried
+    # the name it was given, which is how a snapshot stops being findable. The empty
+    # check comes first, because slugify answers an empty reason with "untitled" and a
+    # missing reason has to fail rather than acquire a name.
+    if not args.reason.strip():
+        print("fail: reason-slug empty", file=sys.stderr)
+        return 1
+    reason_slug = _slugify(args.reason)
     if not _read_auto_snapshots_flag(source):
         print("skip: auto_snapshots disabled in .zanmai/user.md")
         return 0
@@ -5439,9 +5620,6 @@ def cmd_snapshot_create(args: argparse.Namespace) -> int:
         return 1
     if not source.is_dir():
         print(f"fail: source is not a directory: {source}", file=sys.stderr)
-        return 1
-    if not reason_slug:
-        print("fail: reason-slug empty", file=sys.stderr)
         return 1
     timestamp = datetime.now().strftime("%Y-%m-%d-%H%M")
     target = target_base / f"{timestamp}-{reason_slug}"
@@ -6380,15 +6558,34 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # New distribution files can arrive without the host-side refresh, for
     # example when the user pulls the repository by hand. The refresh is
     # mechanical, so run it instead of reporting drift.
+    #
+    # The wiring itself is checked every session, not only when the version moved,
+    # and that is what rescues a vault whose marker already claims the current
+    # version while the host config is incomplete. Any release before this one wrote
+    # that marker on hope: for those vaults the versions agree, so a check that
+    # triggers on disagreement never looks again. This one looks regardless.
     shipped_version = _distribution_version(vault)
     host_marker = vault / ".zanmai" / "runtime" / "host-config-version"
     known_version = host_marker.read_text(encoding="utf-8").strip() if host_marker.exists() else ""
-    if shipped_version and shipped_version != known_version:
+    version_moved = bool(shipped_version) and shipped_version != known_version
+    problems = _verify_host_config(vault)
+    if version_moved or problems:
         _refresh_host_config(vault, quiet=True)
-        _record_host_config_version(vault, shipped_version)
-        if known_version:
-            lines.append(f"- Zanmai moved from {known_version} to {shipped_version}. Host config refreshed; "
-                         "mention the new version once and point at the changelog if the user asks what changed.")
+        remaining = _verify_host_config(vault)
+        if remaining:
+            lines.append("- This vault's host config is incomplete and a refresh did not fix it: "
+                         + "; ".join(remaining)
+                         + ". Say so plainly and offer to run `setup validate` for the detail. The "
+                           "recorded version is left alone, so this is looked at again next session.")
+        else:
+            if shipped_version:
+                _record_host_config_version(vault, shipped_version)
+            if problems and not version_moved:
+                lines.append(f"- Part of Zanmai was on disk but not wired up ({len(problems)} item(s)), "
+                             "and has now been wired. Mention it once, in one sentence, and carry on.")
+            elif known_version and version_moved:
+                lines.append(f"- Zanmai moved from {known_version} to {shipped_version}. Host config refreshed; "
+                             "mention the new version once and point at the changelog if the user asks what changed.")
 
     # Recordings waiting are named, not transcribed. A hook that takes a minute is a
     # session that starts in a minute, and the reading of them is a background job.
@@ -7639,6 +7836,15 @@ def main(argv: list[str]) -> int:
     ps_upgrade.add_argument("--check", action="store_true", help="Only report whether a newer version exists.")
     ps_upgrade.set_defaults(func=cmd_setup_upgrade)
 
+    ps_post = sub_setup.add_parser("post-upgrade", help="The tail of an upgrade, run by the new script on itself: host refresh, verification, version marker. Called by 'setup upgrade', not by hand.")
+    ps_post.add_argument("vault_root", nargs="?", default=".")
+    ps_post.add_argument("--from", dest="from_version", default="", help="Version the vault was on before.")
+    ps_post.add_argument("--to", dest="to_version", default="", help="Version that was just installed. Defaults to the shipped one.")
+    ps_post.add_argument("--origin", default="", help="Where the new version came from, for the success message.")
+    ps_post.add_argument("--replaced", type=int, help="Number of files replaced, for the success message.")
+    ps_post.add_argument("--withdrawn", type=int, help="Number of files withdrawn, for the success message.")
+    ps_post.set_defaults(func=cmd_setup_post_upgrade)
+
     # snapshot -----
     p_snap = sub.add_parser("snapshot", help="Vault and dist snapshots.")
     sub_snap = p_snap.add_subparsers(dest="subcmd", required=True)
@@ -7763,6 +7969,10 @@ def main(argv: list[str]) -> int:
     pb_create.add_argument("--due")
     pb_create.add_argument("--topic")
     pb_create.add_argument("--last_done")
+    pb_create.add_argument("--heading-files", dest="heading_files",
+                           help="Heading for the members list in INDEX.md, in the user's language. Default English.")
+    pb_create.add_argument("--heading-activity", dest="heading_activity",
+                           help="Heading for the activity list in INDEX.md, in the user's language. Default English.")
     pb_create.set_defaults(func=cmd_create_bundle)
 
     pb_addfile = sub_bundle.add_parser("add-file", help="Copy a markdown file into a bundle (body verbatim, frontmatter migrated to schema).")
@@ -7775,6 +7985,13 @@ def main(argv: list[str]) -> int:
     pb_addfile.add_argument("--target-name", dest="target_name")
     pb_addfile.add_argument("--overwrite", action="store_true",
                             help="Allow overwriting an existing target with the same slug. Default: append '-imported'.")
+    pb_addfile.add_argument("--source-class", dest="source_class",
+                            choices=["organic", "collaborative", "ai-generated"],
+                            help="Who wrote this. Beats what the file says about itself; without it a file that declares nothing counts as the user's own.")
+    pb_addfile.add_argument("--source-detail", dest="source_detail",
+                            help="Free-text refinement of where it came from, e.g. 'session:research-2026-08'.")
+    pb_addfile.add_argument("--summary",
+                            help="One-line role of this file inside the bundle, for its INDEX.md entry. Without it the file's own topic or title is used.")
     pb_addfile.set_defaults(func=cmd_copy_into_bundle)
 
     pb_addtruth = sub_bundle.add_parser("add-truth", help="Write a truth file for an existing sub-bundle with a 'Part of [[parent]]' wikilink.")

@@ -56,7 +56,7 @@ zanmai.py voice transcribe --file <same file> --lexicon .zanmai/work/voice/lexic
 
 This is the only step that can hear the audio again, which is why it is the one that can actually recover a misheard surname, and it costs one cheap run. Measured both ways: on a note where full names were spoken it fixed all five of them; across ten minutes of a real meeting it changed almost nothing, because what people say in a room is first names and a recogniser knows those. Rarely decisive, worth having when nothing else gets there.
 
-**And then stop.** What is still unresolved stays as the recogniser wrote it, marked as unresolved. Not corrected to the nearest plausible thing: that is over-correction, the documented failure of letting a model rewrite a transcript, and a plausible wrong name is worse than an obviously garbled one because the garbled one gets noticed. Every change is listed in the return, from what to what and on whose authority.
+**And then stop.** What is still unresolved stays as the recogniser wrote it, marked as unresolved. Not corrected to the nearest plausible thing: that is over-correction, the documented failure of letting a model rewrite a transcript, and a plausible wrong name is worse than an obviously garbled one because the garbled one gets noticed. Every change goes into the run's log on the work object, from what to what and on whose authority, and stays out of the report: fixing a mangled word is the job, and a list of fixes reads as homework for the user. Only one correction is ever said out loud, the one that would change what a sentence means, and that one is a question before it is made.
 
 ### 5. Work out what each note is, then do it
 
@@ -70,7 +70,7 @@ Say in the report where each part went and why. That sentence is what makes "mov
 
 `zanmai.py voice archive --file <name>` moves the audio out of the drop folder into `assets/recordings/<year>/<month>/` and keeps it. Out of the drop folder so it cannot be transcribed twice; kept because it is the user's own recording and a transcript is a reading of it, not a replacement.
 
-The report is short and has four parts: how many notes and how long, what each turned out to be and what was done with it, the corrections made to names, and what is waiting on the user. Nothing else. If nothing needs the user, the report is the whole interaction.
+The report is short and has three parts: how many notes and how long, what each turned out to be and where it went, and what is waiting on the user. Nothing else, and no list of corrected words: they are in the log for anyone who doubts a note later. If nothing needs the user, the report is the whole interaction.
 
 ## What runs automatically, and what does not
 
@@ -95,7 +95,7 @@ Everything up to the report happens without asking: transcribing, correcting, fi
 ## Red flags, stop and recheck
 
 - About to file a note under a name that is not in the vault and was not looked up.
-- About to report a transcript without saying which words were corrected.
+- About to change a word without writing the change into the log.
 - About to ask the user more than one question about one recording.
 - About to delete a recording rather than keep it.
 - About to transcribe again a file that is already in `assets/recordings/`.

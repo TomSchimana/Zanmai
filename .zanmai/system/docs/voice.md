@@ -8,7 +8,7 @@ Record a voice note, drop it in `_import/recordings/`, and it gets read. A thoug
 
 You do one thing: put the file there. Any format a phone produces works, m4a, aac, mp3, ogg, wav.
 
-The next time you open Zanmai, the start-up says how many recordings are waiting and gets on with it in the background, so you can carry on working. When it is done you get a short report: how many notes, what each one turned out to be, what was done with it, and which words were corrected. If something genuinely needs you, you get one question. If not, the report is the whole thing.
+The next time you open Zanmai, the start-up says how many recordings are waiting and gets on with it in the background, so you can carry on working. When it is done you get a short report: how many notes, what each one turned out to be, and where it went. If something genuinely needs you, you get one question. If not, the report is the whole thing.
 
 Several notes recorded in a row are read together and in order, because the third one is often correcting the first, and five recorded between sets at the gym are one training session rather than five entries. The order is the order you spoke them, taken from each recording's own date; when a file has no usable date, a timestamp or number in its name stands in, and if the two ever disagree Zanmai says so rather than presenting a sequence as certain. When a note arrives is not something you control, and a recording made with no signal syncs whenever it syncs.
 
@@ -22,7 +22,7 @@ Reading it is what makes it right, and that is the normal path. A word that is n
 
 **When a name will not come out, the vault's own list of names goes to the recogniser and the recording is read again.** That is the one step that hears the audio a second time, which is why it is the one that can recover a name that was misheard rather than mistyped. It is a second attempt, not the standard route: measured on a German note where five names were spoken in full, none came back right without the list and all five with it, while across ten minutes of a real meeting it changed nothing at all, because what people say in a room is first names and a recogniser knows those.
 
-**Every correction is listed for you.** Nothing about what you said gets quietly rewritten, and a correction that would change the meaning is a question instead. "Vertrag" and "Vortrag" are one letter apart.
+**Corrections are written down, not read out.** Putting a mangled word right is the job, and a list of every fix would only give you something to check. What each change was, and on what grounds, goes into the run's log, so you can look if a note ever seems off. The one correction you do hear about is the one that would change what you meant, and that comes as a question before anything is changed. "Vertrag" and "Vortrag" are one letter apart.
 
 Filler and false starts stay in a journal entry. That is how people talk, and editing your own voice is not the job.
 

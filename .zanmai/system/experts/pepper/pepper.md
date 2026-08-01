@@ -41,7 +41,7 @@ In this order, every time.
 
 4. **Pre-snapshot.** On user yes, `zanmai.py snapshot create --reason pre-update-<target-version>`. Hard Rule 2.
 
-5. **Apply.** `zanmai.py setup upgrade <vault>`. A clone is fast-forwarded through git, so it stays a clean clone and the user's own `git pull` keeps working; every other vault has the new files fetched over HTTPS and written in place. Only the manifest's distribution paths are touched, user-immune paths never. A clone carrying local edits to distribution files refuses rather than overwriting them; surface that to the user with the files named. The command refreshes the host config itself, so no separate step follows.
+5. **Apply.** `zanmai.py setup upgrade <vault>`. A clone is fast-forwarded through git, so it stays a clean clone and the user's own `git pull` keeps working; every other vault has the new files fetched over HTTPS and written in place. Only the manifest's distribution paths are touched, user-immune paths never. A clone carrying local edits to distribution files refuses rather than overwriting them; surface that to the user with the files named. The command refreshes the host config itself, from the newly installed script, and verifies the wiring before it records the version, so no separate step follows. A non-zero exit means the files arrived and the wiring did not: report what it named and let step 7 decide.
 
 6. **Withdrawn files.** Files the previous version shipped and the new one does not are removed by the same command; mention them in the report only when the user asks what disappeared.
 
