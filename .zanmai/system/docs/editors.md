@@ -24,7 +24,7 @@ Four concrete things, all of them reading the app's own configuration rather tha
 
 **Opening and tidying.** Notes open in the app through its command line helper, and moving something to archive or trash goes through the app as well, so its own bookkeeping stays intact rather than being bypassed by a plain file move. Its search is also used as one route when looking things up.
 
-**Databases stay yours.** ZenNotes stores a database as a folder ending in `.base`, holding the table, its columns and one page per row. Zanmai reads nothing inside those, writes nothing inside them, and leaves them out of every scan. You build and edit them in the app; they can sit wherever you like.
+**Databases: yours stay yours, and Zanmai keeps exactly one of its own.** ZenNotes stores a database as a folder ending in `.base`, holding the table, its columns and one page per row. Every database you build is untouched: nothing read, nothing written, left out of every scan, wherever you put it. The single exception is Zanmai's own, `inbox/review/work.base/`, which is where work that outlives one sitting is tracked. The line runs by who owns the folder, not by the file type, because a rule that stops at the file type would either lock Zanmai out of its own bookkeeping or let it into yours. That one folder is also why the view works on your phone: it is the same table and board you see on the desktop, and the underlying rows are plain CSV, so nothing about it needs this app.
 
 On top of that, the folder names Zanmai uses follow the app's lowercase convention, so the vault does not look like two systems stapled together.
 

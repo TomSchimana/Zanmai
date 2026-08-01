@@ -54,7 +54,7 @@ kinds:
     description: people the user knows.
     required: []
     optional:
-      - nickname   # how the user addresses this person (a short form or nickname distinct from the real first name). Empty when first name is the natural address.
+      - nickname   # how the user actually calls this person, when that differs from the first name. Voice notes read it, because it is the form that gets spoken.
       - role       # job title or relationship
       - org        # slug of the organization (resolves to inbox/contacts/organizations/<slug>.md)
       - email

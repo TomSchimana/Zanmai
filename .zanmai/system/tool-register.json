@@ -161,11 +161,12 @@
       }
     },
     "pillow": {
-      "purpose": "image-edit core + media-mark visible label.",
+      "purpose": "image-edit core, the visible label on generated media, and measuring a document render per column.",
       "kind": "python-lib",
       "tier": "on-demand",
       "needed_by": [
-        "loki"
+        "loki",
+        "carol"
       ],
       "detect": {
         "method": "import",
@@ -276,12 +277,13 @@
       }
     },
     "ffmpeg": {
-      "purpose": "Video frames (Reed), video label burn/assembly (Loki).",
+      "purpose": "Video frames (Reed), video label burn and assembly (Loki), and converting a dropped voice note from whatever a phone recorded (m4a, aac, mp3, ogg) into the 16 kHz mono the transcriber needs.",
       "kind": "binary",
       "tier": "on-demand",
       "needed_by": [
         "reed",
-        "loki"
+        "loki",
+        "steve"
       ],
       "os": {
         "macos": {
@@ -369,11 +371,12 @@
       }
     },
     "whisper": {
-      "purpose": "Transcription (Reed video pipeline).",
+      "purpose": "Turns speech into text on this machine, with no network and no key, which is what a spoken journal entry needs. Used for a dropped voice note and for Reed's video and audio pipeline. Takes an initial prompt, which is how the vault's own names bias the recognition.",
       "kind": "binary",
       "tier": "on-demand",
       "needed_by": [
-        "reed"
+        "reed",
+        "steve"
       ],
       "os": {
         "macos": {
@@ -438,7 +441,7 @@
       }
     },
     "poppler": {
-      "purpose": "Checks that fonts are embedded and the PDF is sound (pdffonts, pdfinfo) before a flyer is called done. Optional refinement, not required for a basic render.",
+      "purpose": "Turns a render into pixels and text so it can be measured rather than assumed (pdftoppm for coverage, bleed and the contact sheet; pdftotext to check the text arrived complete; pdffonts to check the fonts are embedded). Without it a document can be built but not verified.",
       "kind": "binary",
       "tier": "on-demand",
       "needed_by": [
@@ -687,6 +690,89 @@
       "provision": {
         "method": "venv-pip",
         "pip": "python-pptx"
+      }
+    },
+    "whisper-model": {
+      "purpose": "The weights whisper runs on. Nothing transcribes without one, so this is the first-use step for voice notes. `large-v3-turbo` is the default: strong on German and fast enough that a two-minute note is seconds rather than minutes. About 1.6 GB, fetched once, and it lives in the machine-local runtime folder so it never travels in a backup.",
+      "kind": "model-file",
+      "tier": "on-demand",
+      "needed_by": [
+        "reed",
+        "steve"
+      ],
+      "detect": {
+        "method": "file-glob",
+        "glob": ".zanmai/runtime/whisper/ggml-*.bin"
+      },
+      "provision": {
+        "method": "file-fetch",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+        "target": ".zanmai/runtime/whisper/ggml-large-v3-turbo.bin",
+        "expect_min_mb": 1000,
+        "canary_cmd": "whisper-cli",
+        "note": "One plain file, so it is fetched rather than unpacked, and it is proven by transcribing a second of silence with it: a file of the right size that does not load is the failure this catches. Machine-local on purpose, so it never travels in a backup."
+      },
+      "os": {
+        "macos": {
+          "install_hint": {
+            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the vault's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
+            "guide": "docs/voice.md"
+          },
+          "verified": true
+        },
+        "linux": {
+          "install_hint": {
+            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the vault's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
+            "guide": "docs/voice.md"
+          },
+          "verified": false
+        },
+        "windows": {
+          "install_hint": {
+            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the vault's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
+            "guide": "docs/voice.md"
+          },
+          "verified": false
+        }
+      }
+    },
+    "ffprobe": {
+      "purpose": "Reads how long a recording is, and whether a media file is what its name claims. Ships with ffmpeg; listed separately because it is invoked separately.",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "reed",
+        "steve",
+        "loki"
+      ],
+      "detect": {
+        "method": "which"
+      },
+      "os": {
+        "macos": {
+          "invoke": "ffprobe",
+          "install_hint": {
+            "text": "comes with ffmpeg",
+            "guide": "docs/install/index.md"
+          },
+          "verified": true
+        },
+        "linux": {
+          "invoke": "ffprobe",
+          "install_hint": {
+            "text": "comes with ffmpeg",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        },
+        "windows": {
+          "invoke": "ffprobe.exe",
+          "install_hint": {
+            "text": "comes with ffmpeg",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        }
       }
     }
   },

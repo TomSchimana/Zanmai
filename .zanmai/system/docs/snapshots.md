@@ -36,7 +36,7 @@ Not for a single edit you asked for directly, where the overhead buys nothing. N
 
 Snapshots are not cleaned out automatically, because only you know which one still matters. The one from before an import is safe to remove once you have checked the result and moved on. Ask to have old ones deleted and the house-keeping specialist lists them first so you can see what you are about to lose.
 
-They live inside the vault, so they travel with it. That also means they are not a backup of the vault: if you lose the folder, you lose the snapshots with it. Keep your own copy of the whole thing as well, which for a preview release is worth doing anyway.
+They live inside the vault, so they travel with it. That also means they are not a backup of the vault: if you lose the folder, you lose the snapshots with it. Keep your own copy of the whole thing as well, which for a preview release is worth doing anyway. If that copy is a synced folder, the snapshots are the one part worth leaving out of it, see [backup and synced folders](backup.md).
 
 ---
 

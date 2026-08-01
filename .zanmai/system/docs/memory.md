@@ -23,6 +23,20 @@ At the start of a session Zanmai reads your profile and your own contact entry. 
 
 The specialists' own notes are read when a conversation touches what they cover, not on every start, so the session does not carry ballast it does not need.
 
+## Why it stays short
+
+Memory that is read at the start of a run costs something every time it is read. Three days of real use produced 678 lines of notes for one specialist, and all of them went into that specialist's context on every job. Left alone that is a file that quietly gets more expensive the more you use Zanmai, and harder to trust: forty rules read at once are not forty rules followed.
+
+So there are two layers, and they are treated differently.
+
+**A rule stays.** The headline and the bounds, where it holds and where it stops, are what applying it needs, and they are short. What moves out is the paragraph explaining how it was learned, into a dated archive beside the file, with a pointer left behind. When you doubt a rule, the reasoning is one click away; when a job just needs to follow it, it is not in the way.
+
+**A rule is never retired by the calendar.** A decision like "do not suggest that tool again" has no expiry date, and rotating it out after two months means it gets suggested again in the third. What leaves the live file is what has been struck: an entry your correction disproved is history the moment it is struck, and history belongs where history is kept.
+
+**What nobody has checked is asked about, not dropped.** A note from work you have not judged yet is provisional. When it is still provisional a month later, Zanmai puts it to you rather than deciding for itself, because the lessons nobody confirmed are exactly the ones that would disappear silently.
+
+**The running log is the opposite case.** It is only ever appended to and only ever searched, never read whole, so its older months move into an archive beside it with one line saying where they went. Searching still finds them.
+
 ## Where the line is
 
 Memory is not a transcript. The conversation itself is not what gets kept; what gets kept is what remains true afterwards. A single fact about a subject belongs in that subject's notes, not in memory. A preference about how you want to be worked with belongs in memory.

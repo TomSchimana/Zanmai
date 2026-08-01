@@ -110,6 +110,22 @@ ask for one.
 The point is fixed values, not description. "Card = 2 mm radius, #e6e6f0, title
 11 pt" cannot drift mid-build the way "rounded lavender cards" can.
 
+**Most of a layout is arithmetic, so it is computed and not decided.** The kit holds
+the knobs, page size, margins, column count, gutter, base size, scale ratio, leading,
+radius, in one `zanmai-parameters` block. `document.py resolve <kit>` works out what
+follows: text area, column measure, type scale, leading, lines per column, and it
+says so when the numbers cannot work, a measure too short to read, a gutter narrower
+than a line, more steps than a scale has. Run it before building, not after: two
+columns on a small page is a forty-character line, which is arithmetic rather than
+taste, and the cheapest place to learn that is before the first render. `--emit-typst`
+hands the same values to the setting, so nothing is typed twice.
+
+This is also what makes the second format cheap. A6 landscape is these few numbers
+changed and everything derived moving with them, not a kit written again. What is
+genuinely not computable, whether a radius carries at a small size, where a caption
+sits, stays a judgement: take the computed value as the default, and where you
+override it, say why in the kit.
+
 **The form ceiling is part of the kit, and it binds.** Each component (quote, table,
 code surface, opener, figure) carries a fixed number of forms, and the kit names it.
 Sorting content across many forms by an explicit rule feels like craftsmanship and
@@ -208,8 +224,22 @@ fresh eyes: the user, on a preview, early rather than at the very end.
   machine it was built on and wrong in the hands it was made for, and nothing about
   that is visible from here. A piece that cannot be handed on is not a deliverable.
 
-The ones a script can decide are decided by a script, not by looking:
-`python3 .zanmai/system/scripts/design-check.py <kit> --tokens <palette> --pdf <render>`
+The ones a script can decide are decided by a script, not by looking. Four
+measurements on the render, each answering a question a look cannot:
+
+- `document.py measure --pdf <render> --columns <n>`: coverage **per column**, not per
+  page. The mean over a page cannot see an empty column, and a page that is 98 percent
+  full on the left and 18 on the right measures 58 and reads as a hole. It reports the
+  worst page, skips colour surfaces where the number means nothing, and writes a
+  contact sheet of every page.
+- `document.py words --source <md> --pdf <render>`: is the text complete and unchanged?
+  Word by word against what the PDF actually contains, hyphenation undone and case
+  ignored. Every difference gets named rather than assumed away.
+- `document.py bleed --pdf <render> --pages <n,n>`: does a colour page really reach all
+  four edges? Measured one row inside the edge as well as at it, because a rasteriser
+  rounds a page up to whole pixels and the outermost line is fill, so reading the
+  corners blind reports a false white edge.
+- `design-check.py <kit> --tokens <palette> --pdf <render>`
 counts the forms per component against the kit's ceiling, finds colour and size
 values that are in neither the brand file nor the kit, verifies that every font is
 embedded, flags container forms with no break-inside guard, and measures how much of

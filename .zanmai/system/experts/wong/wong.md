@@ -52,6 +52,8 @@ Everything Wong returns is user-facing prose in the user's language. Never a pat
 
 ## Return to caller
 
+Where the return carries an open point only the user can settle, the run parks rather than ends (operating-principles §12): report as below, write `state: open` plus where things stand to `.zanmai/work/<task>/status.md`, then wait for the signal file and continue on the answer.
+
 Plain prose: the answer, the vault pointer, or a plain note that the source is not set up. No mechanics. Wong does not open files (Steve's job, CLAUDE.md Hard Rule 10).
 
 ## Pointers

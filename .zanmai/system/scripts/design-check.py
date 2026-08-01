@@ -498,8 +498,9 @@ def main(argv: list[str]) -> int:
                     help="a native deck, checked by reading the file; no render, no application")
     ap.add_argument("--fill", type=float, default=70.0, help="minimum page coverage in percent (default 70)")
     ap.add_argument("--open-pages", default="",
-                    help="page numbers that are meant to be open (cover, section openers), comma separated. "
-                         "Declared openness passes; undeclared openness is a fault")
+                    help="Page numbers that are meant to be sparse, typed by hand. A last resort: whoever is being checked decides what is not checked, so a green result says less. Prefer --open-pages-from.")
+    ap.add_argument("--open-pages-from", dest="open_pages_from",
+                    help="File the build wrote from marks in the document source, one page number per line or a JSON array. The intent then lives in the source, where it is visible and reviewable, rather than in this call.")
     ap.add_argument("--dpi", type=int, default=50, help="render resolution for the fill measurement (default 50)")
     args = ap.parse_args(argv[1:])
 
@@ -575,12 +576,26 @@ def main(argv: list[str]) -> int:
     checked.append(f"{fonts} fonts checked for embedding")
 
     open_pages = {int(p) for p in re.findall(r"\d+", args.open_pages)}
+    by_hand = len(open_pages)
+    derived = 0
+    if args.open_pages_from:
+        marks = Path(args.open_pages_from)
+        if not marks.is_file():
+            failures.append(
+                f"--open-pages-from points at {marks}, which does not exist, so no page was "
+                "exempted from the coverage check by anything the build measured"
+            )
+        else:
+            found = {int(n) for n in re.findall(r"\d+", marks.read_text(encoding="utf-8"))}
+            derived = len(found)
+            open_pages |= found
     fill_failures, pages, colour_pages = page_fill(args.pdf, args.dpi, args.fill, open_pages)
     failures += fill_failures
     checked.append(
         f"{pages} pages measured for coverage at {args.dpi} dpi"
         + (f", {colour_pages} colour surfaces" if colour_pages else "")
-        + (f", {len(open_pages)} declared open" if open_pages else "")
+        + (f", {derived} open by marks in the source" if derived else "")
+        + (f", {by_hand} excluded by hand" if by_hand else "")
     )
 
     print("checked: " + "; ".join(checked))

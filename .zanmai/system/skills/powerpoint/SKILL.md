@@ -33,7 +33,7 @@ Unpack the template copy, set text in the placeholders of `slideN.xml` at run le
 
 When tier three is the honest answer, add slides from the matching master layout and fill placeholders. New native objects (charts with data, tables, shapes, text) are created programmatically and fed with the template's theme and layout values. Pick the layout whose purpose and placeholder set fit the content, rather than building free on a blank. What a browser-shaped instinct would draw as a table is usually already a form in the library.
 
-**Check the theme fonts before trusting anything.** A master can carry a theme face the machine does not have, and then every inheriting placeholder is silently swapped: verified on a real teccle template whose theme is Calibri Light and Calibri, neither installed, which is why its previews came out in a serif nobody chose. Fix the theme in the template once; until then pin the brand face per run.
+**Check the theme fonts before trusting anything.** A master can carry a theme face the machine does not have, and then every inheriting placeholder is silently swapped: verified on a real customer template whose theme was Calibri Light and Calibri, neither installed, which is why its previews came out in a serif nobody chose. Fix the theme in the template once; until then pin the brand face per run.
 
 ## Rules
 

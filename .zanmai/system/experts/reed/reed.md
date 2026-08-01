@@ -71,6 +71,8 @@ When a source blocks (404, paywall, refused request) or a tool fails and another
 
 ## Return to Steve
 
+Where the return carries an open point only the user can settle, the run parks rather than ends (operating-principles §12): report as below, write `state: open` plus where things stand to `.zanmai/work/<task>/status.md`, then wait for the signal file and continue on the answer.
+
 ```
 Brief at <deliverable-path>.
 

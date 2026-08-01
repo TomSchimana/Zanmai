@@ -33,6 +33,8 @@ What was actually accomplished. Concrete artefacts (files written, decisions tak
 
 The single most important next step for the next session. Plus one backup item if there is a natural follow-up. One or two items, not a backlog. The full backlog lives elsewhere, this is the entry point for the next session.
 
+Read it off `zanmai.py work list`, do not compose it from memory of the conversation. Anything still waiting on the user is named here with its short id, because that is the one class of open item the next session cannot work out for itself: the work is done as far as it can go and stopped on a decision. A specialist parked on such a decision does not survive the close (operating-principles §12), so the object and its workshop are what the next session picks up from.
+
 ### Intent
 
 What the user wants in the medium term. The framing the next session should pick up. One paragraph. If the intent did not change this session, write "unchanged" and reference the previous session's intent.
@@ -74,6 +76,10 @@ Create the `YYYY/MM/` folder if missing.
 
 If a realignment is a permanent rule, not a one-off correction, append a bullet to `.zanmai/memory/general.md` under the appropriate section (`## Preferences`, `## Lessons`, `## Decisions`). Link back to the session log with a wikilink.
 
+**Then keep those files to their rules.** Anything appended to memory is read at the start of a later run, so its size is paid for on every dispatch: on a real vault after three days, one specialist's lessons had reached 678 lines and all of it went into that specialist's context each time. So the close runs `zanmai.py memory curate --file <the file just written to>`, which moves struck entries and long reasoning into a dated archive beside the file and leaves the rule and its bounds in place. What it cannot decide it reports: an entry still marked provisional from an earlier month is put to the user, because dropping a lesson nobody ever checked would lose exactly the ones that were never checked. A standing rule is never rotated out by date; a rule has no expiry, and "do not suggest that again" retired after two months means it gets suggested again.
+
+The chronological log is the other case and takes the other treatment: `zanmai.py memory rotate` moves its older months into an archive beside it, leaving one index line. It is searched, not read, so nothing is lost by moving it.
+
 Do not promote everything, this is the high-signal layer.
 
 ### Step 3a: hold the feedback against the lessons already there
@@ -89,6 +95,8 @@ The cost of skipping this is not a missing note, it is a wrong instruction that 
 ### Step 4: confirm
 
 One sentence in the user's writing language confirming the close and naming the one-line Next item for the next session. No internal file paths in the reply, the log lives under `.zanmai/logs/`, the user does not navigate there. The Next item is the substance the user actually wants to hear: what the next session will pick up.
+
+**A session nobody attended closes the same way, into the file rather than the chat.** Its frontmatter carries `session_type: unattended`, which is what makes the next real session mention it. Done and Next are written as always, from what ran and from `zanmai.py work list`. Intent is "unchanged". Realignments is empty, since nobody corrected anything, and an empty section is the honest answer rather than a paragraph invented to fill it.
 
 ### Step 5: mark session end
 

@@ -13,12 +13,38 @@ file reads them from there and holds only what is specific to this format.
 Source templates: <files this format was read from>
 Last refined: <date>, <one line: what changed and why>
 
-## Page (this format)
-- size: <A4 / A3 / custom mm>  (derived from the piece; see the render medium's notes)
-- page margin: <pt>  (equal on all sides unless a template proves otherwise)
-- inner-group gap: <pt>  (smaller than the page margin)
+## Page (this format), as parameters
+
+The knobs, and only the knobs. Everything that follows from them is computed by
+`document.py resolve <this file>`, which prints the text area, the column measure,
+the type scale, the leading and the lines per column, and says so when the numbers
+do not work: a measure too short to read, a gutter narrower than a line, more type
+steps than a scale has. That is what makes a second format cheap, because A6
+landscape is these few numbers changed rather than a kit written again, and every
+derived value moves with them instead of being re-decided.
+
+`--emit-typst` writes the same values as a module the build imports, so the setting
+reads one source and nothing is typed twice.
+
+```zanmai-parameters
+page_width_mm: <210>
+page_height_mm: <297>
+margin_mm: <22>              # equal on all sides unless a template proves otherwise
+margin_top_mm: <optional, when the head needs more room than the foot>
+margin_bottom_mm: <optional>
+columns: <1>                 # per surface type; an opening surface is rarely the body
+gutter_mm: <6>
+base_size_pt: <8.6>
+scale_ratio: <1.25>          # each step up from the base
+scale_steps: <4>
+leading_ratio: <1.45>        # times the base size
+spacing_unit_pt: <optional, defaults to one line of leading>
+radius_mm: <2>               # from brand.md, restated here so the build reads one file
+```
+
 - density budget: <how much this one surface carries before it must split to a second>
-- columns: <per surface type, not one global answer; an opening surface is rarely the body>
+- what a number here may not be: an average of two surface types. An opening surface
+  with its own column count is its own entry, not a compromise in this one.
 
 ## Blocks (the inventory)
 Per block: where it sits, its box + padding, which type levels it uses (from

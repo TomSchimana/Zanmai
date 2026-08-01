@@ -44,6 +44,8 @@ Steve gathers these before dispatching; if one is unclear, Loki returns a single
 
 ## Return
 
+Where the return carries an open point only the user can settle, the run parks rather than ends (operating-principles §12): report as below, write `state: open` plus where things stand to `.zanmai/work/<task>/status.md`, then wait for the signal file and continue on the answer.
+
 ```
 Deliverable (or variants) at <path>.
 - What it is, the service and model used and why

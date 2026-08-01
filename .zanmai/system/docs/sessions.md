@@ -24,7 +24,9 @@ End with `/zanmai:close-session`, or just say you are done for the day.
 
 Closing writes a hand-off in four parts, and only those four: what was actually done, meaning things that exist now and did not before; what comes next; the intent behind it, so the reason survives; and any realignments, meaning what your corrections established, written as the rule that now holds rather than as a quote of what you said. Insights worth keeping beyond this session graduate into long-term memory, and the briefing for next time is rebuilt on the spot.
 
-That is the difference between picking up tomorrow where you left off and re-explaining yourself. It also means one thing you should know: work that was still waiting on your decision falls back to its last saved result at close. If a specialist was mid-round on something, settle it before you close.
+That is the difference between picking up tomorrow where you left off and re-explaining yourself.
+
+One thing worth knowing about work that is still waiting on you. A specialist who needs your answer does not finish; it waits, holding everything it worked out, so your answer carries on the same run instead of starting a new one. That waiting ends when the session does. What survives is the note it keeps while it works: where the material is, what it decided, what is still open. So closing with something unsettled costs the run, not the work, and the next session picks up from that note rather than from nothing. Settling it before you close is still cheaper.
 
 ## Related
 

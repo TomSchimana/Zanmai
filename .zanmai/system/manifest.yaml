@@ -7,19 +7,28 @@
 # distribution_paths get overwritten on update.
 # user_immune_paths are never touched on update.
 
-distribution_version: "0.3.6"
+distribution_version: "0.3.7"
 phase: "phase-1"
 schema_version: "0.1.0"
 
 # where `setup upgrade` looks for a newer version, over HTTPS, so a vault
-# updates whether it was cloned or unpacked from an archive
+# updates whether it was cloned or unpacked from an archive.
+#
+# If you are distributing your own version of this scaffold, this line is not
+# optional to change. Left as it is, every copy you hand out checks OUR repository
+# on every session start, tells your users an update is available, and on yes
+# writes our files over your renamed team and your material. Point it at your own
+# repository, or set update_check to false. The update message names the
+# repository it asked, so a wrong one is visible rather than silent.
 update_source: "TomSchimana/Zanmai"
 update_branch: "main"
+update_check: true
 
 distribution_paths:
   # everything under .zanmai/system/ ships with the distribution
   - "CLAUDE.md"
   - "README.md"
+  - "SECURITY.md"
   - ".gitignore"
   - ".zanmai/system/VERSION"
   - ".zanmai/system/operating-principles.md"
@@ -54,6 +63,7 @@ distribution_paths:
   - ".zanmai/system/scripts/zanmai.py"
   - ".zanmai/system/scripts/image-edit.py"
   - ".zanmai/system/scripts/design-check.py"
+  - ".zanmai/system/scripts/document.py"
   - ".zanmai/system/scripts/typst-canary.typ"
   - ".zanmai/system/scripts/slide-library.py"
   - ".zanmai/system/skills/setup/SKILL.md"
@@ -65,6 +75,7 @@ distribution_paths:
   - ".zanmai/system/skills/notes/SKILL.md"
   - ".zanmai/system/skills/journal/SKILL.md"
   - ".zanmai/system/skills/update/SKILL.md"
+  - ".zanmai/system/skills/voice/SKILL.md"
   - ".zanmai/system/skills/manage-connections/SKILL.md"
   - ".zanmai/system/skills/content-brief/SKILL.md"
   - ".zanmai/system/skills/designer/SKILL.md"
@@ -96,6 +107,9 @@ distribution_paths:
   - ".zanmai/system/templates/design-kit.md"
   - ".zanmai/system/templates/technique-note.md"
   - ".zanmai/system/docs/folder-architecture.md"
+  - ".zanmai/system/docs/work.md"
+  - ".zanmai/system/docs/voice.md"
+  - ".zanmai/system/docs/backup.md"
   - ".zanmai/system/docs/operating-principles.md"
   - ".zanmai/system/docs/snapshots.md"
   - ".zanmai/system/docs/skills-and-scripts.md"

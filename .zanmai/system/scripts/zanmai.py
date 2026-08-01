@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -46,7 +47,7 @@ KIND_FIELDS = {
     "focus": {"required": ("goal", "status"), "optional": ("due",)},
     "habit": {"required": ("cadence",), "optional": ("last_done",)},
     "knowledge": {"required": (), "optional": ("topic", "status")},
-    "contact/person": {"required": (), "optional": ("role", "org", "email", "phone", "birthday", "address", "website")},
+    "contact/person": {"required": (), "optional": ("nickname", "role", "org", "email", "phone", "birthday", "address", "website")},
     "contact/organization": {"required": (), "optional": ("kind_of", "website")},
 }
 
@@ -141,11 +142,18 @@ def _split_frontmatter(content: str) -> tuple[dict, list[str], str]:
             continue
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$", line)
         if m:
-            key, value = m.group(1), m.group(2).strip()
-            value = value.strip('"').strip("'")
+            key, raw = m.group(1), m.group(2).strip()
             if key not in fm:
                 order.append(key)
-            fm[key] = value if value else ""
+            # An inline flow sequence is a list, not a string. Read as a string it
+            # survives one round-trip as `key: "[a, b, c]"`, which is a single
+            # nonsense value where five tags used to be.
+            if raw.startswith("[") and raw.endswith("]"):
+                items = [i.strip().strip('"').strip("'") for i in raw[1:-1].split(",")]
+                fm[key] = [i for i in items if i]
+            else:
+                value = raw.strip('"').strip("'")
+                fm[key] = value if value else ""
             current_key = key
     return fm, order, body
 
@@ -172,14 +180,26 @@ def _render_frontmatter(fm: dict, order: list[str]) -> str:
 
 
 def _migrate_frontmatter(source_fm: dict, source_order: list[str], *, kind: str, slug: str,
-                          additions: dict) -> tuple[dict, list[str], dict]:
-    """Build target frontmatter from source plus required additions.
+                          additions: dict, overrides: dict | None = None) -> tuple[dict, list[str], dict]:
+    """Build target frontmatter from what the source carries, filled up where it is silent.
+
+    Three classes, and the order between them is the whole point:
+    `overrides` win over the source (where the file lands defines `kind` and `slug`,
+    and a value the user typed on the command line beats a stale one in the file),
+    the source comes next, and `additions` are defaults that only apply where the
+    source says nothing. The other way round, a default overwrote a field the file
+    already had correct: an AI-written research note arrived declaring
+    `source: organic`, which claims the user wrote it themselves. Nobody notices
+    that, and provenance is exactly the field where nobody noticing is the damage.
 
     Returns (target_fm, target_order, leftover-non-schema-fields).
     Non-schema keys are filtered out and returned as leftover so the caller can
     append them to the body under `## Original metadata`.
     """
     allowed = _allowed_keys_for_kind(kind)
+    overrides = dict(overrides or {})
+    overrides.setdefault("kind", kind)
+    overrides.setdefault("slug", slug)
     target_fm: dict = {}
     target_order: list[str] = []
     leftover: dict = {}
@@ -191,14 +211,17 @@ def _migrate_frontmatter(source_fm: dict, source_order: list[str], *, kind: str,
     canonical_order += list(COMMON_OPTIONAL)
     canonical_order += list(fields["optional"])
 
-    # Build from additions plus source for allowed keys.
+    # Overrides first, then what the source carries, then defaults for what is missing.
     for key in canonical_order:
-        if key in additions:
-            target_fm[key] = additions[key]
-            target_order.append(key)
-        elif key in source_fm and key in allowed:
+        if key in overrides:
+            target_fm[key] = overrides[key]
+        elif key in source_fm and key in allowed and source_fm[key] not in ("", [], None):
             target_fm[key] = source_fm[key]
-            target_order.append(key)
+        elif key in additions:
+            target_fm[key] = additions[key]
+        else:
+            continue
+        target_order.append(key)
 
     # Source fields that are not in the schema go to leftover.
     for key in source_order:
@@ -206,6 +229,24 @@ def _migrate_frontmatter(source_fm: dict, source_order: list[str], *, kind: str,
             leftover[key] = source_fm[key]
 
     return target_fm, target_order, leftover
+
+
+def _work_is_open(work_task_dir: Path) -> bool:
+    """Does this workshop declare itself open, in `status.md` frontmatter `state:`?
+
+    Read leniently on purpose: only an explicit `state: done` (or `closed`) marks a
+    workshop finished. An unreadable or `state:`-less status file counts as open, so
+    a malformed line can cost disk but never the work.
+    """
+    status = work_task_dir / "status.md"
+    if not status.is_file():
+        return False
+    try:
+        fm, _, _ = _split_frontmatter(status.read_text(encoding="utf-8"))
+    except OSError:
+        return True
+    state = str(fm.get("state", "")).strip().lower()
+    return state not in ("done", "closed")
 
 
 def _render_original_metadata_block(leftover: dict) -> str:
@@ -266,14 +307,20 @@ def _render_truth_file(*, kind: str, slug: str, additions: dict) -> str:
         "kind": kind,
         "slug": slug,
         "created": _today(),
-        "source": "ai-generated",
+        "source": additions.get("source", "ai-generated"),
     }
     fields = KIND_FIELDS.get(kind, {"required": (), "optional": ()})
-    for key in fields["required"] + fields["optional"]:
+    # COMMON_OPTIONAL belongs in this pickup too. Without it, `source_detail` and
+    # `tags` were accepted on the command line and silently dropped on the way in.
+    for key in tuple(COMMON_OPTIONAL) + fields["required"] + fields["optional"]:
         if key in additions:
             fm[key] = additions[key]
-    order = list(COMMON_REQUIRED) + ["source"] + list(fields["required"]) + list(fields["optional"])
-    fm_text = _render_frontmatter(fm, [k for k in order if k in fm])
+    order: list[str] = []
+    for key in (list(COMMON_REQUIRED) + ["source"] + list(COMMON_OPTIONAL)
+                + list(fields["required"]) + list(fields["optional"])):
+        if key in fm and key not in order:
+            order.append(key)
+    fm_text = _render_frontmatter(fm, order)
     return f"{fm_text}\n# {title}\n\n(Content to follow.)\n"
 
 
@@ -325,7 +372,7 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
     is_sub_bundle = len(segments) > 1
 
     additions: dict = {"_title": args.title or slug.replace("-", " ").title()}
-    for key in ("goal", "status", "cadence", "due", "topic", "last_done"):
+    for key in ("source", "source_detail", "goal", "status", "cadence", "due", "topic", "last_done"):
         v = getattr(args, key, None)
         if v:
             additions[key] = v
@@ -381,16 +428,18 @@ def cmd_copy_into_bundle(args: argparse.Namespace) -> int:
     content = source.read_text(encoding="utf-8")
     source_fm, source_order, body = _split_frontmatter(content)
 
+    target_kind = args.target_kind or bundle_kind
+    # Where the file lands decides these two; everything else fills gaps only.
+    overrides = {"kind": target_kind, "slug": target_slug}
     additions = {
-        "kind": args.target_kind or bundle_kind,
-        "slug": target_slug,
         "created": _today(),
         "source": "organic",
         "source_detail": f"import:{source.name}",
     }
 
     target_fm, target_order, leftover = _migrate_frontmatter(
-        source_fm, source_order, kind=additions["kind"], slug=target_slug, additions=additions
+        source_fm, source_order, kind=target_kind, slug=target_slug,
+        additions=additions, overrides=overrides,
     )
 
     fm_text = _render_frontmatter(target_fm, target_order)
@@ -398,7 +447,16 @@ def cmd_copy_into_bundle(args: argparse.Namespace) -> int:
     target.write_text(f"{fm_text}\n{body.rstrip()}\n{leftover_block}", encoding="utf-8")
 
     bundle_rel = target.parent.relative_to(vault).as_posix()
-    _append_index(bundle_dir / "INDEX.md", target_slug, summary=source.stem)
+    # The index line describes the member, so it takes the file's own topic or title
+    # where it has one. The bare source stem told the reader nothing the wikilink did
+    # not already say, and had to be replaced by hand afterwards.
+    summary = ""
+    for key in ("topic", "goal", "_title", "title"):
+        value = target_fm.get(key)
+        if isinstance(value, str) and value.strip():
+            summary = value.strip()
+            break
+    _append_index(bundle_dir / "INDEX.md", target_slug, summary=summary or source.stem)
     _append_activity_log(
         vault, "zanmai.py",
         f"copied {source.name} into {bundle_rel}/ (body verbatim, "
@@ -645,6 +703,1225 @@ def cmd_update_wikilinks(args: argparse.Namespace) -> int:
         for f in files_touched:
             print(f"  {f}")
     print(f"ok: {occurrences} occurrence(s) rewritten in {len(files_touched)} file(s)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Changing what already exists.
+#
+# The tool could create and not change, so every correction went out through raw
+# file writes: past the frontmatter guard, past the index update, past the log.
+# Twenty-seven gap entries across ten runs, always the same shape. These are the
+# four operations those entries asked for.
+# ---------------------------------------------------------------------------
+
+
+def _edit_frontmatter_in_place(path: Path, sets: dict, removes: list[str]) -> tuple[int, list[str]]:
+    """Set or remove frontmatter fields, leaving the body byte-for-byte alone.
+
+    Returns (number of fields changed, notes). A field not in the schema for this
+    file's kind is refused rather than written, because the hook would refuse the
+    file afterwards and the caller would be left with a file it cannot save.
+    """
+    text = path.read_text(encoding="utf-8")
+    fm, order, body = _split_frontmatter(text)
+    if not fm:
+        return 0, ["file has no frontmatter block"]
+    allowed = _allowed_keys_for_kind(str(fm.get("kind", "")))
+    changed = 0
+    notes: list[str] = []
+    for key, value in sets.items():
+        if allowed and key not in allowed:
+            notes.append(f"refused '{key}': not in the schema for kind '{fm.get('kind')}'")
+            continue
+        new_value: str | list[str] = value
+        if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
+            new_value = [i.strip() for i in value[1:-1].split(",") if i.strip()]
+        if fm.get(key) == new_value:
+            continue
+        if key not in fm:
+            order.append(key)
+        fm[key] = new_value
+        changed += 1
+    for key in removes:
+        if key in fm:
+            fm.pop(key)
+            order = [k for k in order if k != key]
+            changed += 1
+    if changed:
+        path.write_text(_render_frontmatter(fm, order) + body, encoding="utf-8")
+    return changed, notes
+
+
+def _parse_set_pairs(pairs: list[str]) -> dict:
+    out: dict = {}
+    for pair in pairs or []:
+        if "=" not in pair:
+            raise ValueError(f"--set expects key=value, got '{pair}'")
+        key, value = pair.split("=", 1)
+        out[key.strip()] = value.strip()
+    return out
+
+
+def cmd_bundle_set_body(args: argparse.Namespace) -> int:
+    """Replace the body of a file in a bundle. Frontmatter is untouched.
+
+    Refuses to overwrite a body that already has content unless --replace is given,
+    because the body is where the user's own writing lives (operating-principles
+    section 2) and a silent overwrite is the one mistake this whole tool exists to
+    prevent.
+    """
+    vault = Path(args.vault).resolve()
+    target = _resolve_vault_file(vault, args.file)
+    if target is None:
+        print(f"fail: no such file in the vault: {args.file}", file=sys.stderr)
+        return 1
+    new_body = (Path(args.body_file).read_text(encoding="utf-8")
+                if args.body_file else sys.stdin.read())
+    text = target.read_text(encoding="utf-8")
+    fm, order, old_body = _split_frontmatter(text)
+    if not fm:
+        print(f"fail: {target.relative_to(vault)} has no frontmatter; refusing to write a body into it",
+              file=sys.stderr)
+        return 1
+    meaningful = [ln for ln in old_body.splitlines() if ln.strip() and not ln.startswith("#")]
+    if meaningful and not args.replace:
+        print(f"fail: {target.relative_to(vault)} already has {len(meaningful)} line(s) of body. "
+              f"Pass --replace to overwrite, and be sure it is not the user's own writing.",
+              file=sys.stderr)
+        return 1
+    if not new_body.startswith("\n"):
+        new_body = "\n" + new_body
+    target.write_text(_render_frontmatter(fm, order) + new_body.rstrip() + "\n", encoding="utf-8")
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"wrote body of {target.relative_to(vault)} "
+                         f"({len(meaningful)} line(s) replaced, {len(new_body.splitlines())} written)")
+    print(f"ok: body written to {target.relative_to(vault)} "
+          f"({len(meaningful)} line(s) replaced, {len(new_body.splitlines())} written)")
+    return 0
+
+
+def cmd_bundle_edit_file(args: argparse.Namespace) -> int:
+    """Correct frontmatter fields of an existing file in place. Body untouched."""
+    vault = Path(args.vault).resolve()
+    target = _resolve_vault_file(vault, args.file)
+    if target is None:
+        print(f"fail: no such file in the vault: {args.file}", file=sys.stderr)
+        return 1
+    try:
+        sets = _parse_set_pairs(args.set)
+    except ValueError as exc:
+        print(f"fail: {exc}", file=sys.stderr)
+        return 1
+    changed, notes = _edit_frontmatter_in_place(target, sets, args.remove or [])
+    for note in notes:
+        print(f"  {note}")
+    if changed:
+        _append_activity_log(vault, args.agent or "zanmai.py",
+                             f"edited frontmatter of {target.relative_to(vault)} ({changed} field(s))")
+    print(f"ok: {changed} of {len(sets) + len(args.remove or [])} requested field(s) changed "
+          f"in {target.relative_to(vault)}")
+    return 1 if notes and not changed else 0
+
+
+def cmd_contact_update(args: argparse.Namespace) -> int:
+    """Enrich an existing contact: set frontmatter fields, optionally append body lines.
+
+    The path a stub takes from auto-created to filled in. Appending never rewrites
+    what is already in the body.
+    """
+    vault = Path(args.vault).resolve()
+    candidates = [vault / "inbox" / "contacts" / sub / f"{args.slug}.md"
+                  for sub in ("people", "organizations")]
+    target = next((c for c in candidates if c.is_file()), None)
+    if target is None:
+        print(f"fail: no contact '{args.slug}' under inbox/contacts/", file=sys.stderr)
+        return 1
+    try:
+        sets = _parse_set_pairs(args.set)
+    except ValueError as exc:
+        print(f"fail: {exc}", file=sys.stderr)
+        return 1
+    changed, notes = _edit_frontmatter_in_place(target, sets, args.remove or [])
+    for note in notes:
+        print(f"  {note}")
+    appended = 0
+    if args.append:
+        text = target.read_text(encoding="utf-8")
+        addition = "\n".join(args.append)
+        target.write_text(text.rstrip() + "\n\n" + addition + "\n", encoding="utf-8")
+        appended = len(args.append)
+    if changed or appended:
+        _append_activity_log(vault, args.agent or "zanmai.py",
+                             f"updated contact {args.slug} ({changed} field(s), {appended} line(s) appended)")
+    print(f"ok: contact {args.slug}: {changed} of {len(sets) + len(args.remove or [])} "
+          f"field(s) changed, {appended} line(s) appended")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Keeping memory readable: rotate the record, curate the rules.
+#
+# Two different problems that look like one. A chronological record (the activity
+# log) only ever grows and is read by grep, so it wants rotating by month and never
+# reading whole. A rules file (an agent's lessons, the general memory) is read at the
+# start of every run, so its size is paid for on every dispatch: measured on a real
+# vault after three days of use, one agent's lessons had reached 48 KB across 42
+# entries, and that whole file went into the run's context each time.
+#
+# The move that works on the rules file is NOT rotating by date. A standing rule has
+# no expiry, and "do not suggest that tool again" rotated out in September means it
+# gets suggested again in September. What rotates is the *why*: the headline and the
+# bounds are what a run needs to apply a rule, the paragraph explaining how it was
+# learned is what a person needs when they doubt it. So the rule stays and the
+# reasoning moves, leaving a pointer. A struck entry leaves altogether, because its
+# whole content is that it no longer applies.
+# ---------------------------------------------------------------------------
+
+# The status field is optional, and that is not a detail: entries written without one
+# did not match a stricter pattern, were swallowed into the entry above them, and got
+# archived along with its reasoning. A rule silently disappearing is the worst thing
+# this command could do, so the headline is what is required and everything else is
+# read only when it is there.
+LESSON_HEAD = re.compile(r"^##\s+\[(\d{4}-\d{2})-\d{2}\]\s*(.+)$")
+STATUS_WORDS = ("provisional", "confirmed", "standing", "struck", "disproven",
+                "withdrawn", "retracted", "partly")
+
+
+def _split_status(remainder: str) -> tuple[str, str]:
+    """Pull a leading status off a headline, only where one is actually there.
+
+    Splitting on the first dash would turn a headline that happens to contain one
+    into a status, so the part before it has to look like a status to count as one.
+    """
+    for sep in (" \u2014 ", " - "):
+        if sep in remainder:
+            head, rest = remainder.split(sep, 1)
+            if any(word in head.lower() for word in STATUS_WORDS):
+                return head.strip(), rest.strip()
+    return "", remainder.strip()
+WHY_LINE = re.compile(r"^\s*-\s+\*\*Why:\*\*")
+STRUCK_MARKERS = ("struck", "disproven", "withdrawn", "retracted")
+
+
+def _archive_dir(source: Path) -> Path:
+    return source.parent / f"{source.stem}-archive"
+
+
+def _split_lesson_entries(text: str) -> tuple[str, list[tuple[str, str, str, list[str]]]]:
+    """(preamble, [(month, status, headline, body-lines)]) for a lessons file."""
+    lines = text.split("\n")
+    # Every `## ` line is a boundary, whether or not it carries a date. A heading this
+    # command does not understand must still end the entry above it, or it gets carried
+    # off with that entry's reasoning. Entries with no date are kept exactly as they
+    # are: not trimmed, not archived, not reordered.
+    starts = [i for i, line in enumerate(lines) if line.startswith("## ")]
+    if not starts:
+        return text, []
+    preamble = "\n".join(lines[:starts[0]]).rstrip() + "\n"
+    entries = []
+    for n, start in enumerate(starts):
+        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        match = LESSON_HEAD.match(lines[start])
+        if match is None:
+            entries.append(("", "keep", lines[start], lines[start + 1:end]))
+            continue
+        status, _headline = _split_status(match.group(2))
+        entries.append((match.group(1), status, lines[start], lines[start + 1:end]))
+    return preamble, entries
+
+
+def cmd_memory_curate(args: argparse.Namespace) -> int:
+    """Move what a run does not need out of a rules file, keep every rule that stands.
+
+    Three moves, and only the first two are a script's business:
+      1. A struck or disproven entry leaves the file entirely. It is history the
+         moment it is struck, and history belongs where history is read.
+      2. A long `Why:` block moves to the archive and leaves a pointer. The headline
+         and the bounds stay, because those are what applying the rule needs.
+      3. An entry still marked provisional after a while is reported, not touched.
+         Confirming or striking it is a judgement, and quietly dropping an unconfirmed
+         lesson would lose exactly the ones that were never checked.
+    """
+    vault = Path(args.vault).resolve()
+    source = Path(args.file)
+    if not source.is_absolute():
+        source = vault / args.file
+    if not source.is_file():
+        print(f"fail: no such memory file: {args.file}", file=sys.stderr)
+        return 1
+
+    text = source.read_text(encoding="utf-8")
+    preamble, entries = _split_lesson_entries(text)
+    if not entries:
+        print(f"ok: {source.relative_to(vault)} has no dated entries, nothing to curate "
+              f"({len(text.splitlines())} line(s))")
+        return 0
+
+    kept: list[tuple[str, str, list[str]]] = []
+    archived: dict[str, list[str]] = {}
+    moved_out = 0
+    trimmed = 0
+    provisional_old = []
+    today = _today()
+
+    for month, status, head, body in entries:
+        lowered = status.lower()
+        if status == "keep" and not month:
+            kept.append((head, status, body))
+            continue
+        if any(marker in lowered for marker in STRUCK_MARKERS):
+            archived.setdefault(month, []).extend([head, *body, ""])
+            moved_out += 1
+            continue
+        why_at = next((i for i, line in enumerate(body) if WHY_LINE.match(line)), None)
+        if why_at is not None:
+            why_block = body[why_at:]
+            if len([line for line in why_block if line.strip()]) > args.why_lines:
+                archived.setdefault(month, []).extend([head, *why_block, ""])
+                pointer = (f"- **Why:** moved to `{_archive_dir(source).name}/{month}.md` "
+                           f"to keep this file to the rules themselves.")
+                body = body[:why_at] + [pointer]
+                trimmed += 1
+        if "provisional" in lowered and "confirmed" not in lowered:
+            if month < today[:7]:
+                provisional_old.append(head)
+        kept.append((head, status, body))
+
+    if args.dry_run:
+        print(f"would keep {len(kept)} entry/entries, move {moved_out} struck one(s) out, "
+              f"trim {trimmed} reasoning block(s)")
+    else:
+        if archived:
+            adir = _archive_dir(source)
+            adir.mkdir(exist_ok=True)
+            for month, lines in sorted(archived.items()):
+                target = adir / f"{month}.md"
+                existing = target.read_text(encoding="utf-8") if target.is_file() else (
+                    f"# {source.stem}, {month}\n\n"
+                    "Struck entries and the reasoning behind entries that still stand. Read when a "
+                    "rule is in doubt or a pattern is being traced, never at the start of a run.\n\n"
+                )
+                target.write_text(existing.rstrip() + "\n\n" + "\n".join(lines).rstrip() + "\n",
+                                  encoding="utf-8")
+        out = [preamble.rstrip(), ""]
+        for head, _status, body in kept:
+            out.append(head)
+            out.extend(body)
+            if body and body[-1].strip():
+                out.append("")
+        if archived:
+            out.append(f"Older reasoning and struck entries: `{_archive_dir(source).name}/`\n")
+        source.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+        _append_activity_log(vault, args.agent or "zanmai.py",
+                             f"curated {source.relative_to(vault)} "
+                             f"({moved_out} struck moved out, {trimmed} reasoning block(s) archived)")
+
+    before = len(text.splitlines())
+    after = len(source.read_text(encoding="utf-8").splitlines()) if not args.dry_run else before
+    print(f"ok: {source.relative_to(vault)}: {len(entries)} entry/entries, {len(kept)} still stand, "
+          f"{moved_out} struck moved out, {trimmed} reasoning block(s) archived, "
+          f"{before} lines to {after}")
+    if provisional_old:
+        print(f"    {len(provisional_old)} entry/entries are still provisional from an earlier month. "
+              "Confirm or strike them; a script must not drop a lesson nobody checked:")
+        for head in provisional_old[:args.show]:
+            print(f"      {head[:110]}")
+    return 0
+
+
+def cmd_memory_rotate(args: argparse.Namespace) -> int:
+    """Move a chronological log's older months into an archive, leaving an index.
+
+    For a record that is only ever appended to and only ever read by searching, which
+    is what the activity log is. Nothing is lost; it moves to where the search still
+    finds it and the read at session start does not.
+    """
+    vault = Path(args.vault).resolve()
+    source = Path(args.file)
+    if not source.is_absolute():
+        source = vault / args.file
+    if not source.is_file():
+        print(f"fail: no such log: {args.file}", file=sys.stderr)
+        return 1
+    text = source.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    keep_from = args.keep_months
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=31 * keep_from)).strftime("%Y-%m")
+    header = []
+    by_month: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines:
+        match = re.match(r"^##\s+\[(\d{4}-\d{2})-\d{2}", line)
+        if match:
+            current = match.group(1)
+        if current is None:
+            header.append(line)
+            continue
+        by_month.setdefault(current, []).append(line)
+    old = {m: ls for m, ls in by_month.items() if m < cutoff}
+    if not old:
+        print(f"ok: nothing older than {cutoff} in {source.relative_to(vault)} "
+              f"({len(by_month)} month(s), {len(lines)} line(s)); nothing moved")
+        return 0
+    adir = _archive_dir(source)
+    if not args.dry_run:
+        adir.mkdir(exist_ok=True)
+        for month, month_lines in sorted(old.items()):
+            target = adir / f"{month}.md"
+            existing = target.read_text(encoding="utf-8") if target.is_file() else (
+                f"# {source.stem}, {month}\n\n"
+                "Moved out of the live log so it stays short. Searched, not read.\n"
+            )
+            target.write_text(existing.rstrip() + "\n\n" + "\n".join(month_lines).rstrip() + "\n",
+                              encoding="utf-8")
+        rest = [ln for m, ls in sorted(by_month.items()) if m >= cutoff for ln in ls]
+        index = [f"Earlier months: `{adir.name}/` ("
+                 + ", ".join(sorted(old)) + ")"]
+        source.write_text("\n".join(header).rstrip() + "\n\n" + "\n".join(index) + "\n\n"
+                          + "\n".join(rest).rstrip() + "\n", encoding="utf-8")
+        _append_activity_log(vault, "zanmai.py",
+                             f"rotated {source.relative_to(vault)} ({len(old)} month(s) archived)")
+    moved = sum(len(ls) for ls in old.values())
+    print(f"ok: {source.relative_to(vault)}: {len(old)} month(s) moved to {adir.name}/ "
+          f"({moved} line(s)), {len(by_month) - len(old)} month(s) left in place")
+    return 0
+
+
+MEMORY_READ_EVERY_RUN = (
+    (".zanmai/memory/general.md", 400),
+    (".zanmai/memory/agents/*/lessons.md", 400),
+    (".zanmai/memory/technique/*.md", 400),
+)
+
+
+def _memory_size_report(vault: Path) -> list[str]:
+    """Files that go into a run's context, and whether any has outgrown being read.
+
+    A line budget rather than a byte one, because that is what a person editing the
+    file can see. The threshold is a prompt to curate, not a failure: nothing is
+    broken, it is just being paid for on every dispatch.
+    """
+    notes = []
+    for pattern, limit in MEMORY_READ_EVERY_RUN:
+        for path in sorted(vault.glob(pattern)):
+            if not path.is_file():
+                continue
+            count = len(path.read_text(encoding="utf-8").splitlines())
+            if count > limit:
+                notes.append(
+                    f"{path.relative_to(vault)} is {count} lines and is read at the start of a run. "
+                    f"Over {limit} it is worth curating: `memory curate --file "
+                    f"{path.relative_to(vault)}` moves struck entries and old reasoning out and "
+                    "leaves the rules."
+                )
+    return notes
+
+
+# ---------------------------------------------------------------------------
+# Voice notes: speech in, and the vault is what makes the transcript accurate.
+#
+# A dropped recording is the cheapest way to get something into the vault, and the
+# worst thing about it is always the same: speech to text mangles exactly the words
+# that carry the meaning, the names. A person, a nickname, a product, a project.
+# Zanmai has an advantage no general transcriber has, and it grows with use: the vault
+# already holds those names. So they are handed to the recogniser BEFORE it starts, as
+# an initial prompt, which biases it toward the words that occur in this life rather
+# than the words that are common in general. What it still gets wrong is corrected
+# against the same list afterwards, and every substitution is written down, because
+# silently rewriting what someone said is worse than the error.
+#
+# Local, not a service. A spoken journal entry is the most private material in the
+# vault, so it is transcribed on this machine, with no key and nothing uploaded.
+# ---------------------------------------------------------------------------
+
+AUDIO_EXTS = (".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac",
+              ".aiff", ".aif", ".caf", ".amr", ".wma", ".mp4", ".m4b", ".mov")
+
+# whisper accepts an initial prompt of at most half its text context, a few hundred
+# tokens. So the list has to be short and ordered by what gets mangled most: people
+# first, then the organisations and products around them, then recurring subjects. A
+# longer list would simply be cut off at an arbitrary point.
+LEXICON_BUDGET_CHARS = 800
+
+
+def _tool_path(vault: Path, tool_id: str) -> str | None:
+    """Where this machine's copy of a registered tool is, or None.
+
+    Goes through the register rather than calling `which` on a hard-coded name, which
+    is what the register is for: the invocation name differs per platform (a `.exe` on
+    Windows), and a tool this vault fetched itself sits in its own runtime tree and is
+    not on PATH at all. Asking `which` for one spelling gets both of those wrong.
+    """
+    spec = (_load_register().get("tools") or {}).get(tool_id)
+    if not spec:
+        return shutil.which(tool_id)
+    found = _detect_tool(vault, tool_id, spec, _current_os())
+    if found.get("present") and found.get("path"):
+        return found["path"]
+    if found.get("present"):
+        osspec = (spec.get("os") or {}).get(_current_os()) or {}
+        return shutil.which(osspec.get("invoke") or tool_id)
+    return None
+
+
+def _recordings_dir(vault: Path) -> Path:
+    d = vault / "_import" / "recordings"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _audio_duration(path: Path, vault: Path | None = None) -> float | None:
+    probe = (_tool_path(vault, "ffprobe") if vault else None) or shutil.which("ffprobe")
+    if not probe:
+        return None
+    try:
+        out = subprocess.run(
+            [probe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            check=True, capture_output=True, text=True).stdout.strip()
+        return float(out)
+    except (subprocess.CalledProcessError, ValueError):
+        return None
+
+
+def _spoken_length(seconds: float) -> str:
+    """Seconds under a minute, because "0 min" for a 13-second note reads as broken."""
+    if seconds < 60:
+        return f"{seconds:.0f} sec"
+    return f"{seconds / 60:.1f} min"
+
+
+# The file's own date orders the set, because a recorder writes it against the local
+# clock the moment the recording is made, while arrival is not something the speaker
+# controls: a note spoken in a dead spot or at the gym syncs whenever it syncs. What the
+# name says is the fallback, for a file that carries no usable date, and otherwise the
+# cross-check: where the two disagree, something is wrong and it is said rather than
+# quietly sorted.
+_NAME_STAMP_PATTERNS = (
+    # 2026-08-01 14-32-05, 2026-08-01_1432, 20260801-1432, with any separators
+    re.compile(r"(?P<y>20\d{2})[-_.]?(?P<mo>\d{2})[-_.]?(?P<d>\d{2})"
+               r"(?:[-_.T ]?(?P<h>\d{2})[-_.:]?(?P<mi>\d{2})(?:[-_.:]?(?P<s>\d{2}))?)?"),
+)
+_NAME_SEQ_PATTERN = re.compile(r"(?:^|[^0-9])(\d{1,5})(?=[^0-9]*$)")
+
+
+def _recording_name_key(path: Path) -> tuple[int, float, str, str] | None:
+    """What the file name says about when this was recorded, or None if it says nothing."""
+    for pattern in _NAME_STAMP_PATTERNS:
+        m = pattern.search(path.name)
+        if not m:
+            continue
+        parts = m.groupdict()
+        try:
+            stamp = datetime(int(parts["y"]), int(parts["mo"]), int(parts["d"]),
+                             int(parts["h"] or 0), int(parts["mi"] or 0), int(parts["s"] or 0),
+                             tzinfo=timezone.utc)
+        except ValueError:
+            break
+        return (1, stamp.timestamp(), "name", stamp.strftime("%Y-%m-%d %H:%M"))
+    seq = _NAME_SEQ_PATTERN.search(path.stem)
+    if seq:
+        return (2, float(seq.group(1)), "number", f"no. {seq.group(1)}")
+    return None
+
+
+def _recording_order_key(path: Path) -> tuple[int, float, str, str]:
+    """(rank, value, basis, shown) so the order can be explained, not just applied.
+
+    Rank 0 is the file's own date, which is when the recording was made. Rank 1 and 2 are
+    what the name says, a timestamp or a running number, used when there is no date to
+    read. Mixing them in one folder is normal, so they are ranked rather than compared as
+    if they were the same kind of thing.
+    """
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    if mtime:
+        return (0, mtime, "file date",
+                datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M"))
+    return _recording_name_key(path) or (3, 0.0, "no signal", "unknown")
+
+
+def _recording_order_disagreement(files: list[Path]) -> str | None:
+    """Where the dates and the names tell different stories, name the pair.
+
+    Both orders are cheap to compute and they should agree. When they do not, one of the
+    two has been rewritten somewhere between the recorder and this folder, and sorting on
+    regardless is how a correction ends up before the thing it corrects.
+    """
+    named = [(f, _recording_name_key(f)) for f in files]
+    if any(key is None for _f, key in named):
+        return None  # a name that says nothing about order cannot contradict anything
+    if len({key[0] for _f, key in named}) != 1:
+        return None  # timestamps in some names and running numbers in others: not comparable
+    by_name = [f for f, _k in sorted(named, key=lambda pair: pair[1][1])]
+    by_date = sorted(files, key=_recording_order_key)
+    if by_name == by_date:
+        return None
+    for a, b in zip(by_date, by_name):
+        if a != b:
+            return f"{a.name} vs {b.name}"
+    return "order differs"
+
+
+def _pending_recordings(vault: Path) -> list[Path]:
+    folder = _recordings_dir(vault)
+    return sorted((f for f in folder.iterdir()
+                   if f.is_file() and f.suffix.lower() in AUDIO_EXTS),
+                  key=_recording_order_key)
+
+
+def cmd_voice_scan(args: argparse.Namespace) -> int:
+    """What is waiting to be transcribed, oldest first, with the count said out loud.
+
+    Oldest first because several notes recorded in a row are usually one train of
+    thought, and the order they were spoken in is the order they make sense in.
+    """
+    vault = Path(args.vault).resolve()
+    folder = _recordings_dir(vault)
+    files = _pending_recordings(vault)
+    other = sorted(f.name for f in folder.iterdir()
+                   if f.is_file() and f.suffix.lower() not in AUDIO_EXTS
+                   and not f.name.startswith("."))
+    total = 0.0
+    bases: dict[str, int] = {}
+    for f in files:
+        seconds = _audio_duration(f)
+        _rank, _value, basis, shown = _recording_order_key(f)
+        bases[basis] = bases.get(basis, 0) + 1
+        length = _spoken_length(seconds) if seconds else "length unknown"
+        if seconds:
+            total += seconds
+        print(f"{shown:>16}  {length:>14}  ({basis})  {f.name}")
+    print(f"ok: {len(files)} recording(s) waiting in _import/recordings/"
+          + (f", {_spoken_length(total)} in total" if total else "")
+          + (f", {len(other)} other file(s) left alone" if other else ""))
+    if files:
+        print("    ordered oldest first, by "
+              + ", ".join(f"{basis} ({count})" for basis, count in sorted(bases.items())))
+        clash = _recording_order_disagreement(files)
+        if clash:
+            print(f"    dates and names disagree ({clash}). Something rewrote one of the two; "
+                  "read the notes before trusting the sequence.")
+    if other:
+        print("    not audio: " + ", ".join(other[:5]))
+    return 0
+
+
+def cmd_voice_lexicon(args: argparse.Namespace) -> int:
+    """The names this vault holds, as a head start for the recogniser.
+
+    Second line of defence, deliberately small. The first line is reading the transcript
+    and understanding it: a garbled word gets resolved the way a person resolves a typo,
+    from the sense of the sentence, and that needs no list at all. What understanding
+    cannot reach is a surname nobody could infer, a company spelled a particular way, a
+    term only this vault uses. That is what this is for, and it is worth having: measured,
+    it fixed every name in a note where full names were spoken. Measured on ten minutes of
+    a real meeting it changed almost nothing, because people say first names in a room and
+    a recogniser knows those. A fallback that costs a flag on a call which happens anyway
+    is worth keeping even when it is rarely the thing that saves the day.
+
+    The one thing worth getting right is which names, because a prompt holds a few
+    hundred characters and a vault holds hundreds of contacts. Ordered by how much the
+    vault links to each one: a name a dozen notes point at is someone this person works
+    with, a name nothing points at is a directory entry. Measured on a real vault of
+    ninety-five contacts, filling alphabetically left out five of the six people in the
+    recording being transcribed.
+    """
+    vault = Path(args.vault).resolve()
+
+    inbound: dict[str, int] = {}
+    patterns = vault / ".zanmai" / "memory" / "patterns.json"
+    if patterns.is_file():
+        try:
+            hubs = json.loads(patterns.read_text(encoding="utf-8")).get("wikilink_hubs") or {}
+            inbound = {slug: len((e or {}).get("linked_from") or []) for slug, e in hubs.items()}
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    def read_name(path: Path) -> tuple[str, dict]:
+        fm, _order, body = _split_frontmatter(path.read_text(encoding="utf-8"))
+        for line in body.splitlines():
+            if line.startswith("# "):
+                return line[2:].strip(), fm
+        return path.stem.replace("-", " ").title(), fm
+
+    # An organisation's display name, so a person's `org` field does not put a slug
+    # into a prompt: a hyphenated slug is not a word anybody says out loud.
+    org_names: dict[str, str] = {}
+    org_folder = vault / "inbox" / "contacts" / "organizations"
+    if org_folder.is_dir():
+        for f in sorted(org_folder.glob("*.md")):
+            org_names[f.stem], _fm = read_name(f)
+
+    # (rank, term). The house names first: they work before the vault holds anything,
+    # and a spoken instruction names a specialist.
+    ranked: list[tuple[int, str]] = [(10 ** 6, "Zanmai")]
+    ranked += [(10 ** 6, name.capitalize()) for name, _a, _m in _ROSTER]
+
+    for folder, is_person in ((vault / "inbox" / "contacts" / "people", True),
+                              (org_folder, False)):
+        if not folder.is_dir():
+            continue
+        for f in sorted(folder.glob("*.md")):
+            name, fm = read_name(f)
+            links = inbound.get(f.stem, 0)
+            ranked.append((links, name))
+            nickname = fm.get("nickname")
+            if isinstance(nickname, str) and nickname.strip():
+                ranked.append((links, nickname.strip()))
+            elif isinstance(nickname, list):
+                ranked += [(links, n) for n in nickname if isinstance(n, str) and n.strip()]
+            if is_person:
+                org = fm.get("org")
+                if isinstance(org, str) and org.strip():
+                    ranked.append((links, org_names.get(org.strip(), org.strip())))
+
+    for kind in ("focus", "habits", "knowledge"):
+        folder = vault / "inbox" / kind
+        if not folder.is_dir():
+            continue
+        for bundle in sorted(folder.iterdir()):
+            if bundle.is_dir():
+                title, _fm = read_name(bundle / f"{bundle.name}.md") if (
+                    bundle / f"{bundle.name}.md").is_file() else (
+                    bundle.name.replace("-", " "), {})
+                ranked.append((inbound.get(bundle.name, 0), title))
+
+    seen: set[str] = set()
+    kept: list[str] = []
+    used = 0
+    for _links, term in sorted(ranked, key=lambda e: -e[0]):
+        key = term.lower()
+        if key in seen or len(term) < 2:
+            continue
+        seen.add(key)
+        if used + len(term) + 2 > args.budget:
+            continue
+        kept.append(term)
+        used += len(term) + 2
+
+    prompt = ", ".join(kept)
+    if args.out:
+        out = Path(args.out)
+        if not out.is_absolute():
+            out = vault / args.out
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(prompt + "\n", encoding="utf-8")
+    print(prompt)
+    print(f"ok: {len(kept)} of {len(seen)} name(s) fit the prompt "
+          f"({used} of {args.budget} characters), most linked-to first", file=sys.stderr)
+    return 0
+
+
+def _whisper_model(vault: Path) -> Path | None:
+    folder = vault / ".zanmai" / "runtime" / "whisper"
+    models = sorted(folder.glob("ggml-*.bin")) if folder.is_dir() else []
+    return models[0] if models else None
+
+
+def cmd_voice_transcribe(args: argparse.Namespace) -> int:
+    """One recording to text, on this machine, biased by the vault's own names."""
+    vault = Path(args.vault).resolve()
+    source = Path(args.file)
+    if not source.is_absolute():
+        source = vault / args.file
+    if not source.is_file():
+        print(f"fail: no such recording: {args.file}", file=sys.stderr)
+        return 1
+
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    whisper = _tool_path(vault, "whisper")
+    model = _whisper_model(vault)
+    missing = []
+    if not ffmpeg:
+        missing.append("ffmpeg, which turns what a phone recorded into what the recogniser reads")
+    if not whisper:
+        missing.append("whisper-cli, the recogniser itself")
+    if not model:
+        missing.append("a model in .zanmai/runtime/whisper/ (about 1.6 GB, fetched once)")
+    if missing:
+        print("fail: cannot transcribe, and nothing will be guessed instead. Missing:",
+              file=sys.stderr)
+        for item in missing:
+            print(f"  {item}", file=sys.stderr)
+        return 1
+
+    work = vault / ".zanmai" / "work" / "voice"
+    work.mkdir(parents=True, exist_ok=True)
+    wav = work / f"{source.stem}-16k.wav"
+    subprocess.run([ffmpeg, "-y", "-i", str(source), "-ar", "16000", "-ac", "1",
+                    "-c:a", "pcm_s16le", str(wav)], check=True, capture_output=True)
+
+    prompt = ""
+    if args.lexicon:
+        lex = Path(args.lexicon)
+        if not lex.is_absolute():
+            lex = vault / args.lexicon
+        if lex.is_file():
+            prompt = lex.read_text(encoding="utf-8").strip()
+
+    cmd = [whisper, "-m", str(model), "-f", str(wav), "-l", args.language,
+           "-oj", "-of", str(work / source.stem), "--no-prints"]
+    if prompt:
+        cmd += ["--prompt", prompt, "--carry-initial-prompt"]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+    result = work / f"{source.stem}.json"
+    if not result.is_file():
+        print("fail: the recogniser wrote no result", file=sys.stderr)
+        return 1
+    data = json.loads(result.read_text(encoding="utf-8"))
+    segments = data.get("transcription") or []
+    text = re.sub(r"\s+", " ",
+                  " ".join(s.get("text", "").strip() for s in segments)).strip()
+    detected = ((data.get("result") or {}).get("language")) or args.language
+    seconds = _audio_duration(source) or 0.0
+
+    target = work / f"{source.stem}.txt"
+    target.write_text(text + "\n", encoding="utf-8")
+    print(text)
+    print(f"ok: {len(text.split())} word(s) from {_spoken_length(seconds)}, language {detected}, "
+          + (f"biased by {len([x for x in prompt.split(',') if x.strip()])} vault name(s)"
+             if prompt else "no vault names given, so names are likely wrong")
+          + f"; text at {target.relative_to(vault)}", file=sys.stderr)
+    return 0
+
+
+def cmd_voice_archive(args: argparse.Namespace) -> int:
+    """Move a processed recording out of the drop folder, and keep it.
+
+    Out of `_import/` so it cannot be transcribed twice, and kept rather than deleted:
+    it is the user's own recording, and a transcript is a reading of it, not a
+    replacement for it.
+    """
+    vault = Path(args.vault).resolve()
+    source = Path(args.file)
+    if not source.is_absolute():
+        source = vault / args.file
+    if not source.is_file():
+        print(f"fail: no such recording: {args.file}", file=sys.stderr)
+        return 1
+    stamp = datetime.fromtimestamp(source.stat().st_mtime)
+    target_dir = vault / "assets" / "recordings" / stamp.strftime("%Y") / stamp.strftime("%m")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    name = f"{stamp.strftime('%Y-%m-%d-%H%M')}-{_slugify(source.stem)}{source.suffix.lower()}"
+    target = target_dir / name
+    if target.exists():
+        target = target.with_name(f"{target.stem}-2{target.suffix}")
+    shutil.move(str(source), str(target))
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"filed recording {target.relative_to(vault)}")
+    print(f"ok: recording kept at {target.relative_to(vault)}")
+    return 0
+
+
+def cmd_memory_log(args: argparse.Namespace) -> int:
+    r"""Append one line to the activity log in the canonical format.
+
+    Hand-written appends drifted in format, which broke the one thing the log is
+    for: `grep "^## \["` parsing cleanly.
+    """
+    vault = Path(args.vault).resolve()
+    log = vault / ".zanmai" / "memory" / "activity-log.md"
+    if not log.exists():
+        print(f"fail: no activity log at {log.relative_to(vault)}", file=sys.stderr)
+        return 1
+    _append_activity_log(vault, args.agent, args.activity)
+    print(f"ok: logged for {args.agent}")
+    return 0
+
+
+def _resolve_vault_file(vault: Path, given: str) -> Path | None:
+    """Accept a vault-relative path or a bare basename that is unique in the vault."""
+    direct = (vault / given).resolve()
+    if direct.is_file() and str(direct).startswith(str(vault)):
+        return direct
+    name = Path(given).name
+    if not name.endswith(".md"):
+        name += ".md"
+    hits = [p for p in vault.glob(f"inbox/**/{name}") if p.is_file()]
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
+def cmd_index_search(args: argparse.Namespace) -> int:
+    """Search the vault's own text, and say how much was searched.
+
+    Why this exists as a command: the vault ships a `.gitignore` that excludes every
+    user folder, on purpose, so that a clone never commits private material. Both
+    common search tools honour `.gitignore` by default, so a plain recursive search
+    finds only the distribution and reports an empty result. An empty result is
+    indistinguishable from "does not exist", and that produced a confident written
+    falsehood. Walking the tree here cannot be configured wrong, and the count of
+    files searched is printed so a zero is a measurement rather than a silence.
+    """
+    vault = Path(args.vault).resolve()
+    roots = [vault / r for r in (args.root or ["inbox", "quick", "assets", "_export", ".zanmai"])]
+    try:
+        pattern = re.compile(args.pattern, 0 if args.case_sensitive else re.IGNORECASE)
+    except re.error as exc:
+        print(f"fail: bad pattern: {exc}", file=sys.stderr)
+        return 1
+    exts = tuple(args.ext or [".md", ".txt", ".csv", ".json", ".yaml", ".typ", ".css"])
+    searched = 0
+    hits = 0
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for f in sorted(root.rglob("*")):
+            if not f.is_file() or f.suffix.lower() not in exts:
+                continue
+            try:
+                text = f.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            searched += 1
+            for n, line in enumerate(text.splitlines(), 1):
+                if pattern.search(line):
+                    hits += 1
+                    print(f"{f.relative_to(vault)}:{n}: {line.strip()[:200]}")
+                    if args.max_hits and hits >= args.max_hits:
+                        print(f"ok: stopped at {hits} hit(s); {searched} file(s) searched so far")
+                        return 0
+    print(f"ok: {hits} hit(s) in {searched} file(s) searched")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Work objects: one file per piece of work, and it owns the work.
+#
+# Before this, a piece of work had no owner. What it was lived in the chat, the
+# result lived in `_export/`, the working files lived in `.zanmai/work/` and the
+# open question lived nowhere at all, so it died when the session did. Every one
+# of those is a different container with a different lifetime, and the user paid
+# for it: a specialist re-briefed from scratch every round, decisions taken three
+# weeks ago that nobody could name afterwards, and no figure for what any of it
+# had cost.
+#
+# The object is a row in a database the user can open and answer in, plus a page
+# holding the long form. The row is CSV and the page is markdown, so both stay
+# readable in any editor; ZenNotes renders the same folder as a table and a board
+# with no export step, which is what makes "what is waiting on me" answerable
+# away from the desk.
+# ---------------------------------------------------------------------------
+
+WORK_DIR_NAME = "work.base"
+WORK_FIELDS = [
+    ("id", "text", None, True),
+    ("work", "text", None, False),
+    ("state", "select", ["open", "waiting on you", "done"], False),
+    ("owner", "text", None, False),
+    ("waiting for", "text", None, False),
+    ("deliverable", "text", None, False),
+    ("workshop", "text", None, False),
+    ("updated", "date", None, False),
+    ("tokens", "number", None, False),
+    ("minutes", "number", None, False),
+]
+
+
+# Sync-hosted vaults: the normal case, and what has to stay out of the copy.
+#
+# A vault in a synced folder is not an edge case, it is how most people get a
+# backup, and it should keep working. What must not travel is what is true of one
+# machine only: the provisioned interpreter and the record of which tools this
+# computer has. Carried to a second machine they claim tools that are not there;
+# carried into a restore they bring a runtime built for another platform. The
+# snapshots are the other one, because they are full copies of the vault and a
+# backup does not need a backup inside it.
+MACHINE_LOCAL_PATHS = (".zanmai/runtime", ".zanmai/work")
+BULKY_PATHS = (".zanmai/snapshots",)
+
+SYNC_HOSTS = (
+    ("iCloud Drive", "exclude by renaming the folder so it ends in `.nosync`, or move the vault out of iCloud"),
+    ("OneDrive", "the client has no per-folder ignore file: exclude the folders in OneDrive settings, Account, Choose folders"),
+    ("Dropbox", "add the paths to a `.dropboxignore` file at the top of your Dropbox folder"),
+    ("Nextcloud", "the client has no per-folder ignore file: add the paths to the client's ignore list, Settings, General, Edit ignored files"),
+    ("Google Drive", "the client has no per-folder ignore file: exclude the folders in the Drive preferences"),
+)
+
+
+def _detect_sync_host(vault: Path) -> str:
+    """Which sync client is this vault sitting under, if any. Path and marker based."""
+    text = str(vault).replace("\\", "/")
+    if "Library/Mobile Documents/com~apple~CloudDocs" in text or "/iCloud" in text:
+        return "iCloud Drive"
+    if "/OneDrive" in text:
+        return "OneDrive"
+    if "CloudStorage/GoogleDrive" in text or "/Google Drive" in text:
+        return "Google Drive"
+    for parent in [vault, *vault.parents]:
+        try:
+            names = {p.name for p in parent.iterdir()}
+        except OSError:
+            continue
+        if any(n.startswith(".sync_") and n.endswith(".db") for n in names):
+            return "Nextcloud"
+        if ".dropbox" in names or ".dropbox.cache" in names:
+            return "Dropbox"
+        if parent == parent.parent:
+            break
+    return ""
+
+
+def _work_base(vault: Path) -> Path:
+    return vault / "inbox" / "review" / WORK_DIR_NAME
+
+
+def _work_uuid(seed: str) -> str:
+    import uuid
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"zanmai:work:{seed}"))
+
+
+def _work_ensure(vault: Path) -> tuple[Path, Path, list[str]]:
+    """Create the database folder on first use and return (csv, schema, headers)."""
+    base = _work_base(vault)
+    csv_path = base / "data.csv"
+    schema_path = base / "schema.json"
+    pages = base / "pages"
+    headers = [name for name, _t, _o, _h in WORK_FIELDS]
+    if csv_path.is_file() and schema_path.is_file():
+        return csv_path, schema_path, headers
+    base.mkdir(parents=True, exist_ok=True)
+    pages.mkdir(exist_ok=True)
+    fields = []
+    for name, ftype, options, hidden in WORK_FIELDS:
+        field = {"id": _work_uuid(f"field:{name}"), "name": name, "type": ftype}
+        if options:
+            field["options"] = [
+                {"id": _work_uuid(f"option:{name}:{value}"), "value": value} for value in options
+            ]
+        if hidden:
+            field["hidden"] = True
+        fields.append(field)
+    by_name = {f["name"]: f["id"] for f in fields}
+    table_view = {
+        "id": _work_uuid("view:table"), "name": "Everything", "type": "table",
+        "filters": [], "sorts": [{"fieldId": by_name["updated"], "direction": "desc"}],
+        "columnOrder": [f["id"] for f in fields],
+    }
+    board_view = {
+        "id": _work_uuid("view:board"), "name": "By state", "type": "board",
+        "filters": [], "sorts": [], "groupByFieldId": by_name["state"],
+        "boardColumnOrder": ["waiting on you", "open", "done"],
+        "cardFieldIds": [by_name["work"], by_name["owner"], by_name["waiting for"]],
+    }
+    schema = {
+        "version": 1, "idFieldId": by_name["id"], "fields": fields,
+        "views": [board_view, table_view], "activeViewId": board_view["id"], "pages": {},
+    }
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    if not csv_path.is_file():
+        import csv as _csv
+        import io
+        buf = io.StringIO()
+        _csv.writer(buf).writerow(headers)
+        csv_path.write_text(buf.getvalue(), encoding="utf-8")
+    return csv_path, schema_path, headers
+
+
+def _work_read(vault: Path) -> tuple[list[dict], list[str]]:
+    import csv as _csv
+    csv_path, _schema, headers = _work_ensure(vault)
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        reader = _csv.DictReader(fh)
+        rows = [dict(r) for r in reader]
+        headers = reader.fieldnames or headers
+    return rows, list(headers)
+
+
+def _work_write(vault: Path, rows: list[dict], headers: list[str]) -> None:
+    import csv as _csv
+    csv_path, _schema, _h = _work_ensure(vault)
+    with csv_path.open("w", newline="", encoding="utf-8") as fh:
+        writer = _csv.DictWriter(fh, fieldnames=headers)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({h: row.get(h, "") for h in headers})
+
+
+def _work_find(rows: list[dict], wanted: str) -> dict | None:
+    """Match on the full id or on a leading fragment, so a human can type eight chars."""
+    exact = [r for r in rows if r.get("id") == wanted]
+    if exact:
+        return exact[0]
+    partial = [r for r in rows if str(r.get("id", "")).startswith(wanted)]
+    return partial[0] if len(partial) == 1 else None
+
+
+def _work_page(vault: Path, row_id: str) -> Path:
+    return _work_base(vault) / "pages" / f"{row_id}.md"
+
+
+def _work_register_page(vault: Path, row_id: str) -> None:
+    _csv_path, schema_path, _h = _work_ensure(vault)
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema.setdefault("pages", {})[row_id] = f"pages/{row_id}.md"
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+
+
+def cmd_work_open(args: argparse.Namespace) -> int:
+    """Open a work object. Returns its id, which every later call uses."""
+    vault = Path(args.vault).resolve()
+    rows, headers = _work_read(vault)
+    row_id = _work_uuid(f"{_timestamp_log()}:{args.title}")
+    row = {h: "" for h in headers}
+    row.update({
+        "id": row_id, "work": args.title, "state": "open", "owner": args.owner or "",
+        "deliverable": args.deliverable or "", "workshop": args.workshop or "",
+        "updated": _today(),
+    })
+    rows.append(row)
+    _work_write(vault, rows, headers)
+    page = _work_page(vault, row_id)
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(
+        f"# {args.title}\n\n"
+        f"Opened {_today()}"
+        + (f" for {args.owner}" if args.owner else "") + ".\n\n"
+        "## What finished looks like\n\n"
+        + ((args.goal or "").strip() + "\n\n" if args.goal else "(not stated yet)\n\n")
+        + "## Waiting on you\n\n(nothing yet)\n\n"
+        "## Decided\n\n"
+        "## Log\n\n"
+        f"- {_timestamp_log()} opened\n",
+        encoding="utf-8")
+    _work_register_page(vault, row_id)
+    _append_activity_log(vault, args.owner or "zanmai.py", f"opened work '{args.title}' ({row_id[:8]})")
+    print(f"ok: work opened, id {row_id}")
+    print(f"    short id usable everywhere: {row_id[:8]}")
+    return 0
+
+
+def _work_touch(row: dict) -> None:
+    row["updated"] = _today()
+
+
+def _work_append_section(page: Path, heading: str, text: str) -> None:
+    """Append under an existing heading, keeping everything already written."""
+    content = page.read_text(encoding="utf-8") if page.is_file() else ""
+    marker = f"## {heading}"
+    if marker not in content:
+        content = content.rstrip() + f"\n\n{marker}\n\n{text}\n"
+    else:
+        head, rest = content.split(marker, 1)
+        lines = rest.split("\n")
+        # Drop a placeholder line if that is all the section holds.
+        body_end = len(lines)
+        for i, line in enumerate(lines[1:], 1):
+            if line.startswith("## "):
+                body_end = i
+                break
+        kept = [ln for ln in lines[:body_end]
+                if ln.strip() and ln.strip() not in ("(nothing yet)", "(none yet)")]
+        kept.append(text)
+        content = head + marker + "\n\n" + "\n".join(kept) + "\n\n" + "\n".join(lines[body_end:]).lstrip("\n")
+    page.write_text(content, encoding="utf-8")
+
+
+def cmd_work_ask(args: argparse.Namespace) -> int:
+    """Record something only the user can settle, and mark the object as waiting."""
+    vault = Path(args.vault).resolve()
+    rows, headers = _work_read(vault)
+    row = _work_find(rows, args.id)
+    if row is None:
+        print(f"fail: no single work object matching id '{args.id}'", file=sys.stderr)
+        return 1
+    row["state"] = "waiting on you"
+    row["waiting for"] = args.question.split("\n")[0][:160]
+    _work_touch(row)
+    _work_write(vault, rows, headers)
+    page = _work_page(vault, row["id"])
+    _work_append_section(page, "Waiting on you", f"- **{_today()}** {args.question}")
+    _work_append_section(page, "Log", f"- {_timestamp_log()} asked: {args.question.splitlines()[0][:120]}")
+    print(f"ok: {row['id'][:8]} is waiting on the user")
+    return 0
+
+
+def cmd_work_answer(args: argparse.Namespace) -> int:
+    """Record the user's answer and put the object back to work."""
+    vault = Path(args.vault).resolve()
+    rows, headers = _work_read(vault)
+    row = _work_find(rows, args.id)
+    if row is None:
+        print(f"fail: no single work object matching id '{args.id}'", file=sys.stderr)
+        return 1
+    row["state"] = "open"
+    row["waiting for"] = ""
+    _work_touch(row)
+    _work_write(vault, rows, headers)
+    page = _work_page(vault, row["id"])
+    _work_append_section(page, "Decided", f"- **{_today()}** {args.answer}")
+    _work_append_section(page, "Log", f"- {_timestamp_log()} answered")
+    print(f"ok: {row['id'][:8]} answered and back to open")
+    return 0
+
+
+def cmd_work_log(args: argparse.Namespace) -> int:
+    """Append one line to the object's log, and add up what the work has cost."""
+    vault = Path(args.vault).resolve()
+    rows, headers = _work_read(vault)
+    row = _work_find(rows, args.id)
+    if row is None:
+        print(f"fail: no single work object matching id '{args.id}'", file=sys.stderr)
+        return 1
+    for field, given in (("tokens", args.tokens), ("minutes", args.minutes)):
+        if given:
+            try:
+                row[field] = str(int(float(row.get(field) or 0)) + int(given))
+            except ValueError:
+                row[field] = str(given)
+    if args.workshop:
+        row["workshop"] = args.workshop
+    if args.deliverable:
+        row["deliverable"] = args.deliverable
+    _work_touch(row)
+    _work_write(vault, rows, headers)
+    who = f"{args.agent}: " if args.agent else ""
+    _work_append_section(_work_page(vault, row["id"]), "Log", f"- {_timestamp_log()} {who}{args.note}")
+    print(f"ok: logged on {row['id'][:8]} (tokens {row.get('tokens') or 0}, minutes {row.get('minutes') or 0})")
+    return 0
+
+
+def cmd_work_done(args: argparse.Namespace) -> int:
+    vault = Path(args.vault).resolve()
+    rows, headers = _work_read(vault)
+    row = _work_find(rows, args.id)
+    if row is None:
+        print(f"fail: no single work object matching id '{args.id}'", file=sys.stderr)
+        return 1
+    row["state"] = "done"
+    row["waiting for"] = ""
+    _work_touch(row)
+    _work_write(vault, rows, headers)
+    _work_append_section(_work_page(vault, row["id"]), "Log", f"- {_timestamp_log()} closed")
+    _append_activity_log(vault, args.agent or "zanmai.py", f"closed work '{row.get('work')}' ({row['id'][:8]})")
+    print(f"ok: {row['id'][:8]} closed (tokens {row.get('tokens') or 0}, minutes {row.get('minutes') or 0})")
+    return 0
+
+
+def cmd_work_list(args: argparse.Namespace) -> int:
+    """What is open, and what is waiting on the user. Prints the denominator."""
+    vault = Path(args.vault).resolve()
+    rows, _headers = _work_read(vault)
+    wanted = (args.state or "").strip().lower()
+    shown = 0
+    for row in sorted(rows, key=lambda r: (r.get("state") != "waiting on you", r.get("updated") or "")):
+        if wanted and str(row.get("state", "")).lower() != wanted:
+            continue
+        shown += 1
+        line = f"{row.get('id','')[:8]}  {str(row.get('state','')):14}  {row.get('work','')}"
+        if row.get("owner"):
+            line += f"  [{row['owner']}]"
+        print(line)
+        if row.get("waiting for"):
+            print(f"          waiting for: {row['waiting for']}")
+    waiting = sum(1 for r in rows if r.get("state") == "waiting on you")
+    print(f"ok: {shown} of {len(rows)} work object(s) shown; {waiting} waiting on the user")
     return 0
 
 
@@ -999,24 +2276,37 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
 
     # Build an index of every asset in the shared vault-root assets/ folder,
     # keyed by basename.
+    # Recursive: assets sit in subfolders as often as not (`assets/eu-ai-act/…`).
+    # Indexing only the top level meant the lookup could not see them, and the run
+    # then reported "0 rewritten in 0 files", which reads exactly like "nothing to
+    # do" while four embeds sat unresolved.
     assets_dir = vault / "assets"
     attachments_index: dict[str, Path] = {}
+    ambiguous: dict[str, int] = {}
     if assets_dir.is_dir():
-        for f in assets_dir.iterdir():
+        for f in sorted(assets_dir.rglob("*")):
             if not f.is_file():
                 continue
             ext = f.suffix.lstrip(".").lower()
             if ext not in _EMBED_EXTS:
                 continue
+            if f.name in attachments_index:
+                ambiguous[f.name] = ambiguous.get(f.name, 1) + 1
+                continue
             attachments_index[f.name] = f
 
     if not attachments_index:
-        print(f"ok: no assets at assets/ (nothing to update)")
+        print("ok: 0 assets indexed under assets/ (nothing this run could resolve against)")
         return 0
 
     rename_map = _load_rename_map(vault)
     files_changed: list[str] = []
     embeds_rewritten = 0
+    # Counted so a zero can be told apart from a nothing: "0 rewritten" is a result
+    # when it comes with "of 4 embeds seen, 4 already correct" and a failure when it
+    # comes with "of 4 seen, 4 unresolved".
+    embeds_seen = 0
+    unresolved: list[str] = []
 
     def lookup_attachment(basename: str, md_stem: str, md_path: Path) -> tuple[Path | None, str | None]:
         """Find the attachment for an embed basename. Resolution order:
@@ -1054,15 +2344,17 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
         original = text
 
         def replace_wiki(m: re.Match) -> str:
-            nonlocal embeds_rewritten
+            nonlocal embeds_rewritten, embeds_seen
             raw_target = m.group(1).strip()
             display = m.group(2) or ""
             basename = raw_target.split("/")[-1]
             ext = Path(basename).suffix.lstrip(".").lower()
             if ext not in _EMBED_EXTS:
                 return m.group(0)
+            embeds_seen += 1
             attachment, resolved_name = lookup_attachment(basename, md_stem, md)
             if attachment is None:
+                unresolved.append(basename)
                 return m.group(0)
             new_form = f"![[{resolved_name}{display}]]"
             if new_form != m.group(0):
@@ -1070,7 +2362,7 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
             return new_form
 
         def replace_md(m: re.Match) -> str:
-            nonlocal embeds_rewritten
+            nonlocal embeds_rewritten, embeds_seen
             alt = m.group(1)
             raw_path = m.group(2).strip()
             if raw_path.startswith(("http://", "https://", "mailto:", "data:")):
@@ -1079,13 +2371,17 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
             ext = Path(basename).suffix.lstrip(".").lower()
             if ext not in _EMBED_EXTS:
                 return m.group(0)
+            embeds_seen += 1
             attachment, _resolved_name = lookup_attachment(basename, md_stem, md)
             if attachment is None:
+                unresolved.append(basename)
                 return m.group(0)
-            try:
-                rel = attachment.relative_to(md.parent).as_posix()
-            except ValueError:
-                return m.group(0)
+            # os.path.relpath, not Path.relative_to: the assets folder sits at the
+            # vault root and the note sits inside a bundle, so the path has to walk
+            # up. relative_to only descends and raised here, which meant a
+            # markdown-style embed pointing at a shared asset could never be
+            # rewritten, and the run counted it as already correct.
+            rel = os.path.relpath(attachment, md.parent).replace(os.sep, "/")
             new_form = f"![{alt}]({rel})"
             if new_form != m.group(0):
                 embeds_rewritten += 1
@@ -1106,7 +2402,16 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
     if files_changed:
         for f in files_changed:
             print(f"  {f}")
-    print(f"ok: {embeds_rewritten} embed(s) rewritten in {len(files_changed)} file(s)")
+    already = embeds_seen - embeds_rewritten - len(unresolved)
+    print(f"ok: {embeds_rewritten} of {embeds_seen} embed(s) rewritten in "
+          f"{len(files_changed)} file(s); {already} already correct; "
+          f"{len(unresolved)} unresolved; {len(attachments_index)} asset(s) indexed")
+    if unresolved:
+        for name in sorted(set(unresolved)):
+            print(f"  unresolved: {name} (no file of that name under assets/)")
+    if ambiguous:
+        for name, count in sorted(ambiguous.items()):
+            print(f"  ambiguous: {name} exists {count}x under assets/, first one used")
 
     if getattr(args, "clear_rename_map", False) and rename_map:
         _save_rename_map(vault, {})
@@ -2122,9 +3427,8 @@ def cmd_register_contact(args: argparse.Namespace) -> int:
         content = source_path.read_text(encoding="utf-8")
         source_fm, source_order, source_body = _split_frontmatter(content)
 
+    overrides: dict = {"kind": kind_field, "slug": slug}
     additions: dict = {
-        "kind": kind_field,
-        "slug": slug,
         "created": _today(),
         "source": "organic" if args.source else "ai-generated",
     }
@@ -2133,14 +3437,15 @@ def cmd_register_contact(args: argparse.Namespace) -> int:
     mentions = [m for m in (getattr(args, "mentioned_in", []) or []) if m]
     if mentions:
         additions["mentioned_in"] = mentions
-    # CLI overrides over source frontmatter for these fields.
+    # A value the user typed now beats one sitting in the file.
     for k in ("role", "org", "email", "phone", "kind_of", "website"):
         v = getattr(args, k, None)
         if v:
-            additions[k] = v
+            overrides[k] = v
 
     fm, order, leftover = _migrate_frontmatter(
-        source_fm, source_order, kind=kind_field, slug=slug, additions=additions
+        source_fm, source_order, kind=kind_field, slug=slug,
+        additions=additions, overrides=overrides,
     )
     fm_text = _render_frontmatter(fm, order)
     leftover_block = _render_original_metadata_block(leftover)
@@ -2689,6 +3994,7 @@ REQUIRED_FOLDERS_CORE = [
     "inbox/review",
     "quick",
     "_import",
+    "_import/recordings",
     "_export",
     "archive",
     "trash",
@@ -2821,6 +4127,7 @@ _SKILL_SYMLINK_MAP: list[tuple[str, str]] = [
     ("zanmai-journal", "journal"),
     ("zanmai-update", "update"),
     ("zanmai-connection", "manage-connections"),
+    ("zanmai-voice", "voice"),
 ]
 
 
@@ -3519,16 +4826,36 @@ def _record_host_config_version(vault: Path, version: str) -> None:
 
 
 def _quiet_update_probe(vault: Path) -> str:
-    """Ask the update source for its version, every session start, briefly.
+    """Ask the update source for its version at most once a day, briefly.
 
-    One small HTTPS request, so it is cheap enough to run every time rather
-    than on a schedule. It must never delay the session or fail loudly: short
-    timeout, any problem swallowed, and the last answer kept so a session
-    without network still knows what the previous one found. Returns the newer
-    version when there is one, otherwise an empty string.
+    The session-start hook runs again on every resume and every compaction, so
+    "once per session" is not once: it reached out to the network several times
+    an hour and put the same offer back in front of the user each time. The
+    answer changes about as often as a release does, so it is fetched once a day
+    and read from the cache in between. No network call, no repeated offer.
+
+    It must never delay the session or fail loudly: short timeout, any problem
+    swallowed, and the last answer kept so a session without network still knows
+    what the previous one found. Returns the newer version when there is one,
+    otherwise an empty string.
     """
     cache = vault / ".zanmai" / "runtime" / "update-check.json"
     now = datetime.now(timezone.utc)
+
+    state: dict = {}
+    try:
+        state = json.loads(cache.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError, OSError):
+        state = {}
+    checked = str(state.get("checked", ""))
+    if checked:
+        try:
+            age = now - datetime.fromisoformat(checked)
+            if age < timedelta(hours=24):
+                known = str(state.get("available", ""))
+                return known if _is_newer(known, _distribution_version(vault)) else ""
+        except ValueError:
+            pass
 
     manifest = vault / ".zanmai" / "system" / "manifest.yaml"
     source = _manifest_scalar(manifest, "update_source") if manifest.exists() else ""
@@ -3556,13 +4883,65 @@ def _quiet_update_probe(vault: Path) -> str:
             except (json.JSONDecodeError, ValueError, OSError):
                 available = ""
 
+    state.update({"checked": now.isoformat(timespec="seconds"), "available": available})
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({"checked": now.isoformat(timespec="seconds"),
-                                     "available": available}), encoding="utf-8")
+        cache.write_text(json.dumps(state), encoding="utf-8")
     except OSError:
         pass
     return available
+
+
+def _unattended_log_to_report(vault: Path) -> Path | None:
+    """The last session's log, when nobody was in the chat for it and it has not been
+    named yet. Derived from the log the run itself wrote, so there is no second marker to
+    keep in step, and remembered by name so a resume or a compaction does not say it twice.
+    """
+    logs_dir = vault / ".zanmai" / "logs"
+    logs = sorted(logs_dir.rglob("*.md"), key=lambda p: p.name) if logs_dir.is_dir() else []
+    if not logs:
+        return None
+    newest = logs[-1]
+    try:
+        head = newest.read_text(encoding="utf-8")[:400]
+    except OSError:
+        return None
+    if "session_type: unattended" not in head:
+        return None
+    state_file = vault / ".zanmai" / "runtime" / "session-state.json"
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError, OSError):
+        state = {}
+    if state.get("unattended_reported") == newest.name:
+        return None
+    state["unattended_reported"] = newest.name
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+    return newest
+
+
+def _update_offer_due(vault: Path) -> bool:
+    """True once a day. Mentioning an available version is worth one line a day, not one
+    per hook run, and the hook runs again on every resume and compaction."""
+    cache = vault / ".zanmai" / "runtime" / "update-check.json"
+    today = _today()
+    try:
+        state = json.loads(cache.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError, OSError):
+        state = {}
+    if state.get("announced") == today:
+        return False
+    state["announced"] = today
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+    return True
 
 
 def cmd_setup_upgrade(args: argparse.Namespace) -> int:
@@ -3614,7 +4993,8 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
         print(f"ok: already on the current version ({local})")
         return 0
 
-    print(f"update available: {local} -> {remote}")
+    origin = source or "an unset origin"
+    print(f"update available: {local} -> {remote} (from {origin})")
     if args.check:
         return 0
 
@@ -3652,12 +5032,38 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
         new_paths, _ = _parse_manifest_lists(new_manifest)
         old_paths, _ = _parse_manifest_lists(manifest)
 
+        # Both path lists come out of a manifest that was just downloaded, so they
+        # are input, not fact. Without a containment check, one `../` in a path
+        # writes outside the vault, and the removal loop below deletes outside it.
+        # Resolve BOTH sides: resolving only the candidate refuses every update on
+        # macOS, where the temporary directory is itself a symlink, which would turn
+        # a containment bug into a total denial of the update path.
+        vault_real = vault.resolve()
+
+        def contained(rel: str) -> Path | None:
+            if rel.startswith(("/", "\\\\")) or re.match(r"^[A-Za-z]:", rel):
+                return None
+            candidate = (vault_real / rel).resolve()
+            if candidate == vault_real or vault_real not in candidate.parents:
+                return None
+            return candidate
+
+        refused = [rel for rel in set(new_paths) | set(old_paths) if contained(rel) is None]
+        if refused:
+            print("error: the downloaded manifest lists paths outside the vault, nothing applied:",
+                  file=sys.stderr)
+            for rel in sorted(refused)[:10]:
+                print(f"  {rel}", file=sys.stderr)
+            return 1
+
         written = 0
         for rel in new_paths:
             src = tree / rel
             if not src.is_file():
                 continue
-            dst = vault / rel
+            dst = contained(rel)
+            if dst is None:
+                continue
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
             written += 1
@@ -3667,8 +5073,8 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
         for rel in old_paths:
             if rel in new_paths:
                 continue
-            stale = vault / rel
-            if stale.is_file():
+            stale = contained(rel)
+            if stale is not None and stale.is_file():
                 stale.unlink()
                 removed += 1
 
@@ -3733,11 +5139,40 @@ def cmd_setup_validate(args: argparse.Namespace) -> int:
                     f"hook not wired in .claude/settings.json: '{expected}'. "
                     "Run 'setup update' to rebuild the host config."
                 )
+    # A synced folder is a normal home for a vault, so this is a note rather than a
+    # failure. What it reports is the part that is genuinely wrong to copy.
+    notes: list[str] = []
+    notes.extend(_memory_size_report(vault))
+    host = _detect_sync_host(vault)
+    if host:
+        present = [rel for rel in MACHINE_LOCAL_PATHS + BULKY_PATHS if (vault / rel).exists()]
+        how = next((h for name, h in SYNC_HOSTS if name == host), "")
+        notes.append(f"this vault sits under {host}, which is fine as a backup")
+        if present:
+            notes.append("keep these out of the copy: " + ", ".join(present))
+            notes.append(f"  {host}: {how}")
+            notes.append("  runtime/ and work/ describe this machine only, and the snapshots are "
+                         "full copies of the vault, so a backup would contain a backup")
+        conflicts = sorted(
+            str(f.relative_to(vault))
+            for f in vault.glob("inbox/**/*")
+            if f.is_file() and any(mark in f.name.lower() for mark in
+                                   ("conflicted copy", "conflict)", "-konflikt", "in konflikt"))
+        )
+        if conflicts:
+            fails.append(
+                f"{len(conflicts)} sync conflict copy/copies inside inbox/, which break the rule that a "
+                f"fact exists once: {', '.join(conflicts[:5])}"
+                + (" …" if len(conflicts) > 5 else "")
+            )
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
         return 1
     print(f"ok: vault at {vault} validates")
+    for note in notes:
+        print(f"    {note}")
     return 0
 
 
@@ -4892,6 +6327,12 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # keep recent scratch so unfinished cross-session work is not lost ("done for
     # today, resume tomorrow"). Only entries untouched for over 7 days are removed;
     # anything modified within the window stays. Deliverables live in _export/.
+    #
+    # A workshop that declares itself open is never pruned, whatever its age. Age is
+    # a guess about whether something still matters; `state: open` in the workshop's
+    # own status file is a statement. An expert parked on a decision the user has not
+    # taken yet can sit for weeks, and deleting the one folder that holds where the
+    # work stood is how a run loses what it cannot write down twice.
     import shutil
     import time
     work_dir = vault / ".zanmai" / "work"
@@ -4901,6 +6342,8 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             if child.name == ".gitkeep":
                 continue
             try:
+                if child.is_dir() and _work_is_open(child):
+                    continue
                 newest = child.stat().st_mtime
                 if child.is_dir():
                     for f in child.rglob("*"):
@@ -4947,8 +6390,43 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             lines.append(f"- Zanmai moved from {known_version} to {shipped_version}. Host config refreshed; "
                          "mention the new version once and point at the changelog if the user asks what changed.")
 
+    # Recordings waiting are named, not transcribed. A hook that takes a minute is a
+    # session that starts in a minute, and the reading of them is a background job.
+    waiting = _pending_recordings(vault)
+    if waiting:
+        total = sum(_audio_duration(f) or 0.0 for f in waiting)
+        lines.append(
+            f"- {len(waiting)} voice note(s) waiting in _import/recordings/"
+            + (f", {_spoken_length(total)} in total" if total else "")
+            + ". Dispatch the `voice` skill in the background on the next turn and carry on; "
+              "report when it is done, and only ask about what it could not settle."
+        )
+
+    # Work the user has not answered yet. Named in one line, because this is the one
+    # class of open item the next session cannot work out for itself.
+    try:
+        rows, _headers = _work_read(vault)
+    except Exception:
+        rows = []
+    # A session that ran with nobody in the chat is only useful if the next one says so.
+    unattended = _unattended_log_to_report(vault)
+    if unattended:
+        lines.append(f"- The last session ran without the user: `{unattended.relative_to(vault)}`. "
+                     "Open the greeting with one line from that log and the work objects, what was "
+                     "handled and what it left open, then carry on as usual.")
+
+    pending = [r for r in rows if str(r.get("state", "")).lower() == "waiting on you"]
+    if pending:
+        lines.append(f"- {len(pending)} piece(s) of work waiting on the user: "
+                     + "; ".join(f"{r.get('work', '')[:60]} ({r.get('id', '')[:8]})"
+                                 for r in pending[:3])
+                     + ". Name them once, do not re-explain the whole piece.")
+
+    # Named once a day, not once per hook run. This hook fires again on every resume and
+    # every compaction, and an offer repeated three times in an afternoon reads as nagging
+    # about something the user already declined.
     newer = _quiet_update_probe(vault)
-    if newer:
+    if newer and _update_offer_due(vault):
         lines.append(f"- Version {newer} is available (this vault runs {shipped_version}). Offer the update once, "
                      "in one plain line, at a moment that does not interrupt the user's task, and drop it for this "
                      "session if declined. On a yes, dispatch Pepper's update workflow.")
@@ -5662,9 +7140,20 @@ def _detect_tool(vault: Path, tid: str, spec: dict, osname: str) -> dict:
             if found.get("present"):
                 return found
         return _detect_binary(name, det.get("version_flag"))
+    if method == "file-glob":
+        # A model file is neither a binary on PATH nor an importable library: it is a
+        # large file the vault fetched into its own machine-local runtime tree. Without
+        # this branch the entry fell through to "no detector", which reads as unknown
+        # rather than missing, and a preflight cannot gate on unknown.
+        hits = sorted(vault.glob(det.get("glob", "")))
+        if hits:
+            size = hits[0].stat().st_size / (1024 * 1024)
+            return {"present": True, "path": str(hits[0].relative_to(vault)),
+                    "note": f"{size:.0f} MB"}
+        return {"present": False, "note": f"no file matching {det.get('glob', '')}"}
     if spec.get("kind") == "mcp":
         return {"present": None, "note": "host-configured (check the host)"}
-    return {"present": None, "note": "no detector"}
+    return {"present": None, "note": f"no detector for method {method!r}"}
 
 
 def cmd_tools_doctor(args: argparse.Namespace) -> int:
@@ -5712,6 +7201,66 @@ def _ensure_runtime_venv(vault: Path) -> tuple[Path | None, str]:
     except Exception as e:
         return None, f"venv create error: {type(e).__name__}: {e}"
     return _runtime_venv_python(vault), "created"
+
+
+def _fetch_plain_file(vault: Path, tool_id: str, spec: dict, prov: dict) -> dict:
+    """Fetch one large plain file, a model, and prove it works by using it.
+
+    Separate from the pinned-binary path because that one unpacks an archive and then
+    runs the result with a version flag. A model file is neither an archive nor
+    executable, so both steps would fail on something that is perfectly fine. What
+    replaces them is the same idea applied honestly: the file is not "installed"
+    because it arrived at the right size, it is installed because the thing it exists
+    for came out. So a second of silence is generated and transcribed with it, and only
+    a clean run counts.
+    """
+    import urllib.request
+
+    url = prov["url"]
+    target = vault / prov["target"]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}-download")
+    try:
+        with urllib.request.urlopen(url, timeout=600) as response, tmp.open("wb") as out:
+            shutil.copyfileobj(response, out)
+    except Exception as exc:  # noqa: BLE001
+        tmp.unlink(missing_ok=True)
+        return {"state": "WARNING", "detail": f"download failed: {type(exc).__name__}: {exc}",
+                "url": url}
+
+    size_mb = tmp.stat().st_size / (1024 * 1024)
+    least = prov.get("expect_min_mb", 1)
+    if size_mb < least:
+        tmp.unlink(missing_ok=True)
+        return {"state": "WARNING",
+                "detail": f"downloaded {size_mb:.0f} MB, expected at least {least} MB, "
+                          "so this is an error page rather than the file"}
+    tmp.replace(target)
+
+    canary = prov.get("canary_cmd")
+    if canary:
+        ffmpeg = _tool_path(vault, "ffmpeg")
+        whisper = _tool_path(vault, canary) or shutil.which(canary)
+        if not (ffmpeg and whisper):
+            return {"state": "installed", "path": str(target.relative_to(vault)),
+                    "size_mb": round(size_mb),
+                    "detail": "downloaded, not proven: the tools to try it are not on this machine"}
+        work = vault / ".zanmai" / "work" / "voice"
+        work.mkdir(parents=True, exist_ok=True)
+        probe = work / "canary.wav"
+        try:
+            subprocess.run([ffmpeg, "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                            "-t", "1", str(probe)], check=True, capture_output=True)
+            subprocess.run([whisper, "-m", str(target), "-f", str(probe), "--no-prints"],
+                           check=True, capture_output=True, timeout=300)
+        except Exception as exc:  # noqa: BLE001
+            return {"state": "WARNING", "path": str(target.relative_to(vault)),
+                    "detail": f"downloaded but it does not load: {type(exc).__name__}"}
+        finally:
+            probe.unlink(missing_ok=True)
+        return {"state": "installed", "path": str(target.relative_to(vault)),
+                "size_mb": round(size_mb), "detail": "proven by transcribing a canary"}
+    return {"state": "installed", "path": str(target.relative_to(vault)), "size_mb": round(size_mb)}
 
 
 def _fetch_pinned_binary(vault: Path, tool_id: str, spec: dict, os_spec: dict, prov: dict) -> dict:
@@ -5844,6 +7393,15 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
         print(json.dumps({"id": args.id, "state": "installed" if ok else "WARNING",
                           "pip": pkg, "runtime": str(py), "venv": note}, ensure_ascii=False, indent=2))
         return 0 if ok else 1
+    if method == "file-fetch":
+        if not (prov.get("url") and prov.get("target")):
+            print(json.dumps({"id": args.id, "state": "needs-user", "tier": tier,
+                              "detail": "no url and target for this file, so nothing is fetched on a guess"},
+                             ensure_ascii=False, indent=2))
+            return 0
+        result = _fetch_plain_file(vault, args.id, spec, prov)
+        print(json.dumps({"id": args.id, **result}, ensure_ascii=False, indent=2))
+        return 0 if result.get("state") == "installed" else 1
     if method == "binary-fetch":
         os_spec = ((spec.get("os") or {}).get(osname) or {})
         hint = os_spec.get("install_hint") or {}
@@ -6113,6 +7671,80 @@ def main(argv: list[str]) -> int:
     ps_del.set_defaults(func=cmd_snapshot_delete)
 
     # bundle -----
+
+
+    p_voice = sub.add_parser("voice", help="Voice notes dropped in _import/recordings/: what waits, the vault's names, transcription, filing.")
+    sub_voice = p_voice.add_subparsers(dest="voice_cmd", required=True)
+
+    pv_scan = sub_voice.add_parser("scan", help="What is waiting to be transcribed, oldest first.")
+    pv_scan.add_argument("vault", nargs="?", default=".")
+    pv_scan.set_defaults(func=cmd_voice_scan)
+
+    pv_lex = sub_voice.add_parser("lexicon", help="The vault's own names, to bias the recogniser before it starts.")
+    pv_lex.add_argument("vault", nargs="?", default=".")
+    pv_lex.add_argument("--out", help="Also write the list here.")
+    pv_lex.add_argument("--budget", type=int, default=LEXICON_BUDGET_CHARS)
+    pv_lex.set_defaults(func=cmd_voice_lexicon)
+
+    pv_tr = sub_voice.add_parser("transcribe", help="One recording to text, locally, biased by the vault's names.")
+    pv_tr.add_argument("vault", nargs="?", default=".")
+    pv_tr.add_argument("--file", required=True)
+    pv_tr.add_argument("--lexicon", help="File written by `voice lexicon --out`.")
+    pv_tr.add_argument("--language", default="auto")
+    pv_tr.set_defaults(func=cmd_voice_transcribe)
+
+    pv_ar = sub_voice.add_parser("archive", help="Move a processed recording to assets/recordings/, keeping it.")
+    pv_ar.add_argument("vault", nargs="?", default=".")
+    pv_ar.add_argument("--file", required=True)
+    pv_ar.add_argument("--agent")
+    pv_ar.set_defaults(func=cmd_voice_archive)
+
+    p_work = sub.add_parser("work", help="Work objects: one row plus one page per piece of work, in inbox/review/.")
+    sub_work = p_work.add_subparsers(dest="work_cmd", required=True)
+
+    pw_open = sub_work.add_parser("open", help="Open a work object and print its id.")
+    pw_open.add_argument("vault", nargs="?", default=".")
+    pw_open.add_argument("--title", required=True)
+    pw_open.add_argument("--owner", help="Which specialist is on it.")
+    pw_open.add_argument("--goal", help="What finished looks like.")
+    pw_open.add_argument("--deliverable", help="Where the result will land.")
+    pw_open.add_argument("--workshop", help="Where the working files live.")
+    pw_open.set_defaults(func=cmd_work_open)
+
+    pw_ask = sub_work.add_parser("ask", help="Record a question only the user can answer; marks the object as waiting.")
+    pw_ask.add_argument("vault", nargs="?", default=".")
+    pw_ask.add_argument("--id", required=True, help="Full id or its first characters.")
+    pw_ask.add_argument("--question", required=True)
+    pw_ask.set_defaults(func=cmd_work_ask)
+
+    pw_answer = sub_work.add_parser("answer", help="Record the user's answer and put the object back to open.")
+    pw_answer.add_argument("vault", nargs="?", default=".")
+    pw_answer.add_argument("--id", required=True)
+    pw_answer.add_argument("--answer", required=True)
+    pw_answer.set_defaults(func=cmd_work_answer)
+
+    pw_log = sub_work.add_parser("log", help="Append one line to the object's log and add up its cost.")
+    pw_log.add_argument("vault", nargs="?", default=".")
+    pw_log.add_argument("--id", required=True)
+    pw_log.add_argument("--note", required=True)
+    pw_log.add_argument("--agent")
+    pw_log.add_argument("--tokens", type=int)
+    pw_log.add_argument("--minutes", type=int)
+    pw_log.add_argument("--workshop")
+    pw_log.add_argument("--deliverable")
+    pw_log.set_defaults(func=cmd_work_log)
+
+    pw_done = sub_work.add_parser("done", help="Close a work object.")
+    pw_done.add_argument("vault", nargs="?", default=".")
+    pw_done.add_argument("--id", required=True)
+    pw_done.add_argument("--agent")
+    pw_done.set_defaults(func=cmd_work_done)
+
+    pw_list = sub_work.add_parser("list", help="What is open and what is waiting on the user.")
+    pw_list.add_argument("vault", nargs="?", default=".")
+    pw_list.add_argument("--state", help="Filter: open, 'waiting on you', done.")
+    pw_list.set_defaults(func=cmd_work_list)
+
     p_bundle = sub.add_parser("bundle", help="Bundle operations.")
     sub_bundle = p_bundle.add_subparsers(dest="subcmd", required=True)
 
@@ -6121,6 +7753,10 @@ def main(argv: list[str]) -> int:
     pb_create.add_argument("--kind", required=True, choices=list(KIND_FIELDS.keys()))
     pb_create.add_argument("--slug", required=True)
     pb_create.add_argument("--title")
+    pb_create.add_argument("--source", choices=["organic", "ai-generated"],
+                           help="Provenance. Default: the template's value.")
+    pb_create.add_argument("--source-detail", dest="source_detail",
+                           help="Where it came from, e.g. research:<slug> or import:<file>.")
     pb_create.add_argument("--goal")
     pb_create.add_argument("--status")
     pb_create.add_argument("--cadence")
@@ -6163,6 +7799,22 @@ def main(argv: list[str]) -> int:
     pb_rename.add_argument("--bundle-kind", dest="bundle_kind", choices=list(KIND_FIELDS.keys()))
     pb_rename.set_defaults(func=cmd_rename_slug)
 
+    pb_setbody = sub_bundle.add_parser("set-body", help="Replace the body of a file in a bundle. Frontmatter untouched.")
+    pb_setbody.add_argument("vault", nargs="?", default=".")
+    pb_setbody.add_argument("--file", required=True, help="Vault-relative path, or a unique basename under inbox/.")
+    pb_setbody.add_argument("--body-file", dest="body_file", help="Read the new body from this file. Default: stdin.")
+    pb_setbody.add_argument("--replace", action="store_true", help="Allow overwriting a body that already has content.")
+    pb_setbody.add_argument("--agent", help="Name for the activity-log line.")
+    pb_setbody.set_defaults(func=cmd_bundle_set_body)
+
+    pb_editfile = sub_bundle.add_parser("edit-file", help="Correct frontmatter fields of an existing file in place. Body untouched.")
+    pb_editfile.add_argument("vault", nargs="?", default=".")
+    pb_editfile.add_argument("--file", required=True, help="Vault-relative path, or a unique basename under inbox/.")
+    pb_editfile.add_argument("--set", action="append", default=[], help="key=value. A list is written as [a, b, c]. Repeatable.")
+    pb_editfile.add_argument("--remove", action="append", default=[], help="Field to remove. Repeatable.")
+    pb_editfile.add_argument("--agent", help="Name for the activity-log line.")
+    pb_editfile.set_defaults(func=cmd_bundle_edit_file)
+
     # asset -----
     p_asset = sub.add_parser("asset", help="Non-markdown files in the shared vault-root assets/ folder.")
     sub_asset = p_asset.add_subparsers(dest="subcmd", required=True)
@@ -6196,6 +7848,15 @@ def main(argv: list[str]) -> int:
     pc_create.add_argument("--mentioned-in", dest="mentioned_in", action="append", default=[],
                            help="Source slug (bundle or member) where this entity was found. Repeatable. Stored in frontmatter `mentioned_in:` and rendered as a wikilink list in the body so the user sees where the stub came from.")
     pc_create.set_defaults(func=cmd_register_contact)
+
+    pc_update = sub_contact.add_parser("update", help="Enrich an existing contact: set frontmatter fields, append body lines.")
+    pc_update.add_argument("vault", nargs="?", default=".")
+    pc_update.add_argument("--slug", required=True)
+    pc_update.add_argument("--set", action="append", default=[], help="key=value. Repeatable.")
+    pc_update.add_argument("--remove", action="append", default=[], help="Field to remove. Repeatable.")
+    pc_update.add_argument("--append", action="append", default=[], help="Body line to append. Repeatable.")
+    pc_update.add_argument("--agent", help="Name for the activity-log line.")
+    pc_update.set_defaults(func=cmd_contact_update)
 
     # notes -----
     p_notes = sub.add_parser("notes", help="Daily, Weekly and Monthly Notes (when configured in ZenNotes).")
@@ -6304,6 +7965,15 @@ def main(argv: list[str]) -> int:
     pi_inspect.add_argument("--scope", required=True)
     pi_inspect.set_defaults(func=cmd_inspect_scope)
 
+    pi_search = sub_idx.add_parser("search", help="Search the vault's text and report how many files were searched.")
+    pi_search.add_argument("vault", nargs="?", default=".")
+    pi_search.add_argument("--pattern", required=True, help="Regular expression.")
+    pi_search.add_argument("--root", action="append", help="Limit to these vault-relative roots. Repeatable.")
+    pi_search.add_argument("--ext", action="append", help="Limit to these suffixes (with the dot). Repeatable.")
+    pi_search.add_argument("--case-sensitive", dest="case_sensitive", action="store_true")
+    pi_search.add_argument("--max-hits", dest="max_hits", type=int, default=200)
+    pi_search.set_defaults(func=cmd_index_search)
+
     # memory -----
     p_mem = sub.add_parser("memory", help="Briefing and operation reports.")
     sub_mem = p_mem.add_subparsers(dest="subcmd", required=True)
@@ -6321,6 +7991,29 @@ def main(argv: list[str]) -> int:
     pm_report.add_argument("--scope", default="")
     pm_report.add_argument("--since-minutes", type=int, default=60, dest="since_minutes")
     pm_report.set_defaults(func=cmd_write_report)
+
+    pm_log = sub_mem.add_parser("log", help="Append one line to the activity log in the canonical format.")
+    pm_log.add_argument("vault", nargs="?", default=".")
+    pm_log.add_argument("--agent", required=True)
+    pm_log.add_argument("--activity", required=True)
+    pm_log.set_defaults(func=cmd_memory_log)
+
+    pm_curate = sub_mem.add_parser("curate", help="Keep a rules file to its rules: struck entries and long reasoning move to an archive.")
+    pm_curate.add_argument("vault", nargs="?", default=".")
+    pm_curate.add_argument("--file", required=True, help="Vault-relative path of the memory file.")
+    pm_curate.add_argument("--why-lines", type=int, default=4, dest="why_lines",
+                           help="A reasoning block longer than this moves to the archive.")
+    pm_curate.add_argument("--show", type=int, default=10)
+    pm_curate.add_argument("--agent")
+    pm_curate.add_argument("--dry-run", action="store_true", dest="dry_run")
+    pm_curate.set_defaults(func=cmd_memory_curate)
+
+    pm_rotate = sub_mem.add_parser("rotate", help="Move a chronological log's older months into an archive beside it.")
+    pm_rotate.add_argument("vault", nargs="?", default=".")
+    pm_rotate.add_argument("--file", default=".zanmai/memory/activity-log.md")
+    pm_rotate.add_argument("--keep-months", type=int, default=2, dest="keep_months")
+    pm_rotate.add_argument("--dry-run", action="store_true", dest="dry_run")
+    pm_rotate.set_defaults(func=cmd_memory_rotate)
 
     # connection -----
     p_conn = sub.add_parser("connection", help="External-source connections, run by Wong. Cross-platform.")

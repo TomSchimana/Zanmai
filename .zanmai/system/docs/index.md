@@ -12,11 +12,13 @@ This is the documentation. You do not have to read it: ask Zanmai instead, in yo
 - [Your editor](editors.md)
 - [Who does what](specialists.md)
 - [A working session, start to close](sessions.md)
+- [Work that outlives one sitting](work.md)
 
 ## Everyday use
 
 - [Importing and filing material](importing.md)
 - [Daily, weekly and monthly notes](daily-capture.md)
+- [Speaking instead of typing](voice.md)
 - [Research](research.md)
 - [Designing documents](design.md)
 - [Generating images and video](images.md)
@@ -24,6 +26,7 @@ This is the documentation. You do not have to read it: ask Zanmai instead, in yo
 - [Contacts](contacts.md)
 - [Connecting outside tools](connections.md)
 - [Snapshots and going back](snapshots.md)
+- [Backup and synced folders](backup.md)
 - [Keeping Zanmai up to date](updates.md)
 - [When something does not work](troubleshooting.md)
 

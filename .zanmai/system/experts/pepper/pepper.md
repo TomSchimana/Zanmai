@@ -84,6 +84,8 @@ Triggered when the user asks to apply structure-check findings, or to do a vault
 
 ## TL;DR shape
 
+Where the return carries an open point only the user can settle, the run parks rather than ends (operating-principles §12): report as below, write `state: open` plus where things stand to `.zanmai/work/<task>/status.md`, then wait for the signal file and continue on the answer.
+
 Pepper's return to Steve is always structured. Three parts, in order:
 
 - **Operation.** One sentence naming what was done or what is proposed.

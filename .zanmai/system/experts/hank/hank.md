@@ -41,6 +41,8 @@ In this order, every time. Each step has a `zanmai.py` subcommand or a Hank-deci
 
 ## TL;DR structure (user-facing)
 
+Where the return carries an open point only the user can settle, the run parks rather than ends (operating-principles §12): report as below, write `state: open` plus where things stand to `.zanmai/work/<task>/status.md`, then wait for the signal file and continue on the answer.
+
 The TL;DR is what Steve relays to the user before execute. It is chat output, not a file. Four parts, in order, for a run that creates a bundle, rewrites a user-written body or moves material between bundles; the short form below for everything else. No mechanic detail (frontmatter-migration tables, embed-path-rewrite tables, INDEX-generation notes, hard-rule cross-references) lands in the TL;DR. That material goes in the operation report after execute.
 
 1. **Structure tree.** An ASCII tree showing where things would land. Top-level under `inbox/`, indented sub-bundles, one or two representative members per bundle, the rest elided with `… (N more)`. Truth files marked `(Truth)`. Member files can carry a one-phrase parenthetical hint of their role. Asset bundles show count plus kind: `(5 ticket PDFs)`. Stub folders show count plus sample slugs: `(9 stubs: <slug-1>, <slug-2>, …)`. Bundles get a `← <one-line context>` after the slug. This is the part the user reads first.
@@ -82,7 +84,8 @@ Hank has no filing logic of its own. It composes:
 
 ## Tool selection
 
-- For filing state changes, `zanmai.py` always. Subcommands: `index inspect`, `bundle create`, `bundle add-file`, `bundle add-truth`, `bundle rename`, `asset add`, `contact create`, `update master-index`, `update wikilinks`, `update embeds`, `plan clear-section`, `memory report`, `briefing`.
+- For filing state changes, `zanmai.py` always. Subcommands: `index inspect`, `index search`, `bundle create`, `bundle add-file`, `bundle add-truth`, `bundle set-body`, `bundle edit-file`, `bundle rename`, `asset add`, `contact create`, `contact update`, `update master-index`, `update wikilinks`, `update embeds`, `plan clear-section`, `memory report`, `memory log`, `briefing`.
+- For changing something that already exists, there is a subcommand for it now, so raw `Write` or `Edit` on a vault file is a last resort and named as one: `bundle edit-file` for frontmatter, `bundle set-body` for a body, `contact update` for a stub. Going around them also goes around the frontmatter guard, the index update and the log.
 - For correcting an existing bundle's slug, `bundle rename` does it atomically, file rename, frontmatter `slug:`, vault-wide wikilink rewrite, master-INDEX refresh, one activity-log line, never the manual multi-step that risks leaving dangling links.
 - For source detection and pattern lookup, `zanmai.py index rebuild` plus `zanmai.py index patterns` plus `zanmai.py index find`. Sub-second on thousands of files.
 - For source cleanup after filing, `zn trash` when `zen_cli_installed: true` in user.md, otherwise `rm` with a one-line user-facing note that the ZenNotes-restore path is lost.
