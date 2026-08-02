@@ -7,7 +7,7 @@
 # distribution_paths get overwritten on update.
 # user_immune_paths are never touched on update.
 
-distribution_version: "0.3.8"
+distribution_version: "0.3.9"
 phase: "phase-1"
 schema_version: "0.1.0"
 

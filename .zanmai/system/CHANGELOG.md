@@ -2,6 +2,12 @@
 
 All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning: semver. The 0.x series is pre-stable.
 
+## [0.3.9] - 2026-08-01
+
+### Fixed
+
+- **Asking whether there is an update no longer fails with an interpreter error.** For a vault that is a clone of the distribution, and that is the ordinary case, the command read the name of the update source from a place a clone never fills in. The line is only reached when an update genuinely exists, which is the single moment the command is ever run, so the fault survived several releases and then met the user as a stack trace instead of a version to say yes to. The origin is now named per route: a clone reports the repository it was cloned from, by its actual address, and any other vault reports the source in its manifest, which is also what makes a wrong one visible rather than silent.
+
 ## [0.3.8] - 2026-08-01
 
 ### Fixed

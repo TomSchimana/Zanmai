@@ -5157,13 +5157,22 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
     branch = _manifest_scalar(manifest, "update_branch") or "main"
     is_clone = bool(_clone_remote(vault))
 
+    # Named per branch, because a clone asks its own git remote and every other vault
+    # asks the manifest's source. It used to be read from the manifest either way,
+    # which for a clone read a name that was never assigned: the command crashed with
+    # an interpreter error the moment an update genuinely existed, which is the one
+    # moment it is ever run. A clone that was up to date returned before reaching the
+    # line, so the fault sat there through several releases and surfaced as a
+    # traceback in front of the user rather than a version to say yes to.
     if is_clone:
+        origin = _clone_remote(vault) or "the repository this vault was cloned from"
         remote = _remote_version_via_git(vault, branch)
         if not remote:
             print("error: could not read a version from this vault's own origin", file=sys.stderr)
             return 1
     else:
         source = _manifest_scalar(manifest, "update_source")
+        origin = source or "an unset origin"
         if not source:
             print("error: the manifest names no update source", file=sys.stderr)
             return 1
@@ -5188,7 +5197,6 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
         print(f"ok: already on the current version ({local})")
         return 0
 
-    origin = source or "an unset origin"
     print(f"update available: {local} -> {remote} (from {origin})")
     if args.check:
         return 0
