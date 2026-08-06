@@ -8,7 +8,7 @@ Keeping the files is the easy half. You write something down yourself, or hand i
 
 It is for people whose material arrives from all directions and who regularly have to hand something over. The AI is Claude, through [Claude Code](https://claude.com/claude-code), and your notes stay readable without either of them.
 
-> **Developer preview, 0.3.9.** Parts are still being reworked and a new version can change how things behave. Keep your own backups.
+> **Developer preview, 0.3.10.** Parts are still being reworked and a new version can change how things behave. Keep your own backups.
 
 ## What it does
 

@@ -51,6 +51,45 @@ KIND_FIELDS = {
     "contact/organization": {"required": (), "optional": ("kind_of", "website")},
 }
 
+# A routine's frontmatter kind is singular (`habit`), its folder is plural (`inbox/habits/`). Every
+# other bundle kind spells both the same, which is why the mismatch stayed invisible for so long:
+# `bundle create` built its path straight from the kind value and quietly created a second
+# `inbox/habit/` beside the real one, while the index build, the briefing scan and the structure check
+# only ever looked in the plural. A live vault ended up with a filled `habit/` next to an empty
+# `habits/`, and the user's routines were invisible to half the system (found 2026-08-05).
+# These two functions are the only place that knows about the difference. The previous shape - a
+# hand-kept folder list in five places plus one local `kind_map` patch - is exactly what drifted.
+KIND_FOLDERS = {"habit": "habits"}
+BUNDLE_KINDS = ("focus", "habit", "knowledge")
+
+
+def _tags_arg(value: str | None) -> list[str] | None:
+    """Comma-separated tags from the command line as a list, or None when the flag was absent.
+
+    Tags used to be settable only afterwards, through a second `bundle edit-file --set` call, and a
+    source file without frontmatter therefore landed with no tags at all until someone noticed.
+    """
+    if value is None:
+        return None
+    return [t.strip() for t in value.split(",") if t.strip()]
+
+
+def _kind_folder(kind: str) -> str:
+    """Folder name under `inbox/` for a frontmatter kind value."""
+    return KIND_FOLDERS.get(kind, kind)
+
+
+def _folder_kind(folder: str) -> str:
+    """Frontmatter kind value for a folder name under `inbox/`."""
+    for kind, name in KIND_FOLDERS.items():
+        if name == folder:
+            return kind
+    return folder
+
+
+# Folder names, in the same order as BUNDLE_KINDS. Derived, never hand-kept.
+BUNDLE_FOLDERS = tuple(_kind_folder(k) for k in BUNDLE_KINDS)
+
 ATTACHMENT_SUFFIXES = (".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ics", ".heic", ".mp4", ".mov")
 
 
@@ -101,14 +140,16 @@ def _resolve_bundle_dir(vault: Path, bundle_slug: str, bundle_kind: str | None) 
     if not segments:
         return None, None, leaf
 
+    # The caller passes a kind value, the folder may spell it differently, and what comes back is a
+    # kind value again because it ends up in frontmatter.
     if bundle_kind:
-        candidate = vault / "inbox" / bundle_kind / Path(*segments)
+        candidate = vault / "inbox" / _kind_folder(bundle_kind) / Path(*segments)
         return (candidate if candidate.is_dir() else None), bundle_kind, leaf
 
-    for k in ("focus", "habit", "knowledge"):
-        candidate = vault / "inbox" / k / Path(*segments)
+    for folder in BUNDLE_FOLDERS:
+        candidate = vault / "inbox" / folder / Path(*segments)
         if candidate.is_dir():
-            return candidate, k, leaf
+            return candidate, _folder_kind(folder), leaf
     return None, None, leaf
 
 
@@ -386,12 +427,13 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
     if not segments:
         print(f"fail: empty slug", file=sys.stderr)
         return 1
-    bundle_dir = vault / "inbox" / kind / Path(*segments)
+    folder = _kind_folder(kind)
+    bundle_dir = vault / "inbox" / folder / Path(*segments)
     if bundle_dir.exists():
         print(f"fail: bundle already exists: {bundle_dir}", file=sys.stderr)
         return 1
     bundle_dir.mkdir(parents=True)
-    bundle_rel = f"inbox/{kind}/{'/'.join(segments)}"
+    bundle_rel = f"inbox/{folder}/{'/'.join(segments)}"
     is_sub_bundle = len(segments) > 1
 
     additions: dict = {"_title": args.title or slug.replace("-", " ").title()}
@@ -399,6 +441,9 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
         v = getattr(args, key, None)
         if v:
             additions[key] = v
+    tags = _tags_arg(getattr(args, "tags", None))
+    if tags:
+        additions["tags"] = tags
 
     # Sub-bundles get no truth file from this command by default. Two shapes
     # coexist:
@@ -466,6 +511,12 @@ def cmd_copy_into_bundle(args: argparse.Namespace) -> int:
         overrides["source"] = args.source_class
     if getattr(args, "source_detail", None):
         overrides["source_detail"] = args.source_detail
+    # Same reasoning as provenance: stated on the command line it wins, because the caller knows what
+    # the file does not say about itself. A source file with no frontmatter otherwise arrives untagged
+    # and needs a second `edit-file` call, which is what happened three times in one filing run.
+    tags = _tags_arg(getattr(args, "tags", None))
+    if tags:
+        overrides["tags"] = tags
     additions = {
         "created": _today(),
         "source": "organic",
@@ -525,9 +576,17 @@ def cmd_copy_attachment(args: argparse.Namespace) -> int:
     assets_dir.mkdir(exist_ok=True)
     target_name = args.target_name or source.name
     target = assets_dir / target_name
+    # A `--target-name` may carry a sub-path (`eu-ai-act/frame-01.jpg`); only the shared root was ever
+    # created, so the copy failed and the folder had to be made by hand first. Resolving first also
+    # keeps a name with `..` in it from writing outside the assets folder.
+    target = Path(os.path.normpath(target))
+    if assets_dir not in target.parents:
+        print(f"fail: target name must stay inside assets/: {target_name}", file=sys.stderr)
+        return 1
+    target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() and not args.overwrite:
         stem, dot, ext = target.name.rpartition(".")
-        target = assets_dir / (f"{stem}-imported.{ext}" if dot else f"{target.name}-imported")
+        target = target.parent / (f"{stem}-imported.{ext}" if dot else f"{target.name}-imported")
     shutil.copy2(source, target)
 
     # Record any rename (original -> final) so `update embeds` can resolve
@@ -552,14 +611,14 @@ def _update_master_index(vault: Path) -> None:
     text = master.read_text(encoding="utf-8")
 
     def list_bundles(kind: str) -> list[str]:
-        kind_dir = vault / "inbox" / kind
+        kind_dir = vault / "inbox" / _kind_folder(kind)
         if not kind_dir.is_dir():
             return []
         bundles = sorted(p.name for p in kind_dir.iterdir() if p.is_dir())
         return bundles
 
     def list_single_notes(kind: str) -> list[str]:
-        kind_dir = vault / "inbox" / kind
+        kind_dir = vault / "inbox" / _kind_folder(kind)
         if not kind_dir.is_dir():
             return []
         return sorted(p.stem for p in kind_dir.iterdir() if p.is_file() and p.suffix == ".md")
@@ -1415,7 +1474,7 @@ def cmd_voice_lexicon(args: argparse.Namespace) -> int:
                 if isinstance(org, str) and org.strip():
                     ranked.append((links, org_names.get(org.strip(), org.strip())))
 
-    for kind in ("focus", "habits", "knowledge"):
+    for kind in BUNDLE_FOLDERS:
         folder = vault / "inbox" / kind
         if not folder.is_dir():
             continue
@@ -1986,7 +2045,7 @@ def cmd_create_sub_bundle_truth(args: argparse.Namespace) -> int:
     if len(segments) < 2:
         print(f"fail: '{args.bundle_slug}' is not a sub-bundle path (must be parent/child or deeper)", file=sys.stderr)
         return 1
-    bundle_dir = vault / "inbox" / kind / Path(*segments)
+    bundle_dir = vault / "inbox" / _kind_folder(kind) / Path(*segments)
     if not bundle_dir.exists():
         print(f"fail: sub-bundle folder does not exist: {bundle_dir.relative_to(vault)}", file=sys.stderr)
         print("hint: run `bundle create --kind <k> --slug <parent>/<child>` first", file=sys.stderr)
@@ -2004,6 +2063,9 @@ def cmd_create_sub_bundle_truth(args: argparse.Namespace) -> int:
         v = getattr(args, key, None)
         if v:
             additions[key] = v
+    tags = _tags_arg(getattr(args, "tags", None))
+    if tags:
+        additions["tags"] = tags
 
     base_truth = _render_truth_file(kind=kind, slug=slug, additions=additions)
 
@@ -2799,9 +2861,9 @@ def _recent_activity_bundles(vault: Path, hours_back: int = 48) -> list[dict]:
     any bundle. Returns descending by last_activity_unix."""
     import time as _time
     cutoff = _time.time() - (hours_back * 3600)
-    kind_map = {"knowledge": "knowledge", "habits": "habit", "focus": "focus"}
     result: list[dict] = []
-    for kind_folder, bundle_kind in kind_map.items():
+    for kind_folder in BUNDLE_FOLDERS:
+        bundle_kind = _folder_kind(kind_folder)
         kind_path = vault / "inbox" / kind_folder
         if not kind_path.is_dir():
             continue
@@ -3447,6 +3509,9 @@ def cmd_register_contact(args: argparse.Namespace) -> int:
     slug = _slugify(args.slug)
     sub = "people" if args.kind == "person" else "organizations"
     target_dir = vault / "inbox" / "contacts" / sub
+    # `bundle create` makes its own folder; this one did not and died with a traceback instead. In a
+    # set-up vault the folder is there, so it only ever showed on a vault that predates it.
+    target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"{slug}.md"
     if target.exists():
         print(f"fail: contact exists: {target.relative_to(vault)}", file=sys.stderr)
@@ -3481,7 +3546,10 @@ def cmd_register_contact(args: argparse.Namespace) -> int:
     if mentions:
         additions["mentioned_in"] = mentions
     # A value the user typed now beats one sitting in the file.
-    for k in ("role", "org", "email", "phone", "kind_of", "website"):
+    # Straight from the schema, not from a second list typed out here. The hand-kept version had
+    # drifted: `address` and `birthday` are in the schema for a person and were not accepted, so a
+    # practice address ended up as body prose in the field's place.
+    for k in KIND_FIELDS[kind_field]["optional"]:
         v = getattr(args, k, None)
         if v:
             overrides[k] = v
@@ -3746,7 +3814,7 @@ def _bundle_segments(rel_path: str) -> tuple[str, str] | None:
     if len(parts) < 4 or parts[0] != "inbox":
         return None
     kind, slug = parts[1], parts[2]
-    if kind not in ("focus", "habits", "knowledge"):
+    if kind not in BUNDLE_FOLDERS:
         return None
     if slug.startswith("_") or slug.startswith("."):
         return None
@@ -4767,6 +4835,84 @@ def _distribution_version(vault_or_tree: Path) -> str:
     return ""
 
 
+# --- One-off repairs to a vault that already exists -------------------------
+#
+# A migration cleans up after a release that got something wrong. It is by nature temporary: once every
+# vault in the wild has passed through it, it is dead weight in the update path. Left to good intentions
+# that never happens, because removing code nobody understands anymore feels riskier than keeping it,
+# and the update grows a museum of beta-era repairs.
+#
+# So each migration states the version it must be gone by, and the self-test turns red once that
+# version ships. The reminder to delete it is a failing test, not a note in a file.
+
+
+def _migrate_singular_kind_folder(vault: Path) -> list[str]:
+    """Move bundles out of `inbox/<kind>` into the folder that kind actually uses.
+
+    `bundle create` built its path from the kind value, so a routine landed in `inbox/habit/` while
+    everything else looked in `inbox/habits/`. Vaults that created a routine before the fix carry both,
+    one with the user's data and one empty.
+    """
+    notes: list[str] = []
+    for kind, folder in KIND_FOLDERS.items():
+        stray = vault / "inbox" / kind
+        target = vault / "inbox" / folder
+        if not stray.is_dir() or stray == target:
+            continue
+        moved, blocked = 0, []
+        for entry in sorted(stray.iterdir()):
+            if entry.name == ".DS_Store":
+                entry.unlink()
+                continue
+            destination = target / entry.name
+            if destination.exists():
+                # Two bundles of the same name on both sides. Merging them is a judgement about the
+                # user's content, which this is not allowed to make, so it says so and leaves both.
+                blocked.append(entry.name)
+                continue
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(entry), str(destination))
+            moved += 1
+        if moved:
+            notes.append(f"moved {moved} bundle(s) from inbox/{kind}/ to inbox/{folder}/, "
+                         f"where the rest of the vault looks for them")
+        if blocked:
+            notes.append(f"left {len(blocked)} bundle(s) in inbox/{kind}/ because a bundle of the same "
+                         f"name already exists in inbox/{folder}/: {', '.join(blocked)}. "
+                         f"Both copies are intact; merging them is your call.")
+        elif stray.is_dir() and not any(stray.iterdir()):
+            stray.rmdir()
+            notes.append(f"removed the now-empty inbox/{kind}/")
+    return notes
+
+
+VAULT_MIGRATIONS = (
+    {
+        "id": "singular-kind-folder",
+        "since": "0.3.10",
+        "remove_in": "0.5.0",
+        "why": "0.3.9 and earlier filed routines into inbox/habit/ instead of inbox/habits/",
+        "run": _migrate_singular_kind_folder,
+    },
+)
+
+
+def _run_vault_migrations(vault: Path) -> list[str]:
+    """Every migration, in order. Each one is idempotent: on a vault that needs nothing it says nothing.
+
+    A migration that raises must not take the update down with it, because the update is also what
+    would deliver its fix. It reports and the rest continues.
+    """
+    notes: list[str] = []
+    for migration in VAULT_MIGRATIONS:
+        try:
+            notes.extend(migration["run"](vault))
+        except OSError as exc:
+            notes.append(f"the repair '{migration['id']}' could not finish ({exc}). "
+                         f"Nothing was lost; it runs again on the next update.")
+    return notes
+
+
 def _version_tuple(version: str) -> tuple[int, ...]:
     """Comparable form of a dotted version, unparseable parts count as zero."""
     parts: list[int] = []
@@ -5389,6 +5535,13 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
     # Same list `setup init` creates from and `setup validate` checks against.
     for rel in _required_folders(vault):
         (vault / rel).mkdir(parents=True, exist_ok=True)
+
+    # Repairs for what an earlier release left behind. Before the symlinks, because a migration moves
+    # the user's own material and should not run half-way behind a failure that has nothing to do with
+    # it. Whatever it did is said out loud: material moving on its own is exactly the kind of thing a
+    # user must be able to read, not discover.
+    for note in _run_vault_migrations(vault):
+        print(f"repaired: {note}")
 
     _install_agent_symlinks(vault, _AGENT_NAMES)
     _install_skill_symlinks(vault, _SKILL_SYMLINK_MAP)
@@ -6333,7 +6486,7 @@ def _session_aggregate_tokens(notes: list[dict], vault: Path) -> dict[str, int]:
 
 def _session_existing_bundle_slugs(vault: Path) -> set[str]:
     bundles: set[str] = set()
-    for kind in ("focus", "habits", "knowledge"):
+    for kind in BUNDLE_FOLDERS:
         kind_dir = vault / "inbox" / kind
         if not kind_dir.is_dir():
             continue
@@ -6372,7 +6525,7 @@ def _session_known_entities(vault: Path) -> dict[str, str]:
             for f in d.iterdir():
                 if f.is_file() and f.suffix == ".md":
                     ents[f.stem] = _human_label_for_slug(f.stem)
-    for kind in ("focus", "habits", "knowledge"):
+    for kind in BUNDLE_FOLDERS:
         d = vault / "inbox" / kind
         if d.is_dir():
             for b in d.iterdir():
@@ -7977,6 +8130,7 @@ def main(argv: list[str]) -> int:
     pb_create.add_argument("--due")
     pb_create.add_argument("--topic")
     pb_create.add_argument("--last_done")
+    pb_create.add_argument("--tags", help="Comma-separated tags, e.g. 'sport,ernaehrung'. Without this the file carries whatever tags its own frontmatter had, which for a source without frontmatter is none.")
     pb_create.add_argument("--heading-files", dest="heading_files",
                            help="Heading for the members list in INDEX.md, in the user's language. Default English.")
     pb_create.add_argument("--heading-activity", dest="heading_activity",
@@ -7998,6 +8152,8 @@ def main(argv: list[str]) -> int:
                             help="Who wrote this. Beats what the file says about itself; without it a file that declares nothing counts as the user's own.")
     pb_addfile.add_argument("--source-detail", dest="source_detail",
                             help="Free-text refinement of where it came from, e.g. 'session:research-2026-08'.")
+    pb_addfile.add_argument("--tags",
+                            help="Comma-separated tags. Beats what the file says about itself; a source without frontmatter otherwise lands with none.")
     pb_addfile.add_argument("--summary",
                             help="One-line role of this file inside the bundle, for its INDEX.md entry. Without it the file's own topic or title is used.")
     pb_addfile.set_defaults(func=cmd_copy_into_bundle)
@@ -8014,6 +8170,7 @@ def main(argv: list[str]) -> int:
     pb_addtruth.add_argument("--due")
     pb_addtruth.add_argument("--topic")
     pb_addtruth.add_argument("--last-done", dest="last_done")
+    pb_addtruth.add_argument("--tags", help="Comma-separated tags, e.g. 'sport,ernaehrung'.")
     pb_addtruth.set_defaults(func=cmd_create_sub_bundle_truth)
 
     pb_rename = sub_bundle.add_parser("rename", help="Atomically rename a slug: file rename, frontmatter slug, vault-wide wikilink rewrite, master INDEX refresh.")
@@ -8064,12 +8221,11 @@ def main(argv: list[str]) -> int:
     pc_create.add_argument("--slug", required=True)
     pc_create.add_argument("--full-name", dest="full_name")
     pc_create.add_argument("--source", help="Optional source markdown file. Body verbatim, frontmatter migrated to schema.")
-    pc_create.add_argument("--email")
-    pc_create.add_argument("--phone")
-    pc_create.add_argument("--role")
-    pc_create.add_argument("--org")
-    pc_create.add_argument("--kind_of")
-    pc_create.add_argument("--website")
+    # Every optional field the schema defines for either contact kind, derived rather than listed a
+    # second time. The hand-kept list was missing `address`, `birthday` and `nickname`.
+    for _field in dict.fromkeys(KIND_FIELDS["contact/person"]["optional"]
+                                + KIND_FIELDS["contact/organization"]["optional"]):
+        pc_create.add_argument(f"--{_field}")
     pc_create.add_argument("--mentioned-in", dest="mentioned_in", action="append", default=[],
                            help="Source slug (bundle or member) where this entity was found. Repeatable. Stored in frontmatter `mentioned_in:` and rendered as a wikilink list in the body so the user sees where the stub came from.")
     pc_create.set_defaults(func=cmd_register_contact)

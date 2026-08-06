@@ -2,6 +2,20 @@
 
 All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning: semver. The 0.x series is pre-stable.
 
+## [0.3.10] - 2026-08-06
+
+### Fixed
+
+- **A routine now lands where the rest of the vault looks for it.** Routines are filed in `inbox/habits/`, but the value that describes one is written in the singular, and the command that creates a bundle built its folder straight from that value. So the first routine you created quietly made a second folder, `inbox/habit/`, and put itself there. The index, the session briefing, the structure check and the vault's own front page all looked in the plural one and found nothing. A live vault ended up with a filled singular folder next to an empty plural one, and the routines in it were invisible to half the system. The two spellings now meet in one place that translates between them, and the four hand-kept copies of the folder list are gone: they were what drifted in the first place. A test refuses any new copy of that list.
+- **A run waiting for your answer waits an hour, not two minutes.** When a specialist comes back with something only you can settle, it stays alive and waits rather than ending, so your answer continues the same run with everything it worked out still in mind. The waiting was written for ten minutes, but the call carried no time limit of its own, and the host cuts an unbounded call after two. The run then read the missing answer as "nobody is there" and ended early, falling back to exactly the unreliable path this was built to replace. The wait now sets the host's own limit explicitly, tells a genuine timeout apart from a call that was cut short, and keeps waiting for a full hour before giving up, because you have to look at a result before you can answer it, and looking takes longer than typing.
+- **Filing a contact accepts every field the schema defines.** An address is part of what a person's card can hold, and the command refused it, so a practice address ended up as prose in the body instead of in the field meant for it. The same went for a birthday. The command was keeping its own list of fields beside the schema, and that list had fallen behind; it now reads the schema itself.
+- **Creating a contact no longer fails on a vault that is missing the folder.** It expected the folder to exist and stopped with an interpreter error rather than a sentence. It creates it, the way creating a bundle already did.
+- **An attachment can live in a subfolder.** Naming a target inside `assets/` aimed at the right place but the folder was never created, so the copy failed until someone made it by hand. It is created now, and a name that would point outside the attachments folder is refused instead of followed.
+
+### Added
+
+- **Tags can be set while a file is being filed.** Creating a bundle, adding a main file and filing a document all take them now. Before, the only route was a second command afterwards, and a source document that carried no metadata of its own arrived with no tags at all, which is easy to miss, because nothing about the file looks wrong.
+
 ## [0.3.9] - 2026-08-01
 
 ### Fixed
