@@ -133,6 +133,7 @@ distribution_paths:
   - "zanmai/system/docs/_TEMPLATE.md"
   - "zanmai/system/docs/importing.md"
   - "zanmai/system/docs/research.md"
+  - "zanmai/system/docs/writing.md"
   - "zanmai/system/docs/design.md"
   - "zanmai/system/docs/images.md"
   - "zanmai/system/docs/updates.md"

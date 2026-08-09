@@ -25,20 +25,20 @@ file type, because sorting by type would cut apart the very thing you were keepi
 **What comes out**
 
 - **[Documents in your own design](zanmai/system/docs/design.md)**: it measures the templates you already use and builds in that language. Print-ready PDF, or PowerPoint and Affinity to keep editing.
-- **Minutes from a recording**: throw in the meeting audio, get the write-up.
-- **A summary of a video**: it reads the picture as well, so what is only on a slide still lands in the text.
+- **[Minutes from a recording](zanmai/system/docs/writing.md)**: throw in the meeting audio, get the write-up.
+- **[A summary of a video](zanmai/system/docs/research.md)**: it reads the picture as well, so what is only on a slide still lands in the text.
 - **[Research you can check](zanmai/system/docs/research.md)**: real sources, cited only where it actually read them.
 - **[Images](zanmai/system/docs/images.md)**: generated through Higgsfield or Magnific, or edited on your own machine for free.
 
 **What it does with what you have**
 
 - **[Anything you drop in gets filed](zanmai/system/docs/importing.md)**, in whatever state it arrives.
-- **A photo of a business card becomes a contact**, a booking confirmation a note with the real dates in it.
+- **A photo of a business card becomes [a contact](zanmai/system/docs/contacts.md)**, a booking confirmation a note with the real dates in it.
 - **[Speak instead of typing](zanmai/system/docs/voice.md)**: turned into text on your own machine, nothing uploaded.
 - **[Ask instead of remembering](zanmai/system/docs/finding.md)**: it searches everything, including inside files your editor cannot open.
 - **[One matter stays in one folder](zanmai/system/docs/folder-architecture.md)**: note, PDF, photo and recording together.
 - **[Specialists](zanmai/system/docs/specialists.md)** instead of one model for everything, each on a model you pick.
-- **It tells you what is waiting** without being asked: what came in, what has sat on your desk for weeks.
+- **[It tells you what is waiting](zanmai/system/docs/sessions.md)** without being asked: what came in, what has sat on your desk for weeks.
 - **[Nothing is ever deleted](zanmai/system/docs/snapshots.md)**, and you can pull a single file out of an earlier state of the vault.
 - **[Reaches what is outside](zanmai/system/docs/connections.md)**: the sources you hooked up yourself.
 - **[Updates](zanmai/system/docs/updates.md) never touch your own material.**

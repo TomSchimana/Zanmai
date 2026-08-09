@@ -20,6 +20,7 @@ This is the documentation. You do not have to read it: ask Zanmai instead, in yo
 - [Daily, weekly and monthly notes](daily-capture.md)
 - [Speaking instead of typing](voice.md)
 - [Research](research.md)
+- [Documents written for you](writing.md)
 - [Designing documents](design.md)
 - [Generating images and video](images.md)
 - [Finding things again](finding.md)
