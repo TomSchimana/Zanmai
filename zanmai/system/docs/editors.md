@@ -2,7 +2,7 @@
 
 # Your editor
 
-Use whatever you like. Obsidian, ZenNotes, VS Code, a plain text editor: your vault is a folder of ordinary files with links written `[[like this]]`, so anything that reads Markdown reads it. Zanmai depends on none of them, and there is no editor to install and no setting to point at during setup.
+Use whatever you like. Obsidian, VS Code, a plain text editor: your vault is a folder of ordinary files with links written `[[like this]]`, so anything that reads Markdown reads it. Zanmai depends on none of them, and there is no editor to install and no setting to point at during setup.
 
 Two things are worth knowing before you point an app at the folder.
 
