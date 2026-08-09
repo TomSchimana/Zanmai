@@ -1,0 +1,791 @@
+{
+  "_meta": {
+    "what": "Static registry of every EXTERNAL tool the Zanmai distribution itself invokes or depends on. Derived from an audit of dist/, not from any machine.",
+    "ownership": "Distribution material. Shipped and REPLACED on update. User-immune. It is maintained in lockstep: introducing a new external tool REQUIRES an entry here (a §3 doc-update rule, like manifest.yaml).",
+    "consumers": [
+      "`zanmai.py tools doctor`, detect the whole set on this machine",
+      "`zanmai.py tools ensure <id>`, provision an on-demand tool at first use",
+      "an agent resolves invocation/presence/version per OS before any external call"
+    ],
+    "tiers": {
+      "prerequisite": "Must exist up front; missing -> tell the user (guide). Never auto-installed.",
+      "on-demand": "Provisioned at first use of the feature that needs it: detect -> fetch -> remember.",
+      "recommended": "Accelerator only (brew/scoop/winget); never a hard dependency.",
+      "host-configured": "MCP servers; host configures them, zero-install from Zanmai's point of view (LD6)."
+    },
+    "detect_rule": "Never assume. Resolve invocation + presence + version + identity (a name can be a different program: on some machines grep is ugrep, find is bfs, and python is not python3). Presence is checked live per machine, never stored here.",
+    "verified_legend": "os.<name>.verified=true = checked on real hardware (verified on macOS; windows/linux are DESIGNED until tested).",
+    "guide_note": "install_hint.guide points at a per-OS help doc. These docs are STUBS for now (just the target path); the guided-help build is a later step (README/Wiki, plan Teil B).",
+    "cross_os": {
+      "linux": "DESIGNED, unverified. Invocation is essentially macOS's, both are Unix, so python3/ffmpeg/git/node/yt-dlp/c2patool/pdffonts/magick share binary names; the only real deltas are file-open (xdg-open vs open) and the secret store (secret-tool/libsecret vs Keychain), both already reflected. The venv path is identical (many distro pythons are also PEP-668 externally-managed, so venv is right there too). Provisioning is deliberately NOT automated: too many distros/package managers, and a Linux user installs an app themselves, Linux is a documented prerequisite, no binary auto-fetch.",
+      "windows": "DESIGNED, unverified, first idea, verify on a fresh Windows machine. Deltas: python is `py -3`/`python`, not python3; binaries carry `.exe` (shutil.which still resolves via PATHEXT); no Keychain, Credential Manager (cmdkey/PowerShell) or the .env fallback (likely cleaner for the signer key); file-open via os.startfile/`start`; recommender is winget (built into Win10+/11) or scoop; the venv python lives at Scripts\\python.exe (already handled). The one part that must be Windows-native is the non-Python bootstrap (PowerShell vs Unix shell), pending the fresh-Windows test."
+    },
+    "schema_version": 1
+  },
+  "tools": {
+    "python": {
+      "purpose": "The runtime everything runs on, zanmai.py, image-edit.py, all hooks. If absent, Zanmai cannot bootstrap itself (its own detection is Python too).",
+      "kind": "runtime",
+      "tier": "prerequisite",
+      "needed_by": [
+        "steve",
+        "hank",
+        "reed",
+        "wong",
+        "pepper",
+        "carol",
+        "loki",
+        "stan"
+      ],
+      "min_version": "3.10",
+      "os": {
+        "macos": {
+          "invoke": "python3",
+          "install_hint": {
+            "text": "python.org installer or `brew install python`",
+            "guide": "docs/install/python-macos.md"
+          },
+          "verified": true
+        },
+        "linux": {
+          "invoke": "python3",
+          "install_hint": {
+            "text": "distro package python3",
+            "guide": "docs/install/python-linux.md"
+          },
+          "verified": false
+        },
+        "windows": {
+          "invoke": "py -3",
+          "install_hint": {
+            "text": "python.org installer or `winget install Python.Python.3.12`",
+            "guide": "docs/install/python-windows.md"
+          },
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "runtime",
+        "version_flag": "--version",
+        "identity_note": "python may be a different install than python3"
+      }
+    },
+    "node": {
+      "purpose": "Launches MCP servers (the connection layer). Prerequisite only when an MCP feature is used.",
+      "kind": "runtime",
+      "tier": "prerequisite",
+      "needed_by": [
+        "loki",
+        "carol",
+        "wong"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "node",
+          "install_hint": {
+            "text": "nodejs.org or `brew install node`",
+            "guide": "docs/install/node.md"
+          },
+          "verified": true
+        },
+        "linux": {
+          "invoke": "node",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "node",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which",
+        "version_flag": "--version"
+      }
+    },
+    "git": {
+      "purpose": "Distribution update (ff-merge, version check).",
+      "kind": "binary",
+      "tier": "prerequisite",
+      "needed_by": [
+        "pepper"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "git",
+          "verified": true
+        },
+        "linux": {
+          "invoke": "git",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "git",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which",
+        "version_flag": "--version"
+      }
+    },
+    "pillow": {
+      "purpose": "image-edit core, the visible label on generated media, and measuring a document render per column.",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "loki",
+        "carol"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "PIL"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "Pillow"
+      }
+    },
+    "c2pa": {
+      "purpose": "media-mark machine-readable credential (read/preserve/re-seal).",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "loki"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "c2pa"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "c2pa-python",
+        "note": "PyPI name is c2pa-python (imports as c2pa); the bare 'c2pa' package is a DIFFERENT project, never install that."
+      }
+    },
+    "numpy": {
+      "purpose": "image-edit grade --lut.",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "loki"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "numpy"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "numpy"
+      }
+    },
+    "color_matcher": {
+      "purpose": "image-edit grade --match.",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "loki"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "color_matcher"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "color-matcher"
+      },
+      "fallback": "scikit-image match_histograms"
+    },
+    "scikit_image": {
+      "purpose": "image-edit grade --match fallback.",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "loki"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "skimage"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "scikit-image"
+      }
+    },
+    "rawpy": {
+      "purpose": "image-edit raw develop.",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "loki"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "rawpy"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "rawpy"
+      }
+    },
+    "cryptography": {
+      "purpose": "Generate the self-managed C2PA signing identity (P-256 cert + key) when none exists.",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "loki",
+        "wong"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "cryptography"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "cryptography"
+      }
+    },
+    "ffmpeg": {
+      "purpose": "Video frames (Reed), video label burn and assembly (Loki), and converting a dropped voice note from whatever a phone recorded (m4a, aac, mp3, ogg) into the 16 kHz mono the transcriber needs.",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "reed",
+        "loki",
+        "steve"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "ffmpeg",
+          "verified": true
+        },
+        "linux": {
+          "invoke": "ffmpeg",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "ffmpeg.exe",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which",
+        "version_flag": "-version"
+      },
+      "provision": {
+        "method": "binary-fetch",
+        "note": "official static build to zanmai/runtime/bin; recommender brew/scoop/winget. NOT yet auto-fetched."
+      },
+      "companions": [
+        "ffprobe"
+      ]
+    },
+    "c2patool": {
+      "purpose": "C2PA via CLI (alternative to the python lib).",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "loki"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "c2patool",
+          "verified": true
+        },
+        "linux": {
+          "invoke": "c2patool",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "c2patool.exe",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which",
+        "version_flag": "--version"
+      },
+      "provision": {
+        "method": "binary-fetch",
+        "note": "official release binary. NOT yet auto-fetched."
+      }
+    },
+    "yt_dlp": {
+      "purpose": "Video/source download (Reed).",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "reed"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "yt-dlp",
+          "verified": true
+        },
+        "linux": {
+          "invoke": "yt-dlp",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "yt-dlp.exe",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which",
+        "version_flag": "--version"
+      },
+      "provision": {
+        "method": "binary-fetch"
+      }
+    },
+    "whisper": {
+      "purpose": "Turns speech into text on this machine, with no network and no key, which is what a spoken journal entry needs. Used for a dropped voice note and for Reed's video and audio pipeline. Takes an initial prompt, which is how the vault's own names bias the recognition.",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "reed",
+        "steve"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "whisper-cli",
+          "verified": true
+        },
+        "linux": {
+          "invoke": "whisper-cli",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "whisper-cli.exe",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which"
+      },
+      "provision": {
+        "method": "binary-fetch"
+      }
+    },
+    "chromium": {
+      "purpose": "Turns Carol's designed HTML into an exact print-ready PDF. Safari has no background print path, so a Chromium-based engine is what renders the layout to A4.",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "carol"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "chromium",
+          "install_hint": {
+            "text": "brew install --cask chromium (Chrome, Edge or Brave also work)",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        },
+        "linux": {
+          "invoke": "chromium",
+          "install_hint": {
+            "text": "distro package chromium (or Chrome/Edge/Brave)",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        },
+        "windows": {
+          "invoke": "chrome.exe",
+          "install_hint": {
+            "text": "install Chrome, Edge or Brave",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "renderer"
+      },
+      "provision": {
+        "method": "message",
+        "note": "any Chromium-based browser works (Chrome, Edge, Brave, Chromium, Vivaldi); detected cross-OS via PATH + per-OS app paths, not auto-fetched. Missing on macOS (Safari only) surfaces a clear install message; Windows usually has Edge preinstalled."
+      }
+    },
+    "poppler": {
+      "purpose": "Turns a render into pixels and text so it can be measured rather than assumed (pdftoppm for coverage, bleed and the contact sheet; pdftotext to check the text arrived complete; pdffonts to check the fonts are embedded). Without it a document can be built but not verified.",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "carol"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "pdffonts",
+          "install_hint": {
+            "text": "brew install poppler",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        },
+        "linux": {
+          "invoke": "pdffonts",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "pdffonts.exe",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which"
+      },
+      "provision": {
+        "method": "message"
+      }
+    },
+    "ghostscript": {
+      "purpose": "Converts the final PDF to CMYK for a real press run (html skill). Only needed when the job is print production, not for a screen or RGB flyer.",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "carol"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "gs",
+          "install_hint": {
+            "text": "brew install ghostscript",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        },
+        "linux": {
+          "invoke": "gs",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "gswin64c.exe",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which",
+        "version_flag": "--version"
+      },
+      "provision": {
+        "method": "message"
+      }
+    },
+    "imagemagick": {
+      "purpose": "image-edit format fallback beyond Pillow.",
+      "kind": "binary",
+      "tier": "recommended",
+      "needed_by": [
+        "loki"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "magick",
+          "install_hint": {
+            "text": "brew install imagemagick",
+            "guide": "docs/install/index.md"
+          },
+          "verified": true
+        },
+        "linux": {
+          "invoke": "magick",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "magick.exe",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which",
+        "version_flag": "--version"
+      },
+      "provision": {
+        "method": "message"
+      }
+    },
+    "c2pa_signer": {
+      "purpose": "Self-managed signing identity for the fallback / re-seal case (valid, not trust-listed).",
+      "kind": "secret",
+      "tier": "on-demand",
+      "needed_by": [
+        "loki",
+        "wong"
+      ],
+      "detect": {
+        "method": "env",
+        "env": [
+          "ZANMAI_C2PA_CERT",
+          "ZANMAI_C2PA_KEY"
+        ]
+      },
+      "provision": {
+        "method": "wong",
+        "command": "zanmai.py media signer ensure (generates via the cryptography lib and stores cert.pem/key.pem; media mark also establishes on demand)",
+        "recipe": "P-256 (prime256v1) key in PKCS#8 + cert with keyUsage=digitalSignature, EKU=emailProtection, CA:FALSE, AND subjectKeyIdentifier + authorityKeyIdentifier (c2pa REJECTS a signing cert lacking SKI/AKI, verified 2026-07-20).",
+        "storage": "user config dir OUTSIDE the vault (XDG_CONFIG_HOME/APPDATA), chmod 600, never in the vault (LD6)."
+      }
+    },
+    "secret_store": {
+      "purpose": "Hold connection secrets and the signer key outside the vault (LD6).",
+      "kind": "os-native",
+      "tier": "on-demand",
+      "needed_by": [
+        "wong"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "security",
+          "verified": true
+        },
+        "linux": {
+          "invoke": "secret-tool",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "cmdkey",
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which"
+      },
+      "fallback": "gitignored .env outside the vault, chmod 600, masked."
+    },
+    "mcp_magnific": {
+      "purpose": "Loki image/video backend.",
+      "kind": "mcp",
+      "tier": "host-configured",
+      "needed_by": [
+        "loki"
+      ],
+      "grant": "mcp__magnific__*"
+    },
+    "mcp_higgsfield": {
+      "purpose": "Loki image/video backend.",
+      "kind": "mcp",
+      "tier": "host-configured",
+      "needed_by": [
+        "loki"
+      ],
+      "grant": "mcp__higgsfield__*"
+    },
+    "mcp_affinity": {
+      "purpose": "Carol native Affinity design.",
+      "kind": "mcp",
+      "tier": "host-configured",
+      "needed_by": [
+        "carol"
+      ],
+      "grant": "mcp__affinity__*"
+    },
+    "connection_clis": {
+      "purpose": "Optional host CLIs Wong can bridge to, opt-in per use-case.",
+      "kind": "binary",
+      "tier": "recommended",
+      "needed_by": [
+        "wong"
+      ],
+      "members": {
+        "gh": "GitHub CLI",
+        "az": "Azure CLI",
+        "gcloud": "Google Cloud CLI",
+        "aws": "AWS CLI",
+        "op": "1Password CLI"
+      }
+    },
+    "typst": {
+      "purpose": "Sets a document: real text flow across pages, a full-width block deferred to the next page while text keeps filling the current one, column balancing, hyphenation dictionaries, page numbers and bleed. The renderer for anything paged; a browser paginates a web page and has none of this.",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "carol"
+      ],
+      "version_pin": "0.15.1",
+      "os": {
+        "macos": {
+          "invoke": "typst",
+          "asset": "typst-{arch}-apple-darwin.tar.xz",
+          "install_hint": {
+            "text": "brew install typst, or let Zanmai fetch the pinned build",
+            "guide": "docs/install/index.md"
+          },
+          "verified": true
+        },
+        "linux": {
+          "invoke": "typst",
+          "asset": "typst-{arch}-unknown-linux-musl.tar.xz",
+          "install_hint": {
+            "text": "distro package typst, or let Zanmai fetch the pinned build",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        },
+        "windows": {
+          "invoke": "typst.exe",
+          "asset": "typst-{arch}-pc-windows-msvc.zip",
+          "install_hint": {
+            "text": "winget install Typst.Typst, or let Zanmai fetch the pinned build",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which"
+      },
+      "provision": {
+        "method": "binary-fetch",
+        "release": "https://github.com/typst/typst/releases/download/v{version}/{asset}",
+        "into": "zanmai/runtime/bin",
+        "canary": "zanmai/system/scripts/typst-canary.typ",
+        "note": "One self-contained binary per platform, which is why this tier fits it at all. A host copy that meets the pin is used as it stands; nothing is installed beside it. Identity is proven by running the binary and matching the pinned version, then by compiling the canary, so a half-unpacked archive fails at provisioning rather than during real work."
+      }
+    },
+    "python_pptx": {
+      "purpose": "Reads and writes a native .pptx without opening PowerPoint: which layout a slide uses, whether its placeholders are filled, whether a run overrides the layout, which faces and colours are actually in the file. The deck's measurable checks run on the file, because no engine but PowerPoint itself renders a .pptx faithfully.",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "carol"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "pptx"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "python-pptx"
+      }
+    },
+    "whisper-model": {
+      "purpose": "The weights whisper runs on. Nothing transcribes without one, so this is the first-use step for voice notes. `large-v3-turbo` is the default: strong on German and fast enough that a two-minute note is seconds rather than minutes. About 1.6 GB, fetched once, and it lives in the machine-local runtime folder so it never travels in a backup.",
+      "kind": "model-file",
+      "tier": "on-demand",
+      "needed_by": [
+        "reed",
+        "steve"
+      ],
+      "detect": {
+        "method": "file-glob",
+        "glob": "zanmai/runtime/whisper/ggml-*.bin"
+      },
+      "provision": {
+        "method": "file-fetch",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+        "target": "zanmai/runtime/whisper/ggml-large-v3-turbo.bin",
+        "expect_min_mb": 1000,
+        "canary_cmd": "whisper-cli",
+        "note": "One plain file, so it is fetched rather than unpacked, and it is proven by transcribing a second of silence with it: a file of the right size that does not load is the failure this catches. Machine-local on purpose, so it never travels in a backup."
+      },
+      "os": {
+        "macos": {
+          "install_hint": {
+            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the vault's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
+            "guide": "docs/voice.md"
+          },
+          "verified": true
+        },
+        "linux": {
+          "install_hint": {
+            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the vault's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
+            "guide": "docs/voice.md"
+          },
+          "verified": false
+        },
+        "windows": {
+          "install_hint": {
+            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the vault's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
+            "guide": "docs/voice.md"
+          },
+          "verified": false
+        }
+      }
+    },
+    "ffprobe": {
+      "purpose": "Reads how long a recording is, and whether a media file is what its name claims. Ships with ffmpeg; listed separately because it is invoked separately.",
+      "kind": "binary",
+      "tier": "on-demand",
+      "needed_by": [
+        "reed",
+        "steve",
+        "loki"
+      ],
+      "detect": {
+        "method": "which"
+      },
+      "os": {
+        "macos": {
+          "invoke": "ffprobe",
+          "install_hint": {
+            "text": "comes with ffmpeg",
+            "guide": "docs/install/index.md"
+          },
+          "verified": true
+        },
+        "linux": {
+          "invoke": "ffprobe",
+          "install_hint": {
+            "text": "comes with ffmpeg",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        },
+        "windows": {
+          "invoke": "ffprobe.exe",
+          "install_hint": {
+            "text": "comes with ffmpeg",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "_meta": "Per-expert, per-path REQUIRED tool ids. `tools preflight <expert> --capability <cap>` gates only on the required set, so a job takes only what that path needs (a screen flyer over html needs the renderer, not the Affinity MCP). Without --capability, preflight falls back to the expert's full needed_by (coarse). Optional refinements stay in needed_by and are surfaced by the expert, not gated.",
+    "carol": {
+      "html": {
+        "required": [
+          "chromium"
+        ]
+      },
+      "affinity": {
+        "required": [
+          "mcp_affinity"
+        ]
+      },
+      "document": {
+        "required": [
+          "typst"
+        ]
+      },
+      "powerpoint": {
+        "required": [
+          "python_pptx"
+        ]
+      }
+    }
+  },
+  "recommenders": {
+    "macos": {
+      "tool": "brew",
+      "verified": true
+    },
+    "windows": {
+      "tool": "scoop | winget",
+      "verified": false
+    },
+    "linux": {
+      "tool": "apt | dnf",
+      "verified": false
+    },
+    "python_venv_provisioner": {
+      "prefer": "uv (fast, can also supply a pinned Python without admin)",
+      "floor": "stdlib `python3 -m venv` (ensurepip present), no hard uv dependency",
+      "note": "system python3 is often EXTERNALLY-MANAGED (PEP 668); a venv sidesteps that"
+    }
+  }
+}
