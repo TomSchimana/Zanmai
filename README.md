@@ -10,7 +10,7 @@ already there.
 Everything in it opens in any editor, with or without this. The AI is Claude, through
 [Claude Code](https://claude.com/claude-code).
 
-> **Developer preview, 0.1.0.** Filing, search and the journal are in daily use; design and image
+> **Developer preview, 0.2.0.** Filing, search and the journal are in daily use; design and image
 > generation work but are still being sharpened. A new version can change how things behave, so keep
 > your own backups and read the [changelog](zanmai/system/CHANGELOG.md) before you update.
 
@@ -26,6 +26,7 @@ file type, because sorting by type would cut apart the very thing you were keepi
 
 - **[Documents in your own design](zanmai/system/docs/design.md)**: it measures the templates you already use and builds in that language. Print-ready PDF, or PowerPoint and Affinity to keep editing.
 - **[Minutes from a recording](zanmai/system/docs/writing.md)**: throw in the meeting audio, get the write-up.
+- **[A finished cut](zanmai/system/docs/video.md)**: footage and your notes in, a video out, with captions and levelled sound. Delete a paragraph from the transcript and exactly that leaves the video.
 - **[A summary of a video](zanmai/system/docs/research.md)**: it reads the picture as well, so what is only on a slide still lands in the text.
 - **[Research you can check](zanmai/system/docs/research.md)**: real sources, cited only where it actually read them.
 - **[Images](zanmai/system/docs/images.md)**: generated through Higgsfield or Magnific, or edited on your own machine for free.
@@ -37,6 +38,7 @@ file type, because sorting by type would cut apart the very thing you were keepi
 - **[Speak instead of typing](zanmai/system/docs/voice.md)**: turned into text on your own machine, nothing uploaded.
 - **[Ask instead of remembering](zanmai/system/docs/finding.md)**: it searches everything, including inside files your editor cannot open.
 - **[One matter stays in one folder](zanmai/system/docs/folder-architecture.md)**: note, PDF, photo and recording together.
+- **[Your brand comes out of your own material](zanmai/system/docs/brand.md)**: colour, type and tone read off a logo and an old document, kept in one file, so a document, an image and a video look like the same company.
 - **[Specialists](zanmai/system/docs/specialists.md)** instead of one model for everything, each on a model you pick.
 - **[It tells you what is waiting](zanmai/system/docs/sessions.md)** without being asked: what came in, what has sat on your desk for weeks.
 - **[Nothing is ever deleted](zanmai/system/docs/snapshots.md)**, and you can pull a single file out of an earlier state of the vault.

@@ -28,10 +28,13 @@ Conventions:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import fnmatch
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -82,6 +85,7 @@ SYSTEM_MATERIAL_DIR = f"{SYSTEM_DIR}/system"        # distribution, replaced on 
 EXTENSIONS_DIR = f"{SYSTEM_DIR}/extensions"
 CONNECTIONS_DIR = f"{SYSTEM_DIR}/connections"
 MEMORY_DIR = f"{SYSTEM_DIR}/memory"
+DESIGN_DIR = f"{SYSTEM_DIR}/design"   # one folder per brand, update-immune, written by the design work
 LOGS_DIR = f"{SYSTEM_DIR}/logs"
 HISTORY_DIR = f"{SYSTEM_DIR}/history"       # the snapshot repository, a git dir of its own
 RUNTIME_DIR = f"{SYSTEM_DIR}/runtime"
@@ -118,6 +122,9 @@ COMMON_REQUIRED = ("kind", "slug", "created")
 COMMON_OPTIONAL = ("updated", "source", "source_detail", "tags", "mentioned_in")
 KIND_FIELDS = {
     "focus": {"required": ("goal", "status"), "optional": ("due",)},
+    # The desk. It asks for nothing beyond the common fields on purpose: what clears a bundle off
+    # the desk is read from the file dates, not from a field somebody has to keep true.
+    "doing": {"required": (), "optional": ("status", "due")},
     "habit": {"required": ("cadence",), "optional": ("last_done",)},
     "knowledge": {"required": (), "optional": ("topic", "status")},
     "contact/person": {"required": (), "optional": ("nickname", "role", "org", "email", "phone", "birthday", "address", "website")},
@@ -133,7 +140,7 @@ KIND_FIELDS = {
 # These two functions are the only place that knows about the difference. The previous shape - a
 # hand-kept folder list in five places plus one local `kind_map` patch - is exactly what drifted.
 KIND_FOLDERS = {"habit": "habits"}
-BUNDLE_KINDS = ("focus", "habit", "knowledge")
+BUNDLE_KINDS = ("focus", "doing", "habit", "knowledge")
 
 
 def _tags_arg(value: str | None) -> list[str] | None:
@@ -1514,7 +1521,8 @@ def _pending_recordings(vault: Path) -> list[Path]:
 # never a subfolder: the folder is the automation, so anything anyone drops in is taken.
 _IMPORT_ROUTES = (
     ("recording", AUDIO_EXTS, "read it out, no question asked"),
-    ("video", (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"), "ask what to do with it"),
+    ("video", (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"),
+     "ask what it is for: a cut, or only the words spoken in it"),
     ("document", (".pdf", ".doc", ".docx", ".pages", ".odt", ".rtf"), "ask what to do with it"),
     ("presentation", (".ppt", ".pptx", ".key"), "ask what to do with it"),
     ("sheet", (".xls", ".xlsx", ".numbers", ".csv"), "ask what to do with it"),
@@ -1525,9 +1533,51 @@ _IMPORT_ROUTES = (
 )
 
 
+# The container tells you nothing about the content: .mp4, .mov and .m4a all carry either sound
+# alone or sound with picture, and both lists below have to contain them or one of the two cases
+# would be unroutable. Extension alone therefore decided the wrong thing every time a video was
+# dropped, because "recording" comes first and won: a screen recording was read out as a voice
+# note. The file itself knows, so it is asked.
+_AMBIGUOUS_MEDIA = {".mp4", ".mov", ".m4a", ".m4b", ".m4v", ".webm", ".mkv", ".ogg", ".3gp"}
+
+
+def _has_video_stream(path: Path) -> bool | None:
+    """Whether this file carries a picture. None where nothing can measure it."""
+    probe = shutil.which("ffprobe") or shutil.which("ffmpeg")
+    if not probe:
+        return None
+    try:
+        r = subprocess.run([probe, "-v", "error", "-select_streams", "v",
+                            "-show_entries", "stream=codec_type,disposition=attached_pic",
+                            "-of", "csv=p=0", str(path)],
+                           capture_output=True, text=True, timeout=20)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    for zeile in (r.stdout or "").strip().splitlines():
+        teile = zeile.split(",")
+        # Cover art in an audio file is a video stream too, and it is not a picture anyone films.
+        if teile and teile[0] == "video" and (len(teile) < 2 or teile[1].strip() != "1"):
+            return True
+    return False
+
+
 def _import_route(path: Path) -> tuple[str, str]:
     """The kind of a dropped file and what happens to it. Unknown is a kind, not a gap."""
     suffix = path.suffix.lower()
+    if suffix in _AMBIGUOUS_MEDIA:
+        hat_bild = _has_video_stream(path)
+        if hat_bild is True:
+            # A picture inside does not mean a video is wanted. Somebody recording themselves for
+            # a spoken note gets a picture whether they want one or not, and reading the words out
+            # is then the right answer. So this asks rather than deciding.
+            return "video", "ask what it is for: a cut, or only the words spoken in it"
+        if hat_bild is False:
+            return "recording", "read it out, no question asked"
+        # Nothing could look inside. Say that rather than guessing from the name, because guessing
+        # wrong here means a video gets transcribed and filed as a spoken note.
+        return "media", "ask: nothing on this machine can tell whether it carries a picture"
     for kind, suffixes, verhalten in _IMPORT_ROUTES:
         if suffix in suffixes:
             return kind, verhalten
@@ -1927,6 +1977,7 @@ WORK_FIELDS = [
     ("deliverable", "text", None, False),
     ("workshop", "text", None, False),
     ("updated", "date", None, False),
+    ("due", "date", None, False),
     ("tokens", "number", None, False),
     ("minutes", "number", None, False),
 ]
@@ -1993,6 +2044,7 @@ def _work_ensure(vault: Path) -> tuple[Path, Path, list[str]]:
     pages = base / "pages"
     headers = [name for name, _t, _o, _h in WORK_FIELDS]
     if csv_path.is_file() and schema_path.is_file():
+        _work_migrate(csv_path, schema_path, headers)
         return csv_path, schema_path, headers
     base.mkdir(parents=True, exist_ok=True)
     pages.mkdir(exist_ok=True)
@@ -2030,6 +2082,46 @@ def _work_ensure(vault: Path) -> tuple[Path, Path, list[str]]:
         _csv.writer(buf).writerow(headers)
         csv_path.write_text(buf.getvalue(), encoding="utf-8")
     return csv_path, schema_path, headers
+
+
+def _work_migrate(csv_path: Path, schema_path: Path, headers: list[str]) -> None:
+    """Give a database made by an earlier version the fields a later one added.
+
+    Without this it keeps its old columns for good: the reader takes the header row as it finds it
+    and the writer writes that same row back, so a field added later is dropped on every save and
+    never says so. Existing rows get the field empty, which is what an unset date should look like.
+    """
+    import csv as _csv
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        reader = _csv.DictReader(fh)
+        vorhanden = list(reader.fieldnames or [])
+        rows = [dict(r) for r in reader]
+    fehlend = [h for h in headers if h not in vorhanden]
+    if not fehlend:
+        return
+    neu = vorhanden + fehlend
+    with csv_path.open("w", newline="", encoding="utf-8") as fh:
+        writer = _csv.DictWriter(fh, fieldnames=neu)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({h: row.get(h, "") for h in neu})
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    bekannt = {f.get("name") for f in schema.get("fields", [])}
+    for name, ftype, options, hidden in WORK_FIELDS:
+        if name in bekannt:
+            continue
+        feld = {"id": _work_uuid(f"field:{name}"), "name": name, "type": ftype}
+        if options:
+            feld["options"] = [
+                {"id": _work_uuid(f"option:{name}:{value}"), "value": value} for value in options
+            ]
+        if hidden:
+            feld["hidden"] = True
+        schema.setdefault("fields", []).append(feld)
+        for view in schema.get("views", []):
+            if view.get("type") == "table" and isinstance(view.get("columnOrder"), list):
+                view["columnOrder"].append(feld["id"])
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
 
 
 def _work_read(vault: Path) -> tuple[list[dict], list[str]]:
@@ -2075,13 +2167,16 @@ def _work_register_page(vault: Path, row_id: str) -> None:
 def cmd_work_open(args: argparse.Namespace) -> int:
     """Open a work object. Returns its id, which every later call uses."""
     vault = Path(args.vault).resolve()
+    if args.due and not _task_date_ok(args.due):
+        print("fail: --due expects YYYY-MM-DD", file=sys.stderr)
+        return 1
     rows, headers = _work_read(vault)
     row_id = _work_uuid(f"{_timestamp_log()}:{args.title}")
     row = {h: "" for h in headers}
     row.update({
         "id": row_id, "work": args.title, "state": "open", "owner": args.owner or "",
         "deliverable": args.deliverable or "", "workshop": args.workshop or "",
-        "updated": _today(),
+        "updated": _today(), "due": args.due or "",
     })
     rows.append(row)
     _work_write(vault, rows, headers)
@@ -2187,6 +2282,11 @@ def cmd_work_log(args: argparse.Namespace) -> int:
         row["workshop"] = args.workshop
     if args.deliverable:
         row["deliverable"] = args.deliverable
+    if args.due:
+        if not _task_date_ok(args.due):
+            print("fail: --due expects YYYY-MM-DD", file=sys.stderr)
+            return 1
+        row["due"] = args.due
     _work_touch(row)
     _work_write(vault, rows, headers)
     who = f"{args.agent}: " if args.agent else ""
@@ -2223,6 +2323,8 @@ def cmd_work_list(args: argparse.Namespace) -> int:
             continue
         shown += 1
         line = f"{row.get('id','')[:8]}  {str(row.get('state','')):14}  {row.get('work','')}"
+        if row.get("due"):
+            line += f"  (due {row['due']})"
         if row.get("owner"):
             line += f"  [{row['owner']}]"
         print(line)
@@ -2230,6 +2332,487 @@ def cmd_work_list(args: argparse.Namespace) -> int:
             print(f"          waiting for: {row['waiting for']}")
     waiting = sum(1 for r in rows if r.get("state") == "waiting on you")
     print(f"ok: {shown} of {len(rows)} work object(s) shown; {waiting} waiting on the user")
+    return 0
+
+
+# --- The brand, and the gate in front of it --------------------------------
+#
+# One brand file per brand, under the user's own folders because it is theirs to read and to
+# disagree with, and `trusted/` is already defined as what they have settled on. Shuri writes it;
+# Carol, Loki and Luis read it and produce from it.
+#
+# The gate exists because a piece rendered against an invented colour looks finished and is wrong,
+# and by then the render time and, with generated imagery, the money are already spent. So the
+# check runs before the dispatch, not inside it.
+#
+# What counts as unfilled is the template's own angle-bracket placeholder. That is deliberate: an
+# empty field says "not decided yet", where a plausible default would quietly make a decision the
+# user never made, and nothing downstream could tell the two apart afterwards.
+
+BRAND_DIR = f"{TRUSTED_DIR}/brands"
+_BRAND_PLACEHOLDER_RE = re.compile(r"<[^<>\n]{2,}>")
+
+
+def _brand_root(vault: Path) -> Path:
+    return vault / BRAND_DIR
+
+
+def _brand_file(vault: Path, name: str) -> Path:
+    return _brand_root(vault) / name / "design.md"
+
+
+def _brand_names(vault: Path) -> list[str]:
+    root = _brand_root(vault)
+    if not root.is_dir():
+        return []
+    return sorted(d.name for d in root.iterdir() if (d / "design.md").is_file())
+
+
+def _brand_frontmatter(text: str) -> dict:
+    """The token block, read without a YAML library.
+
+    Two nesting levels is all the format uses (`typography.body-md.fontSize`, `components.button.
+    padding`), so an indentation reader covers it and the distribution keeps its one dependency
+    rule: no library for a format we can read in twenty lines.
+    """
+    block = _frontmatter_block(text)
+    if not block:
+        return {}
+    daten: dict = {}
+    eins: dict | None = None
+    zwei: dict | None = None
+    liste: list | None = None
+
+    def wert_von(roh: str) -> str:
+        # A comment starts at a `#` that follows whitespace. A `#` that opens the value is a colour,
+        # which is the whole reason this is not a plain split.
+        return re.sub(r"\s+#.*$", "", roh).strip().strip('"').strip("'")
+
+    for zeile in block.splitlines()[1:-1]:
+        if not zeile.strip() or zeile.lstrip().startswith("#"):
+            continue
+        einzug = len(zeile) - len(zeile.lstrip())
+        if liste is not None and zeile.lstrip().startswith("- "):
+            liste.append(wert_von(zeile.lstrip()[2:]))
+            continue
+        if liste and einzug >= 4:
+            # The object form of an omitted section: `- section: x` then an indented `reason:`.
+            liste[-1] = f"{liste[-1]}, {wert_von(zeile.strip())}"
+            continue
+        name, _, roh = zeile.strip().partition(":")
+        name, wert = name.strip(), wert_von(roh)
+        if einzug == 0:
+            eins = zwei = liste = None
+            if wert in ("[]", "{}"):
+                daten[name] = [] if wert == "[]" else {}
+            elif wert:
+                daten[name] = wert
+            elif name == "omitted":
+                daten[name] = liste = []
+            else:
+                daten[name] = eins = {}
+        elif einzug == 2 and isinstance(eins, dict):
+            zwei = None
+            if wert:
+                eins[name] = wert
+            else:
+                eins[name] = zwei = {}
+        elif einzug >= 4 and isinstance(zwei, dict):
+            zwei[name] = wert
+    return daten
+
+
+def _brand_rgb(wert: str) -> tuple[int, int, int] | None:
+    """A hex colour as three channels. Other CSS forms are valid in the format and simply not
+    measured here, which is said out loud rather than guessed at."""
+    treffer = re.fullmatch(r"#([0-9a-fA-F]{3})([0-9a-fA-F]{3})?[0-9a-fA-F]{0,2}", wert.strip())
+    if not treffer:
+        return None
+    roh = wert.strip().lstrip("#")
+    if len(roh) in (3, 4):
+        roh = "".join(z * 2 for z in roh[:3])
+    return tuple(int(roh[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+def _brand_contrast(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    """WCAG contrast ratio. Text under 4.5 is unreadable for someone, and that is measurable
+    rather than a matter of taste, which is exactly why it belongs in a check and not in a review."""
+    def leuchtdichte(farbe: tuple[int, int, int]) -> float:
+        kanaele = []
+        for wert in farbe:
+            v = wert / 255
+            kanaele.append(v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4)
+        return 0.2126 * kanaele[0] + 0.7152 * kanaele[1] + 0.0722 * kanaele[2]
+    hell, dunkel = sorted((leuchtdichte(a), leuchtdichte(b)), reverse=True)
+    return (hell + 0.05) / (dunkel + 0.05)
+
+
+def _brand_findings(daten: dict) -> list[str]:
+    """What is weak about this brand as a system, beyond which fields are still empty.
+
+    A brand strategist is asked what is missing, not only whether the file parses, so this is the
+    part that says a two-level type scale will be invented at build time and that a button nobody
+    can read is a defect with a number on it.
+    """
+    befunde: list[str] = []
+
+    def gesetzt(wert) -> bool:
+        return bool(wert) and not _BRAND_PLACEHOLDER_RE.search(str(wert))
+
+    farben = {k: v for k, v in (daten.get("colors") or {}).items() if gesetzt(v)}
+    if not farben.get("primary"):
+        befunde.append("no primary colour, which is the one value the format requires")
+
+    stufen = [k for k, v in (daten.get("typography") or {}).items()
+              if isinstance(v, dict) and gesetzt(v.get("fontFamily")) and gesetzt(v.get("fontSize"))]
+    if not stufen:
+        befunde.append("no typography level is pinned; every size will be invented per piece")
+    elif len(stufen) < 5:
+        befunde.append(f"only {len(stufen)} typography level(s) pinned, most brands need nine "
+                       f"to fifteen; what is missing gets invented differently in every piece")
+
+    abstaende = {k: v for k, v in (daten.get("spacing") or {}).items() if gesetzt(v)}
+    if not abstaende:
+        befunde.append("no spacing scale, so whitespace is decided per piece and nothing lines up")
+    elif not ({"gutter", "margin"} & set(abstaende)):
+        befunde.append("spacing has no gutter or margin, the two values a layout actually needs")
+
+    if not any(gesetzt(v) for v in (daten.get("rounded") or {}).values()):
+        befunde.append("no corner radii, not even `none`; sharp is a decision worth writing down")
+
+    for eintrag in (daten.get("omitted") or []):
+        if isinstance(eintrag, str) and eintrag.strip("- ") and "reason" not in str(eintrag):
+            befunde.append(f"'{eintrag}' is omitted without a reason on the record")
+
+    # Contrast, measured where both sides of a pair resolve to a hex value.
+    def aufloesen(wert: str) -> str:
+        if wert.startswith("{") and wert.endswith("}"):
+            teile = wert[1:-1].split(".")
+            knoten: object = daten
+            for teil in teile:
+                knoten = (knoten or {}).get(teil) if isinstance(knoten, dict) else None
+            return str(knoten or "")
+        return wert
+
+    for name, eigenschaften in (daten.get("components") or {}).items():
+        if not isinstance(eigenschaften, dict):
+            continue
+        grund = _brand_rgb(aufloesen(str(eigenschaften.get("backgroundColor", ""))))
+        text = _brand_rgb(aufloesen(str(eigenschaften.get("textColor", ""))))
+        if grund and text:
+            verhaeltnis = _brand_contrast(grund, text)
+            if verhaeltnis < 4.5:
+                befunde.append(f"{name}: text on its own background is {verhaeltnis:.1f}:1, "
+                               f"below the 4.5:1 that ordinary text needs")
+    return befunde
+
+
+def _brand_named(text: str) -> bool:
+    """Has anybody actually started this brand, or is it the shipped template untouched?
+
+    The name is the one field the format itself requires, so it is the honest test. A file whose
+    name is still the placeholder is a form, not a brand, and building against it would mean
+    inventing every value in it.
+    """
+    for zeile in _frontmatter_block(text).splitlines():
+        if zeile.startswith("name:"):
+            wert = zeile.split(":", 1)[1].strip().strip("\"'")
+            return bool(wert) and not _BRAND_PLACEHOLDER_RE.fullmatch(wert)
+    return False
+
+
+def _brand_gaps(text: str) -> list[str]:
+    """The fields still carrying a placeholder, named by the section they sit in."""
+    gaps: list[str] = []
+    section = "(top)"
+    for zeile in text.splitlines():
+        if zeile.startswith("## "):
+            section = zeile[3:].strip()
+            continue
+        if _BRAND_PLACEHOLDER_RE.search(zeile):
+            kurz = " ".join(zeile.strip("- ").split())[:60]
+            gaps.append(f"{section}: {kurz}")
+    return gaps
+
+
+def cmd_brand_check(args: argparse.Namespace) -> int:
+    """Is there a brand to build against? Exit 1 when there is none, so a caller can gate on it."""
+    vault = Path(args.vault).resolve()
+    namen = [n for n in _brand_names(vault)
+             if _brand_named(_brand_file(vault, n).read_text(encoding="utf-8"))]
+    if args.brand:
+        namen = [n for n in namen if n == args.brand]
+    if not namen:
+        gesucht = f" named '{args.brand}'" if args.brand else ""
+        print(f"fail: no brand{gesucht} under {BRAND_DIR}/", file=sys.stderr)
+        print("  Shuri establishes one from the user's own material (logo, an existing document, "
+              "a presentation, a website).", file=sys.stderr)
+        return 1
+
+    unvollstaendig = 0
+    for name in namen:
+        pfad = _brand_file(vault, name)
+        text = pfad.read_text(encoding="utf-8")
+        gaps = _brand_gaps(text)
+        befunde = _brand_findings(_brand_frontmatter(text))
+        rel = pfad.relative_to(vault).as_posix()
+        if not gaps and not befunde:
+            print(f"ok: {name} ({rel}), nothing left open")
+            continue
+        unvollstaendig += 1
+        print(f"ok: {name} ({rel}), {len(gaps)} field(s) not decided yet, "
+              f"{len(befunde)} thing(s) the brand cannot answer")
+        for befund in befunde:
+            print(f"  ! {befund}")
+        for gap in gaps[:args.limit]:
+            print(f"    {gap}")
+        if len(gaps) > args.limit:
+            print(f"    ... plus {len(gaps) - args.limit} open field(s)")
+    if unvollstaendig:
+        print("A piece can be built on this, but everything above is a value somebody would "
+              "otherwise invent, differently in each piece. Shuri settles them.")
+    return 0
+
+
+def cmd_brand_list(args: argparse.Namespace) -> int:
+    """Every brand that exists, with where it lives."""
+    vault = Path(args.vault).resolve()
+    namen = _brand_names(vault)
+    for name in namen:
+        print(f"{name}  {_brand_file(vault, name).relative_to(vault).as_posix()}")
+    print(f"ok: {len(namen)} brand(s)")
+    return 0
+
+
+# --- Tasks on the user's own lists -----------------------------------------
+#
+# Section 8 is about authorship, not about whose fingers produce the line. A task on the user's list
+# is one the user wants; the AI writes it when it is asked to, and invents none of its own. What the
+# machine still owes goes on a work object, which is its own list and stays out of the user's files.
+# The earlier rule banned the writing instead of the inventing, which left a plain instruction
+# ("put that on my list") with no route at all.
+#
+# `task add` is that route and the only one: `hook checkbox-guard` still refuses a task line that
+# turns up inside an ordinary Write or Edit, so a box cannot arrive as a side effect of editing
+# prose. No mechanism can check whether the user really asked. These two can be had, so they are:
+# writing a task is a deliberate, named act, and every one lands in the activity log, where an
+# invented task is visible afterwards.
+#
+# The date is written as the common task plugin reads it, so a deadline set here also shows up in
+# the user's own queries and not only in ours. Read generously, written one way.
+
+_TASK_LINE_RE = re.compile(r"^(?P<indent>[ \t]*)(?P<bullet>[-*+][ \t]+\[)(?P<state>[ xX-])(?P<rest>\].*)$")
+_TASK_DUE_RE = re.compile(r"(?:\U0001F4C5|\(due:?)\s*(\d{4}-\d{2}-\d{2})\)?")
+_TASK_HEADING = "## Tasks"
+_TASK_SKIP_ROOTS = (SYSTEM_DIR, HOST_DIR, IMPORT_DIR)
+
+
+def _task_due(text: str) -> str:
+    """The due date carried by a task line, or "" when it carries none."""
+    treffer = _TASK_DUE_RE.search(text)
+    return treffer.group(1) if treffer else ""
+
+
+def _task_date_ok(value: str) -> bool:
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
+def _task_scan(vault: Path, only_open: bool = True) -> list[dict]:
+    """Every task line in the user's part of the vault, wherever it sits.
+
+    Folder-independent on purpose, and that is the whole point of it. A deadline does not stop being
+    one because the bundle around it was archived; the flight that made this necessary disappeared
+    from view the moment its trip bundle left `focus/`, with the money still in play. Left out are
+    the system folder (the machine's own files), the host folder, the import queue and database
+    folders, which an editor writes and nobody types by hand.
+    """
+    treffer: list[dict] = []
+    for md in sorted(vault.rglob("*.md")):
+        if not md.is_file():
+            continue
+        rel = md.relative_to(vault).as_posix()
+        kopf = rel.split("/", 1)[0]
+        if kopf in _TASK_SKIP_ROOTS or kopf.startswith("."):
+            continue
+        if _is_inside_database_folder(rel):
+            continue
+        try:
+            zeilen = md.read_text(encoding="utf-8").splitlines()
+            geaendert = md.stat().st_mtime
+        except (OSError, UnicodeDecodeError):
+            continue
+        for nummer, zeile in enumerate(zeilen, start=1):
+            passt = _TASK_LINE_RE.match(zeile)
+            if not passt:
+                continue
+            offen = passt.group("state") == " "
+            if only_open and not offen:
+                continue
+            roh = passt.group("rest")[1:].strip()
+            faellig = _task_due(roh)
+            # The date is carried in its own field from here on, so it comes out of the wording:
+            # printed twice it reads like two different things.
+            text = _TASK_DUE_RE.sub("", roh) if faellig else roh
+            treffer.append({"path": rel, "line": nummer, "text": text.strip(),
+                            "due": faellig, "open": offen, "mtime": geaendert})
+    return treffer
+
+
+def _task_due_soon(vault: Path, days: int, eintraege: list[dict] | None = None) -> list[dict]:
+    """Open tasks whose date falls inside the window, overdue ones first. Undated ones stay out.
+
+    Undated stay out because a list of everything open is read once and skipped forever after. What
+    earns a line at the start of a session is a date that is about to pass.
+    """
+    heute = datetime.now().date()
+    grenze = heute + timedelta(days=days)
+    faellig: list[dict] = []
+    for eintrag in (_task_scan(vault) if eintraege is None else eintraege):
+        if not eintrag["due"] or not _task_date_ok(eintrag["due"]):
+            continue
+        tag = datetime.strptime(eintrag["due"], "%Y-%m-%d").date()
+        if tag <= grenze:
+            eintrag = dict(eintrag)
+            eintrag["days"] = (tag - heute).days
+            faellig.append(eintrag)
+    return sorted(faellig, key=lambda e: e["due"])
+
+
+_BRIEFING_DUE_DAYS = 14
+
+
+def _work_due_soon(vault: Path, days: int) -> list[dict]:
+    """Unfinished work objects with a date inside the window, overdue first."""
+    heute = datetime.now().date()
+    grenze = heute + timedelta(days=days)
+    rows, _headers = _work_read(vault)
+    faellig = []
+    for row in rows:
+        wert = (row.get("due") or "").strip()
+        if not wert or not _task_date_ok(wert) or row.get("state") == "done":
+            continue
+        if datetime.strptime(wert, "%Y-%m-%d").date() <= grenze:
+            faellig.append(row)
+    return sorted(faellig, key=lambda r: r.get("due") or "")
+
+
+def _task_target(vault: Path, given: str | None) -> Path:
+    """Where a commissioned task goes: the file the user named, else today's journal entry."""
+    if not given:
+        return _journal_note(vault, "daily", datetime.now())
+    bekannt = _resolve_vault_file(vault, given)
+    return bekannt if bekannt is not None else (vault / given)
+
+
+def cmd_task_add(args: argparse.Namespace) -> int:
+    """Write a task the user asked for onto one of their lists."""
+    vault = Path(args.vault).resolve()
+    due = (args.due or "").strip()
+    if due and not _task_date_ok(due):
+        print("fail: --due expects YYYY-MM-DD", file=sys.stderr)
+        return 1
+    text = args.text.strip()
+    if not text:
+        print("fail: a task needs words", file=sys.stderr)
+        return 1
+    target = _task_target(vault, args.file)
+    if target.suffix.lower() not in (".md", ".markdown"):
+        print(f"fail: a task belongs in a markdown file, not in {target.name}", file=sys.stderr)
+        return 1
+    try:
+        rel = target.resolve().relative_to(vault).as_posix()
+    except ValueError:
+        print(f"fail: {args.file} is outside the vault", file=sys.stderr)
+        return 1
+
+    zeile = f"- [ ] {text}" + (f" \U0001F4C5 {due}" if due else "")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    bestand = target.read_text(encoding="utf-8") if target.is_file() else ""
+    zeilen = bestand.splitlines()
+    kopf = next((i for i, z in enumerate(zeilen)
+                 if z.strip().lower() == _TASK_HEADING.lower()), None)
+    if kopf is None:
+        if zeilen and zeilen[-1].strip():
+            zeilen.append("")
+        zeilen.extend([_TASK_HEADING, "", zeile])
+    else:
+        letzte, lauf = kopf, kopf + 1
+        while lauf < len(zeilen) and not zeilen[lauf].startswith("## "):
+            if _TASK_LINE_RE.match(zeilen[lauf]):
+                letzte = lauf
+            lauf += 1
+        if letzte == kopf:
+            while letzte + 1 < len(zeilen) and not zeilen[letzte + 1].strip():
+                letzte += 1
+        zeilen.insert(letzte + 1, zeile)
+    target.write_text("\n".join(zeilen).rstrip("\n") + "\n", encoding="utf-8")
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"task written for the user -> {rel}: {text}")
+    print(f"ok: {rel}: {zeile}")
+    return 0
+
+
+def cmd_task_done(args: argparse.Namespace) -> int:
+    """Tick a task off. One unmistakable match or nothing: a tick on the wrong line is a false report."""
+    vault = Path(args.vault).resolve()
+    muster = args.text.strip().lower()
+    kandidaten = [t for t in _task_scan(vault) if muster in t["text"].lower()]
+    if args.file:
+        gesucht = _task_target(vault, args.file)
+        try:
+            rel = gesucht.resolve().relative_to(vault).as_posix()
+        except ValueError:
+            print(f"fail: {args.file} is outside the vault", file=sys.stderr)
+            return 1
+        kandidaten = [t for t in kandidaten if t["path"] == rel]
+    if not kandidaten:
+        print(f"fail: no open task matching '{args.text}'", file=sys.stderr)
+        return 1
+    if len(kandidaten) > 1:
+        print(f"fail: {len(kandidaten)} open tasks match '{args.text}'; say which one:", file=sys.stderr)
+        for eintrag in kandidaten[:5]:
+            print(f"  {eintrag['path']}:{eintrag['line']}  {eintrag['text']}", file=sys.stderr)
+        return 1
+
+    treffer = kandidaten[0]
+    pfad = vault / treffer["path"]
+    zeilen = pfad.read_text(encoding="utf-8").splitlines()
+    stelle = treffer["line"] - 1
+    passt = _TASK_LINE_RE.match(zeilen[stelle])
+    if passt is None:
+        print(f"fail: {treffer['path']}:{treffer['line']} changed while it was being read", file=sys.stderr)
+        return 1
+    zeilen[stelle] = f"{passt.group('indent')}{passt.group('bullet')}x{passt.group('rest')}"
+    pfad.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"task ticked for the user -> {treffer['path']}: {treffer['text']}")
+    print(f"ok: ticked in {treffer['path']}: {treffer['text']}")
+    return 0
+
+
+def cmd_task_list(args: argparse.Namespace) -> int:
+    """What is open across the whole vault, dated first, with the deadline said in days."""
+    vault = Path(args.vault).resolve()
+    if args.due_within is not None:
+        eintraege = _task_due_soon(vault, args.due_within)
+        gesamt = len(eintraege)
+    else:
+        alle = _task_scan(vault)
+        gesamt = len(alle)
+        eintraege = sorted(alle, key=lambda e: (not e["due"], e["due"], e["path"]))
+    for eintrag in eintraege[:args.limit]:
+        datum = f"{eintrag['due']}  " if eintrag["due"] else " " * 12
+        print(f"{datum}{eintrag['text']}  ({eintrag['path']}:{eintrag['line']})")
+    if len(eintraege) > args.limit:
+        print(f"... plus {len(eintraege) - args.limit} more")
+    if args.due_within is not None:
+        print(f"ok: {gesamt} dated task(s) due within {args.due_within} day(s)")
+    else:
+        print(f"ok: {gesamt} open task(s)")
     return 0
 
 
@@ -2841,42 +3424,19 @@ def cmd_clear_plan_section(args: argparse.Namespace) -> int:
     return 0
 
 
-def _collect_open_todos(vault: Path, scope_dirs: list[str], days_back: int = 30) -> list[dict]:
-    """Find `- [ ]` lines in markdown files under the given scope subfolders.
-    Returns list of {path, line, date} dicts. Used for the briefing's open-items
-    section. Days-back filter applies to file mtime; older items are dropped to
-    keep the briefing relevant. Database folders (`<Name>.base/`) are
-    skipped, record pages there are database-synced, not freeform notes."""
-    todos: list[dict] = []
+def _collect_open_todos(vault: Path, scope_dirs: list[str], days_back: int = 30,
+                        eintraege: list[dict] | None = None) -> list[dict]:
+    """The open tasks under given folders, recent ones only, for the briefing's open-items sections.
+
+    A narrowing of `_task_scan`, not a second reader: one definition of what a task line is, in one
+    place. The date window is on the file, not on the task, and it is what keeps these sections
+    about what is currently going on; deadlines are a different question and are not filtered by it.
+    Pass `eintraege` to reuse a scan the caller already has, which is what the briefing does.
+    """
     cutoff = datetime.now().timestamp() - days_back * 24 * 3600
-    todo_re = re.compile(r"^\s*-\s*\[\s\]\s*(.+?)\s*$")
-    for sub in scope_dirs:
-        scope = vault / sub
-        if not scope.is_dir():
-            continue
-        for md in scope.rglob("*.md"):
-            if not md.is_file():
-                continue
-            try:
-                rel = md.relative_to(vault).as_posix()
-            except ValueError:
-                continue
-            if _is_inside_database_folder(rel):
-                continue
-            if md.stat().st_mtime < cutoff:
-                continue
-            try:
-                lines = md.read_text(encoding="utf-8").splitlines()
-            except OSError:
-                continue
-            for line in lines:
-                m = todo_re.match(line)
-                if m:
-                    todos.append({
-                        "path": str(md.relative_to(vault)),
-                        "text": m.group(1),
-                    })
-    return todos
+    praefixe = tuple(f"{sub.rstrip('/')}/" for sub in scope_dirs)
+    alle = _task_scan(vault) if eintraege is None else eintraege
+    return [t for t in alle if t["path"].startswith(praefixe) and t["mtime"] >= cutoff]
 
 
 def _recent_log_files(vault: Path, limit: int = 5) -> list[Path]:
@@ -3474,10 +4034,14 @@ def _render_briefing(vault: Path) -> str:
     recent_ops = _recent_operations(vault, limit=3)
     recent_activity = _recent_activity_bundles(vault, hours_back=48)
     close_next = _close_session_next_items(vault, limit=3)
+    # One walk over the vault feeds all three task sections below, which is also what keeps them
+    # from disagreeing with each other.
+    offene_aufgaben = _task_scan(vault)
     daily_weekly_todos = _collect_open_todos(
-        vault, _journal_roots(), days_back=30
+        vault, _journal_roots(), days_back=30, eintraege=offene_aufgaben
     )
-    focus_todos = _collect_open_todos(vault, [FOCUS_DIR], days_back=90)
+    focus_todos = _collect_open_todos(vault, [FOCUS_DIR], days_back=90,
+                                      eintraege=offene_aufgaben)
     broken = _broken_wikilinks(vault)
 
     lines: list[str] = []
@@ -3488,6 +4052,28 @@ def _render_briefing(vault: Path) -> str:
                  f"on every operation report, and on demand via "
                  f"`zanmai.py memory briefing`._")
     lines.append("")
+
+    # 0) What has a date on it, from anywhere in the vault and from the machine's own list.
+    #
+    # First, and folder-independent, because that was the defect: a deadline used to be visible only
+    # while its bundle sat in `focus/` and went dark the moment the bundle was archived, with the
+    # money still in play. Only dated items appear. A list of everything open is read once and
+    # skipped from then on, and then the one line that mattered is lost in it.
+    faellig = _task_due_soon(vault, _BRIEFING_DUE_DAYS, eintraege=offene_aufgaben)
+    work_faellig = _work_due_soon(vault, _BRIEFING_DUE_DAYS)
+    if faellig or work_faellig:
+        lines.append(f"## Due (next {_BRIEFING_DUE_DAYS} days, overdue included)")
+        lines.append("")
+        for eintrag in faellig[:12]:
+            wann = ("overdue" if eintrag["days"] < 0
+                    else "today" if eintrag["days"] == 0
+                    else f"in {eintrag['days']} days")
+            lines.append(f"- **{eintrag['due']}** ({wann}) {eintrag['text']} _({eintrag['path']})_")
+        if len(faellig) > 12:
+            lines.append(f"- _... plus {len(faellig) - 12} more dated item(s)_")
+        for row in work_faellig[:8]:
+            lines.append(f"- **{row['due']}** (work object) {row.get('work','')}")
+        lines.append("")
 
     # 1) Current state
     lines.append("## Current state")
@@ -4559,6 +5145,8 @@ _ROSTER: list[tuple[str, bool, bool]] = [
     ("carol",   True,    True),
     ("stan",    True,    True),
     ("loki",    True,    True),
+    ("luis",    True,    True),
+    ("shuri",   True,    True),
 ]
 _AGENT_NAMES: list[str] = [name for name, adapter, _ in _ROSTER if adapter]
 _MEMORY_AGENTS: list[str] = [name for name, _, memory in _ROSTER if memory]
@@ -6406,18 +6994,15 @@ def cmd_connection_scan(args: argparse.Namespace) -> int:
 # hook script.
 # ----------------------------------------------------------------------------
 
-_HOOK_ENFORCED_KIND_PREFIXES = (
-    f"{FOCUS_DIR}/",
-    f"{HABITS_DIR}/",
-    f"{KNOWLEDGE_DIR}/",
+# Derived from the bundle kinds, never hand-kept. Written out by hand, these three lists were a
+# copy of a fact that lives above them, and the copy fell behind: `doing/` became a vault root and
+# a bundle folder, and neither list heard about it, so the desk was not protected but unwatched.
+# Anything writable there landed with no frontmatter check and no index check at all.
+_HOOK_ENFORCED_KIND_PREFIXES = tuple(f"{f}/" for f in BUNDLE_FOLDERS) + (
     f"{PEOPLE_DIR}/",
     f"{ORGANISATIONS_DIR}/",
 )
-_HOOK_INDEX_PREFIXES = (
-    f"{FOCUS_DIR}/",
-    f"{HABITS_DIR}/",
-    f"{KNOWLEDGE_DIR}/",
-)
+_HOOK_INDEX_PREFIXES = tuple(f"{f}/" for f in BUNDLE_FOLDERS)
 _HOOK_EXEMPT_NAMES = ("INDEX.md", ".keep")
 _HOOK_EXEMPT_SUFFIXES = (".pdf", ".png", ".jpg", ".jpeg", ".gif", ".ics", ".webp")
 # Paths the permission guard refuses outright, each with the sentence that says what to do instead.
@@ -6431,7 +7016,7 @@ _HOOK_NEVER_TARGETS = {
     f"/{ARCHIVE_DIR}/": "Nothing is written here directly. Use `zanmai.py file archive <path>` from where the file is now, so it keeps its path and can be restored.",
     f"/{TRASH_DIR}/": "Nothing is written here directly. Use `zanmai.py file trash <path>` from where the file is now, so it keeps its path and can be restored.",
 }
-_HOOK_ALLOWED_KINDS = {"focus", "habit", "knowledge", "contact/person", "contact/organization"}
+_HOOK_ALLOWED_KINDS = set(KIND_FIELDS)
 
 
 
@@ -6489,20 +7074,23 @@ def _hook_checkbox_lines(text: str) -> list[str]:
 
 
 def cmd_hook_checkbox_guard(args: argparse.Namespace) -> int:
-    """PreToolUse Write|Edit hook: refuse any write that adds, removes or ticks a markdown task.
+    """PreToolUse Write|Edit hook: refuse a task line that turns up inside an ordinary write.
 
-    Checkboxes are the user's, all of them, everywhere in the vault. Not "unless they asked for a
-    list", not "unless it is only a suggestion": one rule with no edge, because an exception is a
-    judgement call and this is exactly the place where a model's judgement cannot be checked before
-    the write lands. The AI reads them and answers from them. It does not write them.
+    A task on the user's list is the user's, and that is a statement about who wanted it, not about
+    who typed it. Asked for one, the AI writes it, through `zanmai.py task add` and nowhere else.
+    What it must never do is invent one: a reminder to itself, an obligation it derived from a
+    source, a leftover from a test, all of which used to end up on the user's list and be read back
+    to him as his own.
+
+    This hook holds the second half of that. A box that appears while prose is being edited was
+    never commissioned, whatever the intention was; going through the named command is a deliberate
+    act, and it leaves a line in the activity log. That is the honest limit of the mechanic: it
+    cannot read intent, so it makes the commissioned path narrow and visible and closes the wide one.
 
     Why a hook and not a sentence in a contract: this rule stood in the distribution's prose in six
     places, and prose is what you write again when the last writing did not hold. Writing a bad
     instruction more often does not make it better. It has to be in one place, said once, and
     enforced where the decision actually happens, which is the moment of the write.
-
-    The AI has somewhere to put what it still owes: the open-work database under the system folder.
-    That is what removes the last reason to reach for a checkbox in a user's file.
 
     Mechanic: compare the task lines before and after. Anything that changes the set is refused,
     which covers writing a new one, deleting one, and ticking one. Everything else in the same
@@ -6548,10 +7136,12 @@ def cmd_hook_checkbox_guard(args: argparse.Namespace) -> int:
         beispiel = (dazu or weg)[0]
         print(f"checkbox-guard: refusing {tool} on {rel}, because it is {was}: {beispiel}",
               file=sys.stderr)
-        print("  Checkboxes belong to the user, in every file. Read them, answer from them, "
-              "leave them as they are.", file=sys.stderr)
-        print("  An obligation you worked out goes in the reply as a sentence. Something you "
-              "still owe goes on a work object via `zanmai.py work`.", file=sys.stderr)
+        print("  A task line never arrives as a side effect of editing a file.", file=sys.stderr)
+        print("  Asked for one, write it with `zanmai.py task add --text ... [--file ...] "
+              "[--due YYYY-MM-DD]`, and tick it off with `task done`.", file=sys.stderr)
+        print("  Not asked for one: an obligation you worked out goes in the reply as a sentence, "
+              "and something you still owe goes on a work object via `zanmai.py work`.",
+              file=sys.stderr)
         return 2
     return 0
 
@@ -6645,21 +7235,1863 @@ def cmd_hook_permission_guard(args: argparse.Namespace) -> int:
     return 0
 
 
-# Shell verbs that take something away. The guard is deliberately blunt: it refuses the verb rather
-# than trying to work out which path it would hit, because a command line can hide its target behind
-# a variable, a glob, a pipe or a subshell, and a guard that has to parse shell to decide is a guard
-# that can be talked around.
-_DELETE_VERBS = (
-    r"\brm\b", r"\brmdir\b", r"\bunlink\b", r"\bshred\b", r"\btrash\b",
-    r"\bfind\b[^|;]*-delete\b", r"\bfind\b[^|;]*-exec\s+rm\b",
-    r"\bgit\s+clean\b", r"\bgit\s+rm\b",
-    r"\btruncate\b", r">\s*/dev/null\s*<", r"\bmkfs\b", r"\bdd\b[^|;]*\bof=",
-)
-_DELETE_VERB_RE = re.compile("|".join(_DELETE_VERBS))
+# Shell verbs that take something away. The guard stays blunt about the target: it never works out
+# which path a verb would hit, because a command line can hide that behind a variable, a glob, a pipe
+# or a subshell, and a guard that has to parse shell to decide is a guard that can be talked around.
+# What it does decide is whether the word is being run as a command at all. `trash` is also a folder
+# in every vault and a sub-command of this very script, so matching it anywhere in the line refused
+# `ls zanmai/trash`, a find that excludes the trash, and `zanmai.py file trash` itself, which is the
+# way out the refusal message recommends.
+_DELETE_COMMANDS = frozenset({"rm", "rmdir", "unlink", "shred", "trash", "truncate", "mkfs"})
+
+# Words that stand in front of the real command without being one: wrappers, and the shell keywords
+# a loop or a branch puts there (`do rm $f` inside a for-loop is still an rm).
+_COMMAND_PREFIXES = frozenset({
+    "sudo", "command", "builtin", "exec", "env", "time", "nohup", "doas",
+    "do", "then", "else", "elif", "!",
+})
+
+# A subshell starts a fresh command, so its opener counts as a separator like `;` or `|`.
+_SEGMENT_SPLIT_RE = re.compile(r"[;&|\n]+")
+_SUBSHELL_OPEN_RE = re.compile(r"\$\(|[`(){}]")
+
+# Where a command name can also appear: whatever these hand a command to.
+_HANDS_OVER = frozenset({"xargs", "-exec", "-execdir", "-ok", "-okdir"})
+
+
+def _delete_verb_in(command: str) -> str | None:
+    """Return the removing command in `command`, or None. Fails closed: a line this cannot take
+    apart is checked with the old blunt word search, so an unparsable command is refused, never
+    waved through."""
+    # Separators are padded so they survive as tokens of their own; shlex would otherwise leave `;`
+    # glued to the word before it and `ls; trash x` would read as one command called `ls;`.
+    gepolstert = _SEGMENT_SPLIT_RE.sub(r" \g<0> ", _SUBSHELL_OPEN_RE.sub(" ; ", command))
+    try:
+        segments = shlex.split(gepolstert)
+    except ValueError:
+        wort = re.search(r"\b(" + "|".join(sorted(_DELETE_COMMANDS)) + r")\b", command)
+        return wort.group(1) if wort else None
+
+    # shlex drops the separators, so split again on the tokens that are pure separators.
+    zeilen: list[list[str]] = [[]]
+    for token in segments:
+        if _SEGMENT_SPLIT_RE.fullmatch(token):
+            zeilen.append([])
+        else:
+            zeilen[-1].append(token)
+
+    for tokens in zeilen:
+        if not tokens:
+            continue
+        # The command word: skip prefixes and leading VAR=value assignments.
+        i = 0
+        while i < len(tokens) and (tokens[i] in _COMMAND_PREFIXES or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[i])):
+            i += 1
+        if i < len(tokens):
+            kopf = Path(tokens[i]).name
+            if kopf in _DELETE_COMMANDS:
+                return kopf
+            if kopf == "git" and i + 1 < len(tokens) and tokens[i + 1] in ("rm", "clean"):
+                return f"git {tokens[i + 1]}"
+            if kopf == "dd" and any(t.startswith("of=") for t in tokens[i + 1:]):
+                return "dd of="
+            if kopf == "find" and "-delete" in tokens[i + 1:]:
+                return "find -delete"
+        # Anything that hands a command on: everything behind it is a candidate, because the
+        # options in between differ per tool and guessing them wrong would let a verb through.
+        if any(t in _HANDS_OVER for t in tokens):
+            start = min(tokens.index(t) for t in tokens if t in _HANDS_OVER)
+            for token in tokens[start + 1:]:
+                if Path(token).name in _DELETE_COMMANDS:
+                    return Path(token).name
+    return None
 
 # Paths the guard does not police, because they are not the user's material and something has to be
 # able to tidy them: the machine's own scratch space and the runtime it provisions for this computer.
 _DELETE_ALLOWED_HINTS = (f"{SCRATCH_DIR}/", f"{RUNTIME_DIR}/")
+
+
+# ---- video: the mechanic under the video skills -----------------------------
+#
+# Every state change a cut makes lives here, the judgement lives in the skills. The split matters
+# because a cut is arithmetic on measured numbers: where a word ends, what frame rate the source
+# actually has, how long a piece really is. A model that estimates any of those produces a cut that
+# drifts, and drift is invisible until the whole thing is assembled.
+
+VIDEO_TAIL = 0.5             # s of margin past a nominal end, so a late boundary finds something
+VIDEO_MIN_GAP = 1.0          # s of silence before it counts as a pause worth removing
+# Deliberately not the four tenths that fast-cut talking heads use. Measured on a real recording:
+# at 0.4 the mechanical pass produced 53 cuts in 132 seconds, one every two and a half seconds,
+# which reads as chopped rather than tightened. Breath is rhythm; what is worth removing is the
+# gap where somebody is visibly thinking, and that is around a second.
+
+
+def _video_job_dir(vault: Path, slug: str) -> Path:
+    """Working area for one job. Under temp: intermediates are volatile by design and the
+    retention sweep clears them, while what the user keeps goes to their own bundle."""
+    d = vault / SCRATCH_DIR / "video" / slug
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _ffprobe_json(ffprobe: str, path: Path, *args: str) -> dict:
+    r = subprocess.run([ffprobe, "-v", "error", "-print_format", "json", *args, str(path)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return {}
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {}
+
+
+def _video_probe(vault: Path, path: Path) -> dict:
+    """What the file actually is, read from the file. Never assumed, never rounded: a frame rate
+    guessed as 24 where the source is 24000/1001 drifts a frame every forty seconds."""
+    ffprobe = _tool_path(vault, "ffprobe") or _tool_path(vault, "ffmpeg")
+    if not ffprobe:
+        return {}
+    d = _ffprobe_json(ffprobe, path, "-show_streams", "-show_format", "-show_chapters")
+    v = next((s for s in d.get("streams", []) if s.get("codec_type") == "video"), {})
+    a = next((s for s in d.get("streams", []) if s.get("codec_type") == "audio"), {})
+    rate = v.get("r_frame_rate") or "0/1"
+    try:
+        num, den = (int(x) for x in rate.split("/"))
+        fps = num / den if den else 0.0
+    except ValueError:
+        fps = 0.0
+    return {
+        "path": str(path),
+        "duration": float(d.get("format", {}).get("duration") or 0.0),
+        "width": v.get("width"), "height": v.get("height"),
+        "fps": round(fps, 5), "fps_exact": rate,
+        "audio": bool(a), "audio_rate": a.get("sample_rate"),
+        # A screen recording can carry chapters that inflate the reported length and leave a black
+        # tail. Reported here so the caller strips them instead of trimming to a wrong duration.
+        "chapters": len(d.get("chapters") or []),
+    }
+
+
+def cmd_video_probe(args: argparse.Namespace) -> int:
+    """What a file is, measured. Every later step reads these numbers."""
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    if not src.is_file():
+        print(f"fail: no such file: {src}", file=sys.stderr)
+        return 1
+    info = _video_probe(vault, src)
+    if not info:
+        print("fail: cannot read this file, and nothing will be guessed instead. "
+              "Missing ffprobe: `tools ensure ffprobe`.", file=sys.stderr)
+        return 1
+    print(json.dumps(info, indent=2))
+    return 0
+
+
+def _words_from_dtw(data: dict) -> list[dict]:
+    """Words with a start and an end, out of the recogniser's token timings.
+
+    The recogniser reports the END of each token. A word therefore ends at its last token and
+    starts where the previous one ended, which is right inside continuous speech and wrong after a
+    pause, where the gap belongs to the silence and not to the word. `video cut` corrects those
+    against the audio; here the raw reading is kept, so the two stay separable.
+    """
+    worte: list[dict] = []
+    letzte = 0.0
+    for seg in data.get("transcription", []):
+        for tok in seg.get("tokens", []):
+            text = tok.get("text", "")
+            if text.startswith("[_"):
+                continue
+            ende = tok.get("t_dtw", -1)
+            sicher = tok.get("p")
+            if text.startswith(" ") and text.strip():
+                worte.append({"word": text.strip(), "start": round(letzte, 3), "end": None,
+                              "p": round(sicher, 3) if isinstance(sicher, (int, float)) else None})
+            elif worte and text.strip():
+                worte[-1]["word"] += text.strip()
+                # A word is only as certain as its least certain piece: a name usually breaks into
+                # several tokens and one of them is the one that went wrong.
+                if isinstance(sicher, (int, float)) and worte[-1].get("p") is not None:
+                    worte[-1]["p"] = round(min(worte[-1]["p"], sicher), 3)
+            if ende >= 0:
+                letzte = ende / 100.0
+                if worte:
+                    worte[-1]["end"] = round(letzte, 3)
+    return [w for w in worte if w["end"] is not None and w["end"] > w["start"]]
+
+
+def _rms_envelope(wav: Path, hop: float = 0.01) -> tuple[list[float], float]:
+    """Loudness per 10 ms window, straight from the samples. Used to find where speech actually
+    starts after a pause, which is the one thing the recogniser cannot know."""
+    import wave as _wave
+    with _wave.open(str(wav), "rb") as w:
+        rate, roh = w.getframerate(), w.readframes(w.getnframes())
+    import array
+    werte = array.array("h")
+    werte.frombytes(roh[: len(roh) // 2 * 2])
+    schritt = max(1, int(rate * hop))
+    huelle = [sum(abs(v) for v in werte[i:i + schritt]) / schritt
+              for i in range(0, max(0, len(werte) - schritt), schritt)]
+    return huelle, hop
+
+
+def cmd_video_transcribe(args: argparse.Namespace) -> int:
+    """One source to words with timings, locally. Runs once per source and is then read from disk.
+
+    This is the slowest step in the whole pipeline, so re-running finds the saved result and stops.
+    The recogniser needs two flags that are easy to miss and silent when wrong: the alignment has to
+    be switched on explicitly, and fast attention has to be off, or the alignment is skipped without
+    a word and every timing comes back as the decoder's guess.
+    """
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    if not src.is_file():
+        print(f"fail: no such file: {src}", file=sys.stderr)
+        return 1
+    job = _video_job_dir(vault, args.slug)
+    ziel = job / f"{src.stem}.words.json"
+    if ziel.is_file() and not args.force:
+        d = json.loads(ziel.read_text(encoding="utf-8"))
+        print(f"ok: already transcribed, {len(d.get('words', []))} word(s) at "
+              f"{ziel.relative_to(vault)} (--force to redo)")
+        return 0
+
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    whisper = _tool_path(vault, "whisper")
+    model = _whisper_model(vault)
+    fehlt = []
+    if not ffmpeg:
+        fehlt.append("ffmpeg, which turns the recording into what the recogniser reads")
+    if not whisper:
+        fehlt.append("whisper-cli, the recogniser itself")
+    if not model:
+        fehlt.append("a model in zanmai/runtime/whisper/ (about 1.6 GB, fetched once)")
+    if fehlt:
+        print("fail: cannot transcribe, and nothing will be guessed instead. Missing:",
+              file=sys.stderr)
+        for x in fehlt:
+            print(f"  {x}", file=sys.stderr)
+        return 1
+
+    wav = job / f"{src.stem}.16k.wav"
+    subprocess.run([ffmpeg, "-y", "-i", str(src), "-vn", "-ar", "16000", "-ac", "1",
+                    "-c:a", "pcm_s16le", str(wav)], check=True, capture_output=True)
+
+    # `--dtw` takes a preset name that must match the model, and the presets spell it with dots.
+    preset = args.dtw_preset or _whisper_dtw_preset(model)
+    roh = job / f"{src.stem}.raw"
+    cmd = [whisper, "-m", str(model), "-f", str(wav), "-l", args.language,
+           "-nfa", "--output-json-full", "--output-file", str(roh), "--no-prints"]
+    if preset:
+        cmd += ["--dtw", preset]
+    if args.lexicon and Path(args.lexicon).is_file():
+        cmd += ["--prompt", Path(args.lexicon).read_text(encoding="utf-8").strip(),
+                "--carry-initial-prompt"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    # The recogniser appends its own suffix to the whole name, so this is not with_suffix().
+    ergebnis = Path(str(roh) + ".json")
+    if r.returncode != 0 or not ergebnis.is_file():
+        print(f"fail: the recogniser wrote no result. {(r.stderr or '')[-400:]}", file=sys.stderr)
+        return 1
+
+    data = json.loads(ergebnis.read_text(encoding="utf-8"))
+    worte = _words_from_dtw(data)
+    # Measured boundaries, written once, here. Everything downstream reads this file, so there is
+    # exactly one set of times in the job: a second refinement further along would silently
+    # compare against numbers nobody else has.
+    if worte and wav.is_file():
+        worte = _refine_word_bounds(worte, wav)
+    if not worte:
+        print("fail: no word timings came back. The alignment was skipped, which happens silently "
+              "when fast attention is on or the preset does not match the model.", file=sys.stderr)
+        return 1
+    text = " ".join(w["word"] for w in worte)
+    ziel.write_text(json.dumps({
+        "source": str(src), "language": args.language, "aligned": bool(preset),
+        "measured": bool(wav.is_file()),
+        "words": worte, "text": text,
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    (job / f"{src.stem}.txt").write_text(text + "\n", encoding="utf-8")
+    print(f"ok: {len(worte)} word(s), timings {'aligned' if preset else 'from the decoder only'}, "
+          f"at {ziel.relative_to(vault)}")
+    return 0
+
+
+def _whisper_dtw_preset(model: Path) -> str | None:
+    """The alignment preset that goes with this model file. The names use dots, and a mismatch is
+    rejected loudly, which is the good case; the bad case is fast attention silently disabling it."""
+    name = model.name.lower()
+    for kandidat, preset in (
+        ("large-v3-turbo", "large.v3.turbo"), ("large-v3", "large.v3"),
+        ("large-v2", "large.v2"), ("large-v1", "large.v1"),
+        ("medium.en", "medium.en"), ("medium", "medium"),
+        ("small.en", "small.en"), ("small", "small"),
+        ("base.en", "base.en"), ("base", "base"),
+        ("tiny.en", "tiny.en"), ("tiny", "tiny"),
+    ):
+        if kandidat in name:
+            return preset
+    return None
+
+
+def cmd_video_cutsheet(args: argparse.Namespace) -> int:
+    """Check a cut sheet before anything renders, and report what it would produce.
+
+    Five of these are ordinary field checks. The sixth is the one nobody guesses: two neighbouring
+    passages either butt up exactly or stay a real distance apart, because a gap of a few
+    hundredths shows a flash of untreated picture at the seam.
+    """
+    vault = Path(args.vault).resolve()
+    blatt = Path(args.file).expanduser()
+    if not blatt.is_file():
+        print(f"fail: no such cut sheet: {blatt}", file=sys.stderr)
+        return 1
+    try:
+        eintraege = json.loads(blatt.read_text(encoding="utf-8"))
+    except ValueError as e:
+        print(f"fail: not readable as JSON: {e}", file=sys.stderr)
+        return 1
+    if isinstance(eintraege, dict):
+        eintraege = eintraege.get("segments", [])
+    fehler: list[str] = []
+    gesamt = 0.0
+    vorher: dict | None = None
+    for i, s in enumerate(eintraege):
+        wo = f"segment {i}"
+        for feld in ("source", "start", "end"):
+            if feld not in s:
+                fehler.append(f"{wo}: missing '{feld}'")
+        if fehler and wo in fehler[-1]:
+            continue
+        if not (float(s["end"]) > float(s["start"])):
+            fehler.append(f"{wo}: end is not after start")
+            continue
+        gesamt += float(s["end"]) - float(s["start"])
+        if vorher and s["source"] == vorher["source"]:
+            # A gap here is the material being dropped, so a gap is the normal case and not a
+            # fault. What is a fault is a passage that starts before the previous one ended: the
+            # same moment would then appear twice, and the assembled sound stutters at the join.
+            if float(s["start"]) < float(vorher["end"]):
+                fehler.append(f"{wo}: starts before the previous one ends, so the same moment "
+                              f"would be used twice")
+            elif float(s["start"]) < float(vorher["start"]):
+                fehler.append(f"{wo}: runs backwards against the one before it")
+        vorher = s
+    if fehler:
+        print(f"FAIL: {len(fehler)} problem(s) in {blatt.name}", file=sys.stderr)
+        for f in fehler:
+            print(f"  {f}", file=sys.stderr)
+        return 1
+    # A cut is only honest if it keeps whole words. Checking that here, against the transcript,
+    # is the difference between "it rendered" and "it says what it said": a passage that starts a
+    # fraction late swallows the first syllable, and nothing downstream would ever notice.
+    if args.words:
+        wd = Path(args.words).expanduser()
+        if wd.is_file():
+            worte = json.loads(wd.read_text(encoding="utf-8")).get("words", [])
+            angeschnitten = [w for w in worte
+                             if any(float(s["start"]) < w["end"] and w["start"] < float(s["end"])
+                                    for s in eintraege)
+                             and not any(float(s["start"]) <= w["start"] and w["end"] <= float(s["end"])
+                                         for s in eintraege)]
+            if angeschnitten:
+                print(f"WARN: {len(angeschnitten)} word(s) are cut through rather than kept or "
+                      f"dropped whole; they will sound clipped", file=sys.stderr)
+                for w in angeschnitten[:5]:
+                    print(f"  {w['start']:8.2f}  {w['word']}", file=sys.stderr)
+            else:
+                print(f"ok: all {len(worte)} words are kept or dropped whole")
+
+    print(f"ok: {len(eintraege)} segment(s), {_spoken_length(gesamt)} of output")
+    if args.text:
+        for s in eintraege:
+            if s.get("text"):
+                print(f"  {float(s['start']):8.2f}  {s['text']}")
+    return 0
+
+
+def _refine_word_bounds(worte: list[dict], wav: Path) -> list[dict]:
+    """Move each word's start and end to where speech actually starts and stops, in the audio.
+
+    Both directions are needed and for the same reason: the aligner reports the moment a word is
+    recognised, not the moment it is over. Trusting its start swallows the beginning of the word
+    after a pause; trusting its end cuts the last word before a pause off while it is still
+    sounding, which is audible as a swallowed syllable and was exactly the fault this fixes.
+
+    Only boundaries with real quiet beside them are moved: elsewhere there is nothing observable to
+    measure against, and inventing one would be worse than the aligner's own reading. The threshold
+    comes from the recording itself, because a quiet room and a noisy one differ by more than any
+    constant would survive.
+    """
+    huelle, hop = _rms_envelope(wav)
+    if not huelle:
+        return worte
+    ruhig = sorted(huelle)[max(1, len(huelle) // 10)]
+    schwelle = max(ruhig * 4.0, 40.0)
+    halten = max(1, int(0.03 / hop))
+    raus: list[dict] = []
+    for i, w in enumerate(worte):
+        start = w["start"]
+        vorher = worte[i - 1]["end"] if i else 0.0
+        a, b = int(vorher / hop), int(w["end"] / hop)
+        if b - a > halten:
+            fenster = huelle[a:b]
+            # Read backwards from the word's own end: the last stretch of quiet before it is the
+            # pause, and speech starts where that quiet ends.
+            j = len(fenster) - 1
+            while j > 0 and fenster[j] > schwelle:
+                j -= 1
+            if j > 0:
+                gemessen = (a + j + 1) * hop
+                if gemessen > start:
+                    start = round(gemessen, 3)
+        # The same measurement forwards: let the word run until the sound actually drops, at most
+        # up to where the next one starts.
+        ende = w["end"]
+        grenze = worte[i + 1]["start"] if i + 1 < len(worte) else ende + 1.0
+        k = int(ende / hop)
+        letzte = min(len(huelle) - 1, int(grenze / hop))
+        while k < letzte and huelle[k] > schwelle:
+            k += 1
+        if k * hop > ende:
+            ende = round(min(k * hop, grenze), 3)
+        raus.append({**w, "start": min(start, max(0.0, ende - 0.02)), "end": ende})
+    return raus
+
+
+def cmd_video_propose(args: argparse.Namespace) -> int:
+    """A first cut sheet out of the measured word timings: speech kept, long silence dropped.
+
+    This is measurement, not judgement. It removes what is provably nothing (a gap longer than the
+    threshold) and leaves every decision about content to the skill that reads it afterwards. The
+    spoken line travels with each segment so the whole cut can be checked by reading.
+    """
+    vault = Path(args.vault).resolve()
+    worte_datei = Path(args.words).expanduser()
+    if not worte_datei.is_file():
+        print(f"fail: no such transcript: {worte_datei}", file=sys.stderr)
+        return 1
+    daten = json.loads(worte_datei.read_text(encoding="utf-8"))
+    worte = daten.get("words", [])
+    quelle = args.source or daten.get("source")
+    if not worte or not quelle:
+        print("fail: the transcript carries no words, or no source to cut from", file=sys.stderr)
+        return 1
+
+    if not daten.get("measured"):
+        print("fail: this transcript carries the recogniser's own timings, which report when a word "
+              "was recognised rather than when it was spoken. Every gap in it is zero, so nothing "
+              "would ever be removed. Run `video transcribe` again with this version.",
+              file=sys.stderr)
+        return 1
+
+    # Padding is not one number. It depends on where the cut falls, and these values come from
+    #a pipeline that was tuned against real edits rather than guessed:
+    #   inside a sentence (the passage ends on a comma)  100 ms after, 80 ms before
+    #   at a sentence boundary (full stop, question)     200 ms after, 140 ms before
+    #   at the very end of the piece                     650 ms, so the last word rings out
+    # A single value produces either a clipped word or a video that seems to keep running.
+    rand = args.padding
+    tail = args.tail if args.tail is not None else max(args.padding, VIDEO_TAIL / 2)
+    segmente: list[dict] = []
+    offen: dict | None = None
+    def _rand_fuer(letztes_wort: str, am_ende: bool) -> tuple[float, float]:
+        """How much to leave before and after, by where the cut falls."""
+        if am_ende:
+            return args.padding, args.end_tail
+        if letztes_wort.rstrip().endswith((".", "?", "!")):
+            return args.boundary_lead, args.boundary_tail
+        return args.padding, tail
+
+    for w in worte:
+        if offen is None:
+            offen = {"source": quelle, "start": max(0.0, w["start"] - rand), "end": w["end"],
+                     "text": w["word"]}
+            continue
+        if w["start"] - offen["end"] > args.gap:
+            vorne, hinten = _rand_fuer(offen["text"].split()[-1], False)
+            offen["end"] = round(offen["end"] + hinten, 3)
+            segmente.append(offen)
+            offen = {"source": quelle, "start": max(0.0, w["start"] - vorne), "end": w["end"],
+                     "text": w["word"]}
+        else:
+            offen["end"] = w["end"]
+            offen["text"] += " " + w["word"]
+    if offen:
+        # The last passage of the piece gets the most room. A recogniser reading a whole file marks
+        # the final word up to a second late, counting the breath after it as part of the word, so
+        # trusting that number leaves the recording visibly running after the speaker has finished.
+        offen["end"] = round(offen["end"] + args.end_tail, 3)
+        segmente.append(offen)
+
+    # Merge what is barely separated. Two passages a fifth of a second apart are not two shots,
+    # they are one with a hole in it, and cutting there costs a visible jump to save nothing.
+    verdichtet: list[dict] = []
+    for s in segmente:
+        if verdichtet and s["start"] - verdichtet[-1]["end"] < args.merge:
+            verdichtet[-1]["end"] = s["end"]
+            verdichtet[-1]["text"] += " " + s["text"]
+        else:
+            verdichtet.append(s)
+    segmente = verdichtet
+    for s in segmente:
+        s["start"] = round(s["start"], 3)
+        s["end"] = round(s["end"], 3)
+    behalten = sum(s["end"] - s["start"] for s in segmente)
+    roh = float(worte[-1]["end"])
+    ziel = Path(args.out).expanduser()
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    ziel.write_text(json.dumps({"segments": segmente}, ensure_ascii=False, indent=1),
+                    encoding="utf-8")
+    je_minute = len(segmente) / max(1.0, behalten / 60.0)
+    print(f"ok: {len(segmente)} segment(s), {_spoken_length(behalten)} kept out of "
+          f"{_spoken_length(roh)}, {100 * (1 - behalten / roh):.0f}% removed as silence, "
+          f"at {ziel}")
+    print("   This is the mechanical pass. What comes out for being wrong, weak or off-topic is "
+          "decided by reading it.")
+    if je_minute > 12:
+        print(f"   {je_minute:.0f} cuts per minute. That reads as chopped unless every jump is "
+              f"covered; either raise --gap or plan on hiding the seams.")
+    return 0
+
+
+def _audio_out(ziel: Path, endgueltig: bool = False) -> list[str]:
+    """How to write the sound of an intermediate file.
+
+    Every pass that re-encodes lossy audio costs quality, and a cut goes through four of them
+    before anyone hears it: cut, brand, mix, export. Measured on a real recording, the result was
+    audibly duller than the source. So intermediates carry the sound uncompressed where the
+    container allows it, and the one compressed encode happens at the end.
+    """
+    if endgueltig:
+        return ["-c:a", "aac", "-b:a", "192k"]
+    if ziel.suffix.lower() in (".mov", ".mkv", ".nut"):
+        return ["-c:a", "pcm_s16le"]
+    # MP4 cannot carry uncompressed sound in any way players agree on, so this is the fallback:
+    # a bitrate high enough that four passes do not add up to something you can hear.
+    return ["-c:a", "aac", "-b:a", "320k"]
+
+
+def cmd_video_cut(args: argparse.Namespace) -> int:
+    """Assemble the kept passages into one file.
+
+    Three things here are decided by how the format works, not by preference. Each piece is
+    re-encoded rather than stream-copied, because a copy can only cut on its own key frames and
+    slides the sound against the picture everywhere else. The sound rides through untouched and is
+    levelled once at the end, because encoding each piece separately puts a click at every join.
+    And the frame rate comes from the source as an exact fraction.
+    """
+    vault = Path(args.vault).resolve()
+    blatt = Path(args.file).expanduser()
+    ziel = Path(args.out).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg:
+        print("fail: ffmpeg missing: `tools ensure ffmpeg`.", file=sys.stderr)
+        return 1
+    if not blatt.is_file():
+        print(f"fail: no such cut sheet: {blatt}", file=sys.stderr)
+        return 1
+    daten = json.loads(blatt.read_text(encoding="utf-8"))
+    segmente = daten.get("segments", daten) if isinstance(daten, dict) else daten
+    if not segmente:
+        print("fail: the cut sheet keeps nothing", file=sys.stderr)
+        return 1
+
+    quellen: list[str] = []
+    for s in segmente:
+        if s["source"] not in quellen:
+            quellen.append(s["source"])
+    probe = _video_probe(vault, Path(quellen[0]).expanduser())
+    fps = args.fps or probe.get("fps_exact") or "25/1"
+    # Where several sources meet, the target size is a decision and not a side effect of which file
+    # happened to be listed first. Stated here, said out loud below, so nobody discovers afterwards
+    # that a 4K source was flattened to 720p because the first passage came from a webcam.
+    if args.size:
+        try:
+            zb, zh = (int(x) for x in args.size.lower().split("x"))
+        except ValueError:
+            print(f"fail: expected --size WIDTHxHEIGHT, got {args.size!r}", file=sys.stderr)
+            return 1
+    else:
+        zb, zh = int(probe.get("width") or 1920), int(probe.get("height") or 1080)
+    groessen = {(int(g.get("width") or 0), int(g.get("height") or 0))
+                for g in (_video_probe(vault, Path(q).expanduser()) for q in quellen)}
+    if len(groessen) > 1 and not args.size:
+        print(f"note: sources differ in size ({', '.join(f'{w}x{h}' for w, h in sorted(groessen))}); "
+              f"everything is brought to {zb}x{zh}, taken from the first source. Pass --size to "
+              f"decide it instead.")
+
+    # Hiding the seam. A removed pause leaves the picture standing in exactly the same place, and
+    # the eye reads that as a jump rather than as continuity. Alternating the framing slightly from
+    # passage to passage covers it: the change is small enough not to be noticed as an effect and
+    # large enough that the jump stops registering. Never on every cut in a row with the same
+    # amount, which is why it alternates rather than accumulates, and off by default because a
+    # piece with two cuts does not need it.
+    stufen = [1.0, 1.0 + args.cover / 100.0] if args.cover else [1.0]
+    breite_q, hoehe_q = zb, zh
+    teile, filter_ = [], []
+    for i, s in enumerate(segmente):
+        idx = quellen.index(s["source"])
+        a, b = float(s["start"]), float(s["end"])
+        z = stufen[i % len(stufen)]
+        rahmen = ""
+        if z != 1.0:
+            zb, zh = int(breite_q * z / 2) * 2, int(hoehe_q * z / 2) * 2
+            rahmen = (f",scale={zb}:{zh},crop={breite_q}:{hoehe_q}:"
+                      f"{(zb - breite_q) // 2}:{(zh - hoehe_q) // 2}")
+        # Every piece is brought to the same size, frame rate, pixel shape and sound format as the
+        # first source. Joining them otherwise fails outright, and material from two cameras almost
+        # never matches: 4K at 25 frames beside 720p at 60 is the normal case, not the exception.
+        angleich = (f"scale={breite_q}:{hoehe_q}:force_original_aspect_ratio=decrease,"
+                    f"pad={breite_q}:{hoehe_q}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+        filter_.append(
+            f"[{idx}:v]trim=start={a}:end={b},setpts=PTS-STARTPTS,{angleich},fps={fps}{rahmen}[v{i}];"
+            f"[{idx}:a]atrim=start={a}:end={b},asetpts=PTS-STARTPTS,"
+            f"aformat=sample_rates=48000:channel_layouts=stereo[a{i}]")
+        teile.append(f"[v{i}][a{i}]")
+    graph = ";".join(filter_) + ";" + "".join(teile) + f"concat=n={len(segmente)}:v=1:a=1[vv][ao]"
+    # No levelling here. The sound is levelled exactly once, in `mix`, at the end. Doing it in the
+    # cut as well means normalising twice against different material, and every pass that touches
+    # the sound also re-encodes it.
+
+    cmd = [ffmpeg, "-y"]
+    for q in quellen:
+        cmd += ["-i", str(Path(q).expanduser())]
+    cmd += ["-filter_complex", graph, "-map", "[vv]", "-map", "[ao]",
+            "-c:v", "libx264", "-crf", str(args.crf), "-preset", args.preset,
+            "-pix_fmt", "yuv420p", *_audio_out(ziel),
+            "-movflags", "+faststart", str(ziel), "-loglevel", "error"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"fail: the cut did not render.\n{(r.stderr or '')[-800:]}", file=sys.stderr)
+        return 1
+    raus = _video_probe(vault, ziel)
+    print(f"ok: {len(segmente)} segment(s) into {ziel}, "
+          f"{_spoken_length(raus.get('duration', 0.0))}, {raus.get('fps')} fps, "
+          f"{ziel.stat().st_size / 1e6:.1f} MB")
+    return 0
+
+
+def _srt_time(sekunden: float) -> str:
+    ms = int(round(sekunden * 1000))
+    h, rest = divmod(ms, 3600000)
+    m, rest = divmod(rest, 60000)
+    s, ms = divmod(rest, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+_SATZ_ENDE = (".", "?", "!", ":", ";")
+_SATZ_PAUSE = (",", "–", "-")
+
+
+# The two caption classes want different grouping, and using one set of numbers for both is what
+# produced either seven-word run-ons or a card holding a fragment. Word-by-word captions are short
+# by design, so every comma is a break; a set subtitle track follows the broadcast convention of
+# roughly forty characters over one or two lines, where breaking at every comma leaves fragments.
+# The word-by-word numbers come from a pipeline that has been running in production.
+CAPTION_STYLES = {
+    "karaoke":  {"max_words": 4, "max_chars": 34, "min_duration": 0.6, "comma_always": True},
+    "subtitle": {"max_words": 7, "max_chars": 42, "min_duration": 1.0, "comma_always": False},
+}
+
+
+def _caption_lines(worte: list[dict], max_woerter: int, max_zeichen: int,
+                   min_dauer: float = 1.0, komma_immer: bool = False) -> list[dict]:
+    """Group words into readable lines, at meaning rather than at a character count.
+
+    Three things decide a break, in order. A sentence ending always breaks. A comma breaks when the
+    line is already more than half full, because a clause boundary reads far better than a break
+    mid-phrase. The limits break what is left. Without the comma rule the result is either seven
+    words of run-on or, at the other end, a card holding a fragment.
+
+    Then a floor on duration: a line that would stand for a quarter of a second is a flash nobody
+    reads, so it is merged into its neighbour. That happens whenever a sentence ends on a short
+    word, which is often.
+    """
+    zeilen: list[dict] = []
+    aktuell: list[dict] = []
+    for w in worte:
+        probe = " ".join(x["word"] for x in aktuell + [w])
+        voll = len(aktuell) >= max_woerter or len(probe) > max_zeichen
+        letzter = aktuell[-1]["word"] if aktuell else ""
+        halb = len(" ".join(x["word"] for x in aktuell)) > max_zeichen * 0.5
+        brechen = bool(aktuell) and (
+            voll
+            or letzter.endswith(_SATZ_ENDE)
+            or (letzter.endswith(_SATZ_PAUSE) and (komma_immer or halb)))
+        if brechen:
+            zeilen.append({"start": aktuell[0]["start"], "end": aktuell[-1]["end"],
+                           "text": " ".join(x["word"] for x in aktuell)})
+            aktuell = []
+        aktuell.append(w)
+    if aktuell:
+        zeilen.append({"start": aktuell[0]["start"], "end": aktuell[-1]["end"],
+                       "text": " ".join(x["word"] for x in aktuell)})
+
+    # A line that stands too briefly is held longer rather than merged into its neighbour. Merging
+    # would fix the flash and break the limits above, which is how a four-word rule quietly becomes
+    # a five-word line; holding changes nothing but how long it is readable. Only where the next
+    # line starts immediately, and holding is therefore impossible, are the two joined.
+    gehalten: list[dict] = []
+    for i, z_ in enumerate(zeilen):
+        neu_z = dict(z_)
+        if neu_z["end"] - neu_z["start"] < min_dauer:
+            spielraum = (zeilen[i + 1]["start"] if i + 1 < len(zeilen)
+                         else neu_z["start"] + min_dauer)
+            neu_z["end"] = round(min(neu_z["start"] + min_dauer, max(neu_z["end"], spielraum)), 3)
+        gehalten.append(neu_z)
+
+    # What could not be held long enough is joined to a neighbour: the one before where there is
+    # one, otherwise the one after, so a short first line is not left flashing either.
+    raus: list[dict] = []
+    for neu_z in gehalten:
+        if neu_z["end"] - neu_z["start"] < min_dauer * 0.6 and raus:
+            raus[-1]["end"] = neu_z["end"]
+            raus[-1]["text"] += " " + neu_z["text"]
+        else:
+            raus.append(neu_z)
+    while len(raus) > 1 and raus[0]["end"] - raus[0]["start"] < min_dauer * 0.6:
+        raus[1]["start"] = raus[0]["start"]
+        raus[1]["text"] = raus[0]["text"] + " " + raus[1]["text"]
+        raus.pop(0)
+    return raus
+
+
+def _remap_words(worte: list[dict], segmente: list[dict]) -> list[dict]:
+    """Move word times onto the cut timeline. Everything after a cut reads this, and nothing
+    re-transcribes: a second pass over the cut file would come back with different words at the
+    joins, and then two files would disagree about what was said."""
+    raus: list[dict] = []
+    versatz = 0.0
+    for s in segmente:
+        a, b = float(s["start"]), float(s["end"])
+        for w in worte:
+            if w["start"] >= a and w["end"] <= b:
+                raus.append({**w,
+                             "start": round(w["start"] - a + versatz, 3),
+                             "end": round(w["end"] - a + versatz, 3)})
+        versatz += b - a
+    return raus
+
+
+def cmd_video_correct(args: argparse.Namespace) -> int:
+    """Fix spellings in a transcript before anything is built from it.
+
+    Recognition gets ordinary words right and proper nouns wrong: product names, people, the
+    company. Correcting them in the captions afterwards means doing it again next time, so the fix
+    belongs in a list that grows. Without `--replace` this only reports what looks unknown, which is
+    the short list where those names sit.
+
+    **Only whole single words are swapped.** A fix that turns two words into one changes the word
+    count, and from there every timing belongs to the wrong word: the captions drift, the cut drifts
+    with them, and nothing says so.
+    """
+    vault = Path(args.vault).resolve()
+    wd = Path(args.words).expanduser()
+    if not wd.is_file():
+        print(f"fail: no such transcript: {wd}", file=sys.stderr)
+        return 1
+    daten = json.loads(wd.read_text(encoding="utf-8"))
+    worte = daten.get("words", [])
+    if not worte:
+        print("fail: the transcript carries no words", file=sys.stderr)
+        return 1
+
+    ersetzungen: dict[str, str] = {}
+    for paar in (args.replace or []):
+        if "=" not in paar:
+            print(f"fail: expected heard=correct, got {paar!r}", file=sys.stderr)
+            return 1
+        a, b = paar.split("=", 1)
+        if len(b.split()) != 1:
+            print(f"fail: {b!r} is more than one word. Swapping two words for one changes the "
+                  f"word count and every timing after it.", file=sys.stderr)
+            return 1
+        ersetzungen[a.strip()] = b.strip()
+    if args.list:
+        liste = Path(args.list).expanduser()
+        if liste.is_file():
+            for zeile in liste.read_text(encoding="utf-8").splitlines():
+                zeile = zeile.strip()
+                if zeile and not zeile.startswith("#") and "=" in zeile:
+                    a, b = zeile.split("=", 1)
+                    if len(b.split()) == 1:
+                        ersetzungen[a.strip()] = b.strip()
+
+    if not ersetzungen:
+        # Report the suspects. Not against a dictionary: the one on this machine is English, and
+        # against it every German word looks unknown, which buries the three names that matter in
+        # a list of a hundred and sixty. The recogniser's own confidence is language-independent
+        # and points at exactly the places it was unsure, which is where the proper nouns are.
+        mit_wert = [w for w in worte if isinstance(w.get("p"), (int, float))]
+        if not mit_wert:
+            print("this transcript carries no confidence values, so nothing can be singled out. "
+                  "Transcribe again with this version.", file=sys.stderr)
+            return 1
+        verdaechtig = sorted((w for w in mit_wert if w["p"] < args.threshold),
+                             key=lambda w: w["p"])
+        print(f"{len(verdaechtig)} of {len(mit_wert)} words below {args.threshold:.2f} confidence, "
+              f"least certain first:")
+        for w in verdaechtig[:30]:
+            print(f"  {w['p']:.2f}  {w['start']:7.2f}s  {w['word']}")
+        print("   Read these in context, then pass the real ones as --replace heard=correct.")
+        print("   A name that recurs belongs in a list the next video reads too.")
+        return 0
+
+    getroffen = 0
+    for w in worte:
+        vorne = re.match(r"^\W*", w["word"]).group(0)
+        hinten = re.search(r"\W*$", w["word"]).group(0)
+        kern = w["word"][len(vorne):len(w["word"]) - len(hinten) if hinten else None]
+        if kern in ersetzungen:
+            w["word"] = vorne + ersetzungen[kern] + hinten
+            getroffen += 1
+    daten["words"] = worte
+    daten["text"] = " ".join(w["word"] for w in worte)
+    ziel = Path(args.out).expanduser() if args.out else wd
+    ziel.write_text(json.dumps(daten, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"ok: {getroffen} word(s) corrected in {len(worte)}, word count unchanged, at {ziel}")
+    return 0
+
+
+def cmd_video_caption(args: argparse.Namespace) -> int:
+    """Captions, as a separate track or burned in.
+
+    Two classes on purpose. A subtitle track scales to any length, can be switched off and is what
+    platforms prefer; burning in is for short pieces where the look is part of the piece. Never
+    caption something that is already captioned, so the input is stated rather than assumed.
+    """
+    vault = Path(args.vault).resolve()
+    wd = Path(args.words).expanduser()
+    if not wd.is_file():
+        print(f"fail: no such transcript: {wd}", file=sys.stderr)
+        return 1
+    daten = json.loads(wd.read_text(encoding="utf-8"))
+    worte = daten.get("words", [])
+    if args.cutsheet:
+        blatt = json.loads(Path(args.cutsheet).expanduser().read_text(encoding="utf-8"))
+        worte = _remap_words(worte, blatt.get("segments", blatt))
+        if not worte:
+            print("fail: nothing of the transcript falls inside the cut", file=sys.stderr)
+            return 1
+    stil = CAPTION_STYLES.get(args.style, CAPTION_STYLES["subtitle"])
+    zeilen = _caption_lines(
+        worte,
+        args.max_words if args.max_words else stil["max_words"],
+        args.max_chars if args.max_chars else stil["max_chars"],
+        args.min_duration if args.min_duration else stil["min_duration"],
+        stil["comma_always"])
+
+    srt = Path(args.out).expanduser()
+    srt.parent.mkdir(parents=True, exist_ok=True)
+    teile = []
+    for i, z_ in enumerate(zeilen, 1):
+        teile.append(f"{i}\n{_srt_time(z_['start'])} --> {_srt_time(z_['end'])}\n{z_['text']}\n")
+    srt.write_text("\n".join(teile), encoding="utf-8")
+    print(f"ok: {len(zeilen)} caption line(s) at {srt}")
+
+    if args.burn:
+        return _burn_captions(vault, Path(args.burn).expanduser(),
+                              Path(args.burn_out) if args.burn_out else None, zeilen, args)
+    return 0
+
+
+def _burn_captions(vault: Path, quelle: Path, ziel: Path | None, zeilen: list[dict],
+                   args: argparse.Namespace) -> int:
+    """Draw the captions as images and lay them over the picture.
+
+    Not through a subtitle filter, deliberately. Whether ffmpeg can draw text at all depends on how
+    that particular copy was built, and the common builds cannot: no subtitle renderer, no text
+    filter. Detected on the machine this was written on, where both are absent. Drawing the lines
+    ourselves works on every build, gives the brand's own typeface and box, and needs one image per
+    line rather than per word, which is what keeps it renderable at length.
+    """
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg or not quelle.is_file():
+        print("fail: need ffmpeg and the file to draw into", file=sys.stderr)
+        return 1
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        print("fail: drawing captions needs the image library: `tools ensure pillow`.",
+              file=sys.stderr)
+        return 1
+    ziel = ziel or quelle.with_name(quelle.stem + "-captioned.mp4")
+    info = _video_probe(vault, quelle)
+    breite, hoehe = int(info.get("width") or 1920), int(info.get("height") or 1080)
+    # Everything is proportional to the frame, so the same numbers hold at any resolution.
+    groesse = max(14, round(hoehe * args.font_size / 1080))
+    rand = round(hoehe * args.margin / 1080)
+    innen = round(groesse * 0.5)
+    try:
+        schrift = ImageFont.truetype(args.font_file, groesse) if args.font_file else \
+            ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", groesse)
+    except OSError:
+        schrift = ImageFont.load_default()
+
+    ordner = _video_job_dir(vault, args.slug) / "captions"
+    ordner.mkdir(parents=True, exist_ok=True)
+    mess = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+    maxbreite = breite - 2 * round(breite * 0.06)
+    bilder: list[tuple[Path, float, float]] = []
+    for i, z_ in enumerate(zeilen):
+        worte, gebrochen, laufend = z_["text"].split(), [], ""
+        for w in worte:
+            probe = (laufend + " " + w).strip()
+            if mess.textbbox((0, 0), probe, font=schrift)[2] > maxbreite and laufend:
+                gebrochen.append(laufend)
+                laufend = w
+            else:
+                laufend = probe
+        if laufend:
+            gebrochen.append(laufend)
+        zeilenhoehe = round(groesse * 1.35)
+        block = zeilenhoehe * len(gebrochen)
+        bild = Image.new("RGBA", (breite, hoehe), (0, 0, 0, 0))
+        zeichne = ImageDraw.Draw(bild)
+        oben = hoehe - rand - block
+        kasten = max(mess.textbbox((0, 0), g, font=schrift)[2] for g in gebrochen)
+        zeichne.rounded_rectangle(
+            [breite / 2 - kasten / 2 - innen, oben - innen,
+             breite / 2 + kasten / 2 + innen, oben + block + innen],
+            radius=round(groesse * 0.3), fill=args.box_colour)
+        for k, g in enumerate(gebrochen):
+            # A fixed baseline per line: centring the drawn shape instead would lift every line
+            # that happens to have no descender in it.
+            zeichne.text((breite / 2, oben + k * zeilenhoehe + zeilenhoehe / 2), g,
+                         font=schrift, fill=args.text_colour, anchor="mm")
+        pfad = ordner / f"c{i:04d}.png"
+        bild.save(pfad)
+        bilder.append((pfad, z_["start"], z_["end"]))
+
+    # One overlay, not one per line. Chaining a filter per caption works and is unusably slow:
+    # measured at 232 seconds for a two-minute piece with 104 lines, because every link in the
+    # chain re-composites the whole frame. Instead the captions become a single transparent track
+    # of their own, assembled from the images with their own durations, and the picture meets it
+    # exactly once.
+    fps = float(info.get("fps") or 25)
+    leer = ordner / "leer.png"
+    Image.new("RGBA", (breite, hoehe), (0, 0, 0, 0)).save(leer)
+    liste, zeit = [], 0.0
+    for pfad, a, b in bilder:
+        if a > zeit + 0.01:
+            liste.append((leer, a - zeit))
+        liste.append((pfad, max(0.04, b - a)))
+        zeit = b
+    dauer = float(info.get("duration") or zeit)
+    if dauer > zeit:
+        liste.append((leer, dauer - zeit))
+    spur = ordner / "track.txt"
+    zeilen_txt = []
+    for pfad, d in liste:
+        zeilen_txt.append(f"file '{pfad}'")
+        zeilen_txt.append(f"duration {d:.3f}")
+    zeilen_txt.append(f"file '{liste[-1][0]}'")   # the concat demuxer needs the last one twice
+    spur.write_text("\n".join(zeilen_txt) + "\n", encoding="utf-8")
+
+    cmd = [ffmpeg, "-y", "-i", str(quelle),
+           "-f", "concat", "-safe", "0", "-i", str(spur),
+           "-filter_complex",
+           f"[1:v]fps={fps},format=rgba[subs];[0:v][subs]overlay=0:0:eof_action=pass[o]",
+           "-map", "[o]", "-map", "0:a?",
+           "-c:v", "libx264", "-crf", str(args.crf), "-preset", "medium",
+           "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
+           str(ziel), "-loglevel", "error"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"fail: drawing the captions in did not work.\n{(r.stderr or '')[-600:]}",
+              file=sys.stderr)
+        return 1
+    print(f"ok: {len(bilder)} caption(s) drawn into {ziel}, {ziel.stat().st_size / 1e6:.1f} MB")
+    return 0
+
+
+VIDEO_FORMATS = {
+    "wide": (16, 9), "upright": (9, 16), "square": (1, 1), "classic": (4, 3),
+}
+
+# What the export profiles are for, in the user's terms rather than in codec terms.
+VIDEO_PROFILES = {
+    "master": {"crf": 18, "preset": "slow", "audio": "192k", "scale": None,
+               "why": "the one to keep and to work from again"},
+    "web": {"crf": 24, "preset": "fast", "audio": "128k", "scale": 1080,
+            "why": "small enough to send, good enough to watch"},
+    "platform": {"crf": 21, "preset": "medium", "audio": "192k", "scale": 1080,
+                 "why": "what a platform re-encodes without making it worse"},
+}
+
+
+def cmd_video_reframe(args: argparse.Namespace) -> int:
+    """Put the picture into another aspect ratio.
+
+    Two ways, and the choice is the point. Cropping keeps the picture full-height and throws away
+    the sides, which is right when what matters is in the middle and wrong the moment a face or a
+    caption sits outside the new frame: going from wide to upright throws away two thirds of the
+    width. Fitting keeps everything and fills the rest with a blurred enlargement of the same
+    picture, which loses nothing and is what platforms are used to seeing.
+    """
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    ziel = Path(args.out).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg or not src.is_file():
+        print("fail: need ffmpeg and an existing file", file=sys.stderr)
+        return 1
+    if args.format not in VIDEO_FORMATS:
+        print(f"fail: unknown format {args.format}, expected one of "
+              f"{', '.join(VIDEO_FORMATS)}", file=sys.stderr)
+        return 1
+    info = _video_probe(vault, src)
+    bw, bh = int(info.get("width") or 1920), int(info.get("height") or 1080)
+    zw, zh = VIDEO_FORMATS[args.format]
+    hoehe = args.height or (1920 if zh > zw else 1080)
+    breite = int(round(hoehe * zw / zh / 2) * 2)
+    verloren = 100 * (1 - min(1.0, (bh * zw / zh) / bw))
+
+    if args.fit:
+        graph = (f"[0:v]scale={breite}:{hoehe}:force_original_aspect_ratio=increase,"
+                 f"crop={breite}:{hoehe},boxblur=luma_radius=min(h\\,w)/12:luma_power=1[bg];"
+                 f"[0:v]scale={breite}:{hoehe}:force_original_aspect_ratio=decrease[fg];"
+                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2")
+        art = "fitted, nothing cropped away"
+    else:
+        # The crop window sits centred unless told otherwise. `--centre` is a fraction of the
+        # width, so it survives a change of resolution.
+        mitte = max(0.0, min(1.0, args.centre))
+        graph = (f"[0:v]crop=min(iw\\,ih*{zw}/{zh}):min(ih\\,iw*{zh}/{zw}):"
+                 f"(iw-min(iw\\,ih*{zw}/{zh}))*{mitte}:(ih-min(ih\\,iw*{zh}/{zw}))/2,"
+                 f"scale={breite}:{hoehe}")
+        art = f"cropped, about {verloren:.0f}% of the width dropped"
+
+    r = subprocess.run([ffmpeg, "-y", "-i", str(src), "-filter_complex", graph,
+                        "-c:v", "libx264", "-crf", str(args.crf), "-preset", "medium",
+                        "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
+                        str(ziel), "-loglevel", "error"], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"fail: reframing did not work.\n{(r.stderr or '')[-600:]}", file=sys.stderr)
+        return 1
+    print(f"ok: {bw}x{bh} to {breite}x{hoehe} ({args.format}), {art}, at {ziel}")
+    if not args.fit and verloren > 40:
+        print(f"   {verloren:.0f}% of the picture is gone. Look at what was on those sides before "
+              f"this goes out, or use --fit.")
+    return 0
+
+
+def cmd_video_mix(args: argparse.Namespace) -> int:
+    """The audio passes: clean it, add a bed, level it. Picture untouched.
+
+    Copying the picture rather than re-encoding is not an optimisation, it is the difference
+    between one generation of quality loss and two. The bed sits well below speech and does not
+    duck: where it is too loud, the level is wrong, and a sidechain only hides that.
+    """
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    ziel = Path(args.out).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg or not src.is_file():
+        print("fail: need ffmpeg and an existing file", file=sys.stderr)
+        return 1
+    ketten = []
+    if args.denoise:
+        # Gentle, and through the right knob. How much is removed is `nr` in decibels; the noise
+        # floor is a separate value with its own valid range, and setting the amount there is
+        # rejected outright ("result too large") rather than merely being wrong. Six decibels
+        # takes the hiss off without hollowing out the voice; the default of twelve already
+        # reads as muffled on a voice recorded in a normal room.
+        ketten.append(f"afftdn=nr={args.denoise_db}:nf=-35")
+    ketten.append(f"loudnorm=I={args.loudness}:TP=-1.5:LRA=11")
+    sprache = ",".join(ketten)
+
+    cmd = [ffmpeg, "-y", "-i", str(src)]
+    if args.music:
+        musik = Path(args.music).expanduser()
+        if not musik.is_file():
+            print(f"fail: no such music file: {musik}", file=sys.stderr)
+            return 1
+        dauer = _video_probe(vault, src).get("duration", 0.0)
+        cmd += ["-stream_loop", "-1", "-i", str(musik), "-filter_complex",
+                f"[0:a]{sprache}[v];"
+                f"[1:a]volume={args.music_db}dB,afade=t=out:st={max(0.0, dauer - 2.0)}:d=2[m];"
+                f"[v][m]amix=inputs=2:duration=first:dropout_transition=0[a]",
+                "-map", "0:v", "-map", "[a]"]
+    else:
+        cmd += ["-filter:a", sprache, "-map", "0:v", "-map", "0:a"]
+    cmd += ["-c:v", "copy", *_audio_out(ziel),
+            "-movflags", "+faststart", str(ziel), "-loglevel", "error"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"fail: the audio pass did not work.\n{(r.stderr or '')[-600:]}", file=sys.stderr)
+        return 1
+    teile = ["levelled to " + str(args.loudness) + " LUFS"]
+    if args.denoise:
+        teile.insert(0, "denoised")
+    if args.music:
+        teile.append(f"bed at {args.music_db} dB")
+    print(f"ok: {', '.join(teile)}, picture copied untouched, at {ziel}")
+    return 0
+
+
+def cmd_video_export(args: argparse.Namespace) -> int:
+    """One file per purpose, and the master is never overwritten.
+
+    By the end of a job the folder holds several attempts and nobody remembers which one went out.
+    Naming by purpose fixes that, and refusing to write over an existing master fixes the worse
+    version of it, where the good file is gone and the loss shows up weeks later.
+    """
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg or not src.is_file():
+        print("fail: need ffmpeg and an existing file", file=sys.stderr)
+        return 1
+    profile = args.profile.split(",")
+    unbekannt = [p_ for p_ in profile if p_ not in VIDEO_PROFILES]
+    if unbekannt:
+        print(f"fail: unknown profile(s) {', '.join(unbekannt)}, expected from "
+              f"{', '.join(VIDEO_PROFILES)}", file=sys.stderr)
+        return 1
+    raus = Path(args.out_dir).expanduser() if args.out_dir else src.parent
+    raus.mkdir(parents=True, exist_ok=True)
+    for name in profile:
+        spec = VIDEO_PROFILES[name]
+        ziel = raus / f"{args.name}-{name}.mp4"
+        if ziel.exists() and not args.overwrite:
+            print(f"skip: {ziel.name} exists. Nothing is written over: pass --overwrite if that "
+                  f"is really what you want.")
+            continue
+        vf = []
+        if spec["scale"]:
+            vf = ["-vf", f"scale=-2:'min({spec['scale']},ih)'"]
+        r = subprocess.run([ffmpeg, "-y", "-i", str(src), *vf,
+                            "-c:v", "libx264", "-crf", str(spec["crf"]),
+                            "-preset", spec["preset"], "-pix_fmt", "yuv420p",
+                            "-c:a", "aac", "-b:a", spec["audio"],
+                            "-movflags", "+faststart", str(ziel), "-loglevel", "error"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"fail: {name} did not render.\n{(r.stderr or '')[-400:]}", file=sys.stderr)
+            return 1
+        print(f"ok: {ziel.name}, {ziel.stat().st_size / 1e6:.1f} MB, {spec['why']}")
+    return 0
+
+
+def cmd_video_brand(args: argparse.Namespace) -> int:
+    """Put the brand on the picture: an opening, a closing, a logo held throughout.
+
+    The bumpers are joined rather than overlaid, which means they have to match the piece in size,
+    frame rate and audio layout or the join tears. They are re-encoded to match rather than the
+    other way round: the piece is the master here, the bumper is the guest.
+    """
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    ziel = Path(args.out).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg or not src.is_file():
+        print("fail: need ffmpeg and an existing file", file=sys.stderr)
+        return 1
+    info = _video_probe(vault, src)
+    breite, hoehe = int(info.get("width") or 1920), int(info.get("height") or 1080)
+    fps = info.get("fps_exact") or "25/1"
+    zwischen = _video_job_dir(vault, args.slug)
+
+    mit_logo = src
+    if args.logo:
+        logo = Path(args.logo).expanduser()
+        if not logo.is_file():
+            print(f"fail: no such logo: {logo}", file=sys.stderr)
+            return 1
+        # Proportional to the frame, so the same numbers hold at any resolution, and inside the
+        # margin that platforms cover with their own controls.
+        lb = max(24, round(breite * args.logo_width / 100))
+        rand_x = round(breite * args.logo_margin / 100)
+        rand_y = round(hoehe * args.logo_margin / 100)
+        stelle = {
+            "top-left": (rand_x, rand_y),
+            "top-right": (f"W-w-{rand_x}", rand_y),
+            "bottom-left": (rand_x, f"H-h-{rand_y}"),
+            "bottom-right": (f"W-w-{rand_x}", f"H-h-{rand_y}"),
+        }.get(args.logo_position)
+        if not stelle:
+            print(f"fail: unknown logo position {args.logo_position}", file=sys.stderr)
+            return 1
+        mit_logo = zwischen / "with-logo.mp4"
+        r = subprocess.run(
+            # -loop, for the same reason as the captions: a still image is one frame at time zero,
+            # and an overlay reading it composites nothing for the rest of the piece. Silently.
+            [ffmpeg, "-y", "-i", str(src), "-loop", "1", "-i", str(logo), "-filter_complex",
+             f"[1:v]scale={lb}:-1,format=rgba,colorchannelmixer=aa={args.logo_opacity}[lg];"
+             f"[0:v][lg]overlay={stelle[0]}:{stelle[1]}:eof_action=pass[o]",
+             "-map", "[o]", "-map", "0:a?", "-shortest",
+             "-c:v", "libx264", "-crf", str(args.crf),
+             "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "copy",
+             str(mit_logo), "-loglevel", "error"], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"fail: the logo did not composite.\n{(r.stderr or '')[-500:]}", file=sys.stderr)
+            return 1
+
+    teile = []
+    for rolle, pfad in (("intro", args.intro), ("main", None), ("outro", args.outro)):
+        if rolle == "main":
+            teile.append(mit_logo)
+            continue
+        if not pfad:
+            continue
+        quelle = Path(pfad).expanduser()
+        if not quelle.is_file():
+            print(f"fail: no such {rolle}: {quelle}", file=sys.stderr)
+            return 1
+        angepasst = zwischen / f"{rolle}-matched.mp4"
+        # A bumper without a sound track cannot simply be joined to one that has: the join needs
+        # the same number of streams on both sides, so silence is generated for its exact length
+        # rather than hoping the concat sorts it out.
+        hat_ton = bool(_video_probe(vault, quelle).get("audio"))
+        cmd_b = [ffmpeg, "-y", "-i", str(quelle)]
+        if not hat_ton:
+            cmd_b += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+        cmd_b += ["-filter_complex",
+                  f"[0:v]scale={breite}:{hoehe}:force_original_aspect_ratio=decrease,"
+                  f"pad={breite}:{hoehe}:(ow-iw)/2:(oh-ih)/2,fps={fps},setsar=1[v]",
+                  "-map", "[v]", "-map", "0:a" if hat_ton else "1:a", "-shortest",
+                  "-c:v", "libx264", "-crf", str(args.crf), "-preset", "medium",
+                  "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                  "-ar", "48000", "-ac", "2", str(angepasst), "-loglevel", "error"]
+        r = subprocess.run(cmd_b, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"fail: the {rolle} could not be matched to the piece.\n"
+                  f"{(r.stderr or '')[-400:]}", file=sys.stderr)
+            return 1
+        teile.insert(0 if rolle == "intro" else len(teile), angepasst)
+
+    if len(teile) == 1:
+        if mit_logo != src:
+            shutil.move(str(mit_logo), str(ziel))
+            print(f"ok: logo held throughout, at {ziel}")
+            return 0
+        print("fail: nothing to do: no intro, no outro, no logo", file=sys.stderr)
+        return 1
+
+    # Joined through the filter rather than by listing the files. Listing them is cheaper because
+    # nothing is decoded, and it fails the moment two sound tracks differ in a detail nobody set on
+    # purpose: a bumper made elsewhere, a silence track written by a different encoder. The filter
+    # decodes both and writes one clean stream, which is what a join has to survive.
+    cmd_j = [ffmpeg, "-y"]
+    for teil in teile:
+        cmd_j += ["-i", str(teil)]
+    ketten = "".join(f"[{i}:v:0][{i}:a:0]" for i in range(len(teile)))
+    cmd_j += ["-filter_complex", f"{ketten}concat=n={len(teile)}:v=1:a=1[v][a]",
+              "-map", "[v]", "-map", "[a]",
+              "-c:v", "libx264", "-crf", str(args.crf), "-preset", "medium",
+              "-pix_fmt", "yuv420p", *_audio_out(ziel),
+              "-movflags", "+faststart", str(ziel), "-loglevel", "error"]
+    r = subprocess.run(cmd_j, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"fail: joining did not work.\n{(r.stderr or '')[-600:]}", file=sys.stderr)
+        return 1
+    was = [x for x, y in (("intro", args.intro), ("outro", args.outro), ("logo", args.logo)) if y]
+    print(f"ok: {', '.join(was)} applied, "
+          f"{_spoken_length(_video_probe(vault, ziel).get('duration', 0.0))} at {ziel}")
+    return 0
+
+
+def cmd_video_chapters(args: argparse.Namespace) -> int:
+    """Chapter marks from the transcript, as a list to paste and as metadata in the file."""
+    vault = Path(args.vault).resolve()
+    wd = Path(args.words).expanduser()
+    if not wd.is_file():
+        print(f"fail: no such transcript: {wd}", file=sys.stderr)
+        return 1
+    worte = json.loads(wd.read_text(encoding="utf-8")).get("words", [])
+    if not worte:
+        print("fail: the transcript carries no words", file=sys.stderr)
+        return 1
+    ende = worte[-1]["end"]
+    schritt = max(args.min_gap, ende / max(1, args.count))
+    kapitel, naechste = [], 0.0
+    for w in worte:
+        if w["start"] >= naechste:
+            # Start a chapter on a word that begins a sentence where possible, so the title reads
+            # like something rather than starting mid-clause.
+            kapitel.append({"start": round(w["start"], 3), "words": [w["word"]]})
+            naechste = w["start"] + schritt
+        elif kapitel:
+            if len(kapitel[-1]["words"]) < args.title_words:
+                kapitel[-1]["words"].append(w["word"])
+    zeilen = []
+    for k in kapitel:
+        m, s = divmod(int(k["start"]), 60)
+        h, m = divmod(m, 60)
+        stempel = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+        zeilen.append(f"{stempel} {' '.join(k['words']).strip('.,')}")
+    text = "\n".join(zeilen) + "\n"
+    if args.out:
+        Path(args.out).expanduser().write_text(text, encoding="utf-8")
+    print(f"ok: {len(kapitel)} chapter(s)")
+    print(text, end="")
+    print("   Titles are the first words spoken, not a summary. Rewrite them before they go out.")
+    return 0
+
+
+def cmd_video_thumbnail(args: argparse.Namespace) -> int:
+    """Candidates for a thumbnail: the sharpest, best-lit frames rather than an arbitrary one.
+
+    Sharpness is measured as local contrast, which is what a blurred or motion-smeared frame
+    lacks; brightness is checked so a candidate is not a cut to black. Choosing between the
+    candidates is a judgement and stays with whoever is looking at them.
+    """
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg or not src.is_file():
+        print("fail: need ffmpeg and an existing file", file=sys.stderr)
+        return 1
+    try:
+        from PIL import Image
+    except ImportError:
+        print("fail: needs the image library: `tools ensure pillow`.", file=sys.stderr)
+        return 1
+    dauer = _video_probe(vault, src).get("duration", 0.0)
+    raus = Path(args.out).expanduser() if args.out else _video_job_dir(vault, args.slug) / "thumbs"
+    raus.mkdir(parents=True, exist_ok=True)
+    kandidaten = []
+    for i in range(args.sample):
+        t0 = dauer * (i + 0.5) / args.sample
+        pfad = raus / f"cand{i:02d}.jpg"
+        if not _grab_frame(ffmpeg, src, t0, pfad, "-q:v", "2"):
+            continue
+        klein = Image.open(pfad).convert("L").resize((160, 90))
+        px = list(klein.get_flattened_data()) if hasattr(klein, "get_flattened_data") \
+            else list(klein.getdata())
+        hell = sum(px) / len(px)
+        schaerfe = sum(abs(px[j] - px[j - 1]) for j in range(1, len(px))) / len(px)
+        kandidaten.append((schaerfe, hell, t0, pfad))
+    brauchbar = [k for k in kandidaten if 40 < k[1] < 225]
+    brauchbar.sort(reverse=True)
+    if not brauchbar:
+        print("fail: no usable frame found", file=sys.stderr)
+        return 1
+    for schaerfe, hell, t0, pfad in brauchbar[:args.keep]:
+        print(f"  {t0:8.2f}s  detail {schaerfe:5.1f}  brightness {hell:5.1f}  {pfad.name}")
+    for _, _, _, pfad in brauchbar[args.keep:]:
+        pfad.unlink(missing_ok=True)
+    print(f"ok: {min(args.keep, len(brauchbar))} candidate(s) in {raus}. Which one works is a "
+          f"judgement; look at them.")
+    return 0
+
+
+def cmd_video_text(args: argparse.Namespace) -> int:
+    """Write the transcript out for editing, and read an edited one back as a cut.
+
+    Two directions of the same idea. Written out, it is plain paragraphs with no timings in the
+    way, because a file full of numbers does not get edited. Read back, the words that survived are
+    matched against the original in order, and what disappeared becomes a cut. Only deletions are
+    honoured: a corrected word changes the captions, not the picture, and moving a paragraph is not
+    supported, so a text that has been reordered is reported rather than half-applied.
+    """
+    vault = Path(args.vault).resolve()
+    wd = Path(args.words).expanduser()
+    if not wd.is_file():
+        print(f"fail: no such transcript: {wd}", file=sys.stderr)
+        return 1
+    daten = json.loads(wd.read_text(encoding="utf-8"))
+    worte = daten.get("words", [])
+    if not worte:
+        print("fail: the transcript carries no words", file=sys.stderr)
+        return 1
+
+    if args.write:
+        ziel = Path(args.write).expanduser()
+        ziel.parent.mkdir(parents=True, exist_ok=True)
+        absaetze, laufend, letzte = [], [], worte[0]["end"]
+        for w in worte:
+            # A pause is where a paragraph ends, which is also where a deletion is cheapest.
+            if w["start"] - letzte > args.paragraph_gap and laufend:
+                absaetze.append(" ".join(laufend))
+                laufend = []
+            laufend.append(w["word"])
+            letzte = w["end"]
+        if laufend:
+            absaetze.append(" ".join(laufend))
+        kopf = ("<!-- Delete what should go: a word, a sentence, a whole paragraph. Correcting a\n"
+                "     word changes the captions, not the cut. Do not reorder. -->\n\n")
+        ziel.write_text(kopf + "\n\n".join(absaetze) + "\n", encoding="utf-8")
+        print(f"ok: {len(absaetze)} paragraph(s), {len(worte)} words at {ziel}")
+        return 0
+
+    bearbeitet = Path(args.read).expanduser()
+    if not bearbeitet.is_file():
+        print(f"fail: no such edited text: {bearbeitet}", file=sys.stderr)
+        return 1
+    import difflib
+    import re as _re
+
+    def schluessel(s: str) -> str:
+        return _re.sub(r"[^0-9a-zäöüßA-ZÄÖÜ]", "", s).lower()
+
+    roh = _re.sub(r"<!--.*?-->", " ", bearbeitet.read_text(encoding="utf-8"), flags=_re.S)
+    neu = [schluessel(x) for x in roh.split() if schluessel(x)]
+    alt = [schluessel(w["word"]) for w in worte]
+    passung = difflib.SequenceMatcher(None, alt, neu)
+    behalten = [False] * len(worte)
+    umgestellt = 0
+    for tag, i1, i2, j1, j2 in passung.get_opcodes():
+        if tag in ("equal", "replace"):
+            # `replace` is a correction of the wording: the moment stays, the text changes.
+            for i in range(i1, i2):
+                behalten[i] = True
+        elif tag == "insert":
+            umgestellt += j2 - j1
+    if umgestellt > args.tolerance:
+        print(f"fail: the text has {umgestellt} word(s) that are not in the original. Words can be "
+              f"deleted and corrected, not added or moved; nothing was cut.", file=sys.stderr)
+        return 1
+
+    quelle = args.source or daten.get("source")
+    segmente, offen = [], None
+    for w, bleibt in zip(worte, behalten):
+        if not bleibt:
+            if offen:
+                segmente.append(offen)
+                offen = None
+            continue
+        if offen and w["start"] - offen["end"] <= args.join:
+            offen["end"] = w["end"]
+            offen["text"] += " " + w["word"]
+        else:
+            if offen:
+                segmente.append(offen)
+            offen = {"source": quelle, "start": round(max(0.0, w["start"] - 0.08), 3),
+                     "end": w["end"], "text": w["word"]}
+    if offen:
+        segmente.append(offen)
+    for s in segmente:
+        s["end"] = round(s["end"] + VIDEO_TAIL / 2, 3)
+    weg = sum(1 for b in behalten if not b)
+    ziel = Path(args.out).expanduser()
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    ziel.write_text(json.dumps({"segments": segmente}, ensure_ascii=False, indent=1),
+                    encoding="utf-8")
+    behalten_s = sum(s["end"] - s["start"] for s in segmente)
+    print(f"ok: {weg} of {len(worte)} words deleted, {len(segmente)} segment(s), "
+          f"{_spoken_length(behalten_s)} left, at {ziel}")
+    if weg == 0:
+        print("   Nothing was deleted, so this cut is the whole recording.")
+    return 0
+
+
+def cmd_video_sync(args: argparse.Namespace) -> int:
+    """Find the offset between two recordings of the same conversation.
+
+    Two people recording themselves start at different moments, and nothing in the files says by
+    how much. The sound does: both microphones pick up the same speech, so the offset is where the
+    two signals line up best. Measured on the loudness envelope rather than the waveform, which
+    survives different microphones, different rooms and different gain.
+    """
+    vault = Path(args.vault).resolve()
+    a, b = Path(args.a).expanduser(), Path(args.b).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg or not a.is_file() or not b.is_file():
+        print("fail: need ffmpeg and both files", file=sys.stderr)
+        return 1
+    job = _video_job_dir(vault, args.slug)
+    huellen = []
+    for name, quelle in (("a", a), ("b", b)):
+        wav = job / f"sync-{name}.wav"
+        subprocess.run([ffmpeg, "-y", "-i", str(quelle), "-vn", "-ac", "1", "-ar", "8000",
+                        "-t", str(args.window), "-c:a", "pcm_s16le", str(wav)],
+                       check=True, capture_output=True)
+        h, hop = _rms_envelope(wav, hop=0.02)
+        mittel = sum(h) / len(h) if h else 0.0
+        huellen.append([x - mittel for x in h])
+    ha, hb = huellen
+    if not ha or not hb:
+        print("fail: no audio to compare", file=sys.stderr)
+        return 1
+    grenze = int(args.max_offset / 0.02)
+    bestes, versatz = None, 0
+    for k in range(-grenze, grenze + 1):
+        summe, n = 0.0, 0
+        for i in range(len(ha)):
+            j = i + k
+            if 0 <= j < len(hb):
+                summe += ha[i] * hb[j]
+                n += 1
+        if n > 50:
+            wert = summe / n
+            if bestes is None or wert > bestes:
+                bestes, versatz = wert, k
+    sekunden = versatz * 0.02
+    print(f"ok: the second recording runs {abs(sekunden):.2f}s "
+          f"{'behind' if sekunden > 0 else 'ahead of'} the first")
+    print(f"   trim: ffmpeg -ss {abs(sekunden):.3f} on "
+          f"{'the second' if sekunden > 0 else 'the first'} file")
+    if bestes is not None and bestes < args.min_confidence:
+        print("   The match is weak. Either the two recordings do not overlap in the window that "
+              "was compared, or one side never picks up the other speaker.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _grab_frame(ffmpeg: str, src: Path, t0: float, ziel: Path, *filter_args: str) -> bool:
+    """One frame at one moment, reliably.
+
+    Seeking before the input is fast, because the decoder jumps straight there, and on some files
+    it returns nothing at all: a container whose index the fast path cannot use produces an empty
+    output and an error nobody reads. Seeking after the input decodes up to the moment, which is
+    slower and always works. Fast first, exact second: on a long file the difference is seconds
+    against a minute, and on a stubborn file it is a picture against none.
+    """
+    for cmd in (
+        [ffmpeg, "-y", "-ss", f"{t0:.3f}", "-i", str(src), "-frames:v", "1", *filter_args,
+         str(ziel), "-loglevel", "error"],
+        [ffmpeg, "-y", "-i", str(src), "-ss", f"{t0:.3f}", "-frames:v", "1", *filter_args,
+         str(ziel), "-loglevel", "error"],
+    ):
+        subprocess.run(cmd, capture_output=True)
+        if ziel.is_file() and ziel.stat().st_size > 0:
+            return True
+    return False
+
+
+def cmd_video_timeline(args: argparse.Namespace) -> int:
+    """One picture of the whole piece: a filmstrip, the loudness underneath, the words along it.
+
+    This is the cheap way to look at a video. Twenty-four separate frames cost more than the edit
+    they were meant to inform; one composite the size of a screenshot says where the scenes change,
+    where it is quiet, where somebody is talking, and roughly what about. Read this first and pull
+    individual frames only for a spot the strip actually raises a question about.
+    """
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg or not src.is_file():
+        print("fail: need ffmpeg and an existing file", file=sys.stderr)
+        return 1
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        print("fail: needs the image library: `tools ensure pillow`.", file=sys.stderr)
+        return 1
+
+    info = _video_probe(vault, src)
+    dauer = info.get("duration") or 0.0
+    if dauer <= 0:
+        print("fail: cannot read the duration", file=sys.stderr)
+        return 1
+    arbeit = _video_job_dir(vault, args.slug)
+    n = max(4, min(args.columns, 24))
+    # Both even. An odd height is rejected outright by the colour format every JPEG uses, and
+    # the error it produces ("invalid argument") says nothing about which of the two numbers
+    # was wrong. 135 cost half an hour.
+    kachel_b, kachel_h = 240, 136
+    welle_h, wort_h, rand = 60, 46, 10
+
+    # The filmstrip: evenly spaced, small, in one row.
+    streifen = Image.new("RGB", (n * kachel_b, kachel_h), (20, 20, 20))
+    for i in range(n):
+        t0 = dauer * (i + 0.5) / n
+        einzel = arbeit / f"strip{i:02d}.jpg"
+        _grab_frame(ffmpeg, src, t0, einzel,
+                    "-vf", f"scale={kachel_b}:{kachel_h}:force_original_aspect_ratio=decrease,"
+                           f"pad={kachel_b}:{kachel_h}:(ow-iw)/2:(oh-ih)/2", "-q:v", "5")
+        if einzel.is_file() and einzel.stat().st_size > 0:
+            streifen.paste(Image.open(einzel), (i * kachel_b, 0))
+            einzel.unlink(missing_ok=True)
+
+    breite = n * kachel_b
+    bild = Image.new("RGB", (breite, kachel_h + welle_h + wort_h + rand * 2), (16, 16, 16))
+    bild.paste(streifen, (0, 0))
+    zeichne = ImageDraw.Draw(bild)
+    try:
+        schrift = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 13)
+    except OSError:
+        schrift = ImageFont.load_default()
+
+    # The loudness underneath, from the same audio the transcript came from.
+    wav = arbeit / f"{src.stem}.16k.wav"
+    if not wav.is_file():
+        subprocess.run([ffmpeg, "-y", "-i", str(src), "-vn", "-ar", "16000", "-ac", "1",
+                        "-c:a", "pcm_s16le", str(wav), "-loglevel", "error"], capture_output=True)
+    oben = kachel_h + rand
+    if wav.is_file():
+        huelle, hop = _rms_envelope(wav, hop=max(0.02, dauer / breite))
+        spitze = max(huelle) or 1.0
+        for x in range(breite):
+            i = int(x * len(huelle) / breite)
+            h = int(welle_h * min(1.0, huelle[i] / spitze))
+            zeichne.line([(x, oben + welle_h - h), (x, oben + welle_h)], fill=(90, 170, 230))
+
+    # The words along the bottom, thinned to what fits rather than overlapped into a smear.
+    wd = Path(args.words).expanduser() if args.words else None
+    if wd and wd.is_file():
+        worte = json.loads(wd.read_text(encoding="utf-8")).get("words", [])
+        letzte_x = -999
+        for w in worte:
+            x = int(w["start"] / dauer * breite)
+            if x - letzte_x < 70:
+                continue
+            zeichne.text((x + 2, oben + welle_h + 4), w["word"][:14], font=schrift,
+                         fill=(220, 220, 220))
+            letzte_x = x
+
+    # A time ruler on the strip itself, so a finding can be named in seconds.
+    for i in range(n):
+        t0 = dauer * i / n
+        x = i * kachel_b
+        zeichne.line([(x, 0), (x, kachel_h)], fill=(60, 60, 60))
+        zeichne.text((x + 3, 3), f"{int(t0 // 60)}:{int(t0 % 60):02d}", font=schrift,
+                     fill=(255, 255, 255))
+
+    ziel = Path(args.out).expanduser() if args.out else arbeit / "timeline.jpg"
+    bild.save(ziel, quality=82)
+    print(f"ok: one picture of {_spoken_length(dauer)} at {ziel}")
+    print("   Read this instead of pulling frames. Pull a frame only where the strip raises a "
+          "question, and name the second it is at.")
+    return 0
+
+
+def cmd_video_brief(args: argparse.Namespace) -> int:
+    """Everything needed to judge a piece of footage, in one call.
+
+    This exists because the alternative happened: asked to look at a 78-second clip, a run made 34
+    tool calls, pulled 24 frames, read every one of them and spent seven minutes and 75,000 tokens.
+    Frames are images and images are the expensive thing; a transcript costs almost nothing and
+    says most of it. So this measures what can be measured for free, transcribes once, and pulls a
+    handful of frames on purpose rather than as many as seem interesting.
+
+    The point of looking before working is to spend less, not more. An analysis that costs as much
+    as the edit has defeated itself.
+    """
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    if not src.is_file():
+        print(f"fail: no such file: {src}", file=sys.stderr)
+        return 1
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    info = _video_probe(vault, src)
+    dauer = info.get("duration", 0.0)
+    print(f"# {src.name}")
+    print(f"{_spoken_length(dauer)}, {info.get('width')}x{info.get('height')}, "
+          f"{info.get('fps')} fps, {src.stat().st_size / 1e6:.0f} MB"
+          + (f", {info.get('chapters')} chapter track(s)" if info.get("chapters") else ""))
+
+    # Loudness, measured in one pass. Free, and it is the fact that decides most of the audio work.
+    if ffmpeg:
+        r = subprocess.run([ffmpeg, "-i", str(src), "-af", "ebur128=framelog=verbose",
+                            "-f", "null", "-", "-loglevel", "info"],
+                           capture_output=True, text=True)
+        werte = re.findall(r"I:\s*(-?[0-9.]+) LUFS", r.stderr or "")
+        spitze = re.findall(r"Peak:\s*(-?[0-9.]+) dBFS", r.stderr or "")
+        if werte:
+            lufs = float(werte[-1])
+            print(f"loudness {lufs:.1f} LUFS"
+                  + (f", peak {spitze[-1]} dBFS" if spitze else ""))
+            if lufs < -20:
+                print(f"  {abs(lufs + 16):.0f} dB below a normal target for speech. Lifting it "
+                      f"brings the room noise up with it.")
+
+    # The words. Whole where that is cheap, sampled where it is not: transcribing runs at roughly
+    # thirty times real time, so two hours of recording is four minutes of waiting for a first
+    # look. Past the threshold, beginning, middle and end answer the question (operating-principles
+    # §14); the full transcript is made later, once the work has been agreed.
+    worte: list[dict] = []
+    probe_quelle = src
+    gestueckelt = False
+    if ffmpeg and dauer > args.sample_over:
+        stuecke, laenge = [], args.sample_seconds
+        arbeit = _video_job_dir(vault, args.slug or "brief")
+        for i, start in enumerate((0.0, max(0.0, dauer / 2 - laenge / 2), max(0.0, dauer - laenge))):
+            stueck = arbeit / f"sample{i}.wav"
+            subprocess.run([ffmpeg, "-y", "-ss", f"{start:.2f}", "-t", str(laenge), "-i", str(src),
+                            "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(stueck),
+                            "-loglevel", "error"], capture_output=True)
+            if stueck.is_file():
+                stuecke.append(stueck)
+        if len(stuecke) == 3:
+            liste = arbeit / "sample.txt"
+            liste.write_text("".join(f"file '{s}'\n" for s in stuecke), encoding="utf-8")
+            probe_quelle = arbeit / "sample.wav"
+            subprocess.run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(liste),
+                            "-c", "copy", str(probe_quelle), "-loglevel", "error"],
+                           capture_output=True)
+            gestueckelt = probe_quelle.is_file()
+            if gestueckelt:
+                print(f"\nlonger than {_spoken_length(args.sample_over)}, so the words come from "
+                      f"three samples of {laenge:.0f}s: the start, the middle and the end")
+    if args.slug:
+        ns = argparse.Namespace(vault=str(vault), file=str(probe_quelle), slug=args.slug,
+                                language=args.language, lexicon=None, dtw_preset=None, force=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            cmd_video_transcribe(ns)
+        wd = _video_job_dir(vault, args.slug) / f"{probe_quelle.stem}.words.json"
+        if wd.is_file():
+            worte = json.loads(wd.read_text(encoding="utf-8")).get("words", [])
+
+    if worte:
+        pausen = [] if gestueckelt else [(worte[i + 1]["start"] - worte[i]["end"], worte[i]["end"])
+                  for i in range(len(worte) - 1)
+                  if worte[i + 1]["start"] - worte[i]["end"] > 0.5]
+        laengste = sorted(pausen, reverse=True)[:3]
+        gesprochen = sum(w["end"] - w["start"] for w in worte)
+        print(f"{len(worte)} words, {gesprochen / max(dauer, 1) * 100:.0f}% of the runtime is "
+              f"speech, {len(pausen)} pause(s) over half a second")
+        for laenge, wann in laengste:
+            print(f"  {laenge:.1f}s of silence at {wann:.0f}s")
+        print("\n--- what is said ---")
+        print(" ".join(w["word"] for w in worte))
+
+    # What is missing before it becomes a surprise mid-job. The register knows what each path
+    # needs; asking it here costs nothing and turns "it stopped working" into "fetch this first".
+    fehlend: list[str] = []
+    for tid in ("ffmpeg", "ffprobe", "whisper", "whisper-model", "node", "hyperframes"):
+        spec = (_load_register().get("tools") or {}).get(tid)
+        if not spec:
+            continue
+        if not _detect_tool(vault, tid, spec, _current_os()).get("present"):
+            fehlend.append(tid)
+    if fehlend:
+        print(f"\nmissing for parts of the pipeline: {', '.join(fehlend)}")
+        print("  Cutting, captions and sound need the first four. Motion graphics need the last "
+              "two, and without them that step is not available at all: say so and offer to fetch "
+              "them, rather than drawing frames by hand and calling it done.")
+
+    # What the piece would be dressed in. Asked here because it is the question that gets skipped:
+    # a run that finds nothing quietly picks its own colours and typeface, and the user first sees
+    # the choice in a finished render.
+    marken = sorted(d.name for d in (vault / DESIGN_DIR).iterdir()
+                    if d.is_dir()) if (vault / DESIGN_DIR).is_dir() else []
+    print()
+    if marken:
+        print(f"brand(s) available: {', '.join(marken)}")
+    else:
+        print("no brand set in this vault. Anything visible (captions, a logo, an opening, a "
+              "graphic) has no colours, typeface or mark to take, so ask before making them up: "
+              "which brand, or which colours and typeface, or explicitly plain.")
+
+    # One picture, not a handful of frames. A composite of filmstrip, loudness and words says where
+    # the scenes change, where it is quiet and roughly what about, at the cost of a single image.
+    # Separate frames cost that much each, and twenty-four of them cost more than the edit.
+    if ffmpeg:
+        ns = argparse.Namespace(
+            vault=str(vault), file=str(src),
+            words=str(_video_job_dir(vault, args.slug) / f"{probe_quelle.stem}.words.json")
+            if worte else None,
+            columns=args.columns, slug=args.slug or "brief", out=None)
+        print()
+        cmd_video_timeline(ns)
+    return 0
+
+
+def cmd_video_check(args: argparse.Namespace) -> int:
+    """The technical half of the review, measured rather than looked at.
+
+    Three faults belong here because a pair of eyes is the wrong instrument for them. Duplicated
+    frames are the vicious one: chain several short overlays over a long base and the scheduler
+    starts repeating output frames on a regular cadence. Every input measures clean on its own and
+    the result reports a flawless constant frame rate, while the content actually updates at a
+    fraction of it. It reads as judder on anything smooth, and the search goes to the wrong place
+    every time. The other two are a brightness step at a join, which is what round-tripping
+    footage through a browser costs, and a length that does not match what was asked for.
+    """
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg or not src.is_file():
+        print("fail: need ffmpeg and an existing file", file=sys.stderr)
+        return 1
+    info = _video_probe(vault, src)
+    befunde: list[str] = []
+    print(f"{src.name}: {_spoken_length(info.get('duration', 0.0))}, "
+          f"{info.get('width')}x{info.get('height')}, {info.get('fps')} fps")
+
+    # Duplicated frames: let the decoder drop everything identical to its predecessor and compare
+    # what survives with what went in. Counting log lines does not work, the filter writes one per
+    # frame whether it drops it or not.
+    def _frames(vf: list[str]) -> int:
+        r = subprocess.run([ffmpeg, "-i", str(src), *vf, "-f", "null", "-", "-loglevel", "info"],
+                           capture_output=True, text=True)
+        treffer = re.findall(r"frame=\s*(\d+)", r.stderr or "")
+        return int(treffer[-1]) if treffer else 0
+
+    gesamt = max(1, _frames([]))
+    behalten = _frames(["-vf", "mpdecimate"])
+    doppelt = max(0, gesamt - behalten)
+    anteil = 100.0 * doppelt / gesamt
+    print(f"  duplicated frames: {doppelt} of about {gesamt} ({anteil:.1f}%)")
+    # Only a fault after compositing. Raw material duplicates frames for honest reasons: a shared
+    # screen that nobody touches for ten seconds is ten seconds of identical frames, and reporting
+    # that as judder would train everyone to ignore the check.
+    if args.composited and anteil > args.duplicate_limit:
+        befunde.append(f"{anteil:.1f}% duplicated frames, above the {args.duplicate_limit}% limit. "
+                       f"The file will still report a constant frame rate; do not fix it by "
+                       f"forcing one, the cause is a layer repeating past its end.")
+
+    # Brightness at the joins. Only where a graphic was composited in: a plain cut is meant to
+    # change the picture, so measuring a step there would report the cut itself as a fault. The
+    # suspect is footage that went through a browser and came back a few percent darker.
+    if args.seams:
+        naht = [float(x) for x in args.seams.split(",") if x.strip()]
+        werte = []
+        for t0 in naht[: args.max_seams]:
+            hell = []
+            for versatz in (-0.12, 0.12):
+                r2 = subprocess.run(
+                    [ffmpeg, "-ss", f"{max(0.0, t0 + versatz):.3f}", "-i", str(src),
+                     "-frames:v", "1", "-vf", "scale=64:36,format=gray",
+                     "-f", "rawvideo", "-", "-loglevel", "error"],
+                    capture_output=True)
+                roh = r2.stdout
+                hell.append(sum(roh) / len(roh) if roh else 0.0)
+            if all(hell):
+                werte.append((abs(hell[1] - hell[0]) / max(hell), t0))
+        sprung = [(d, t0) for d, t0 in werte if d > args.luma_limit]
+        print(f"  joins measured: {len(werte)}, brightness step beyond "
+              f"{100 * args.luma_limit:.0f}%: {len(sprung)}")
+        for d, t0 in sprung[:5]:
+            befunde.append(f"brightness steps {100 * d:.0f}% at {t0:.2f}s, which is a seam the "
+                           f"viewer sees as a flicker on the face")
+
+    if befunde:
+        print(f"FAIL: {len(befunde)} finding(s)", file=sys.stderr)
+        for b in befunde:
+            print(f"  {b}", file=sys.stderr)
+        return 1
+    print("ok: nothing measurable is wrong. What a checklist cannot judge is composition; "
+          "that is a separate pass, done by looking.")
+    return 0
+
+
+def cmd_video_frames(args: argparse.Namespace) -> int:
+    """Pull frames so they can be read. The eyes of the review loop, and of picking usable
+    moments out of footage that already exists."""
+    vault = Path(args.vault).resolve()
+    src = Path(args.file).expanduser()
+    ffmpeg = _tool_path(vault, "ffmpeg")
+    if not ffmpeg:
+        print("fail: ffmpeg missing: `tools ensure ffmpeg`.", file=sys.stderr)
+        return 1
+    if not src.is_file():
+        print(f"fail: no such file: {src}", file=sys.stderr)
+        return 1
+    raus = Path(args.out).expanduser() if args.out else _video_job_dir(vault, args.slug) / "frames"
+    raus.mkdir(parents=True, exist_ok=True)
+    zeiten = [float(x) for x in args.at.split(",")] if args.at else []
+    if not zeiten:
+        dauer = _video_probe(vault, src).get("duration", 0.0)
+        n = max(1, args.count)
+        zeiten = [dauer * (i + 0.5) / n for i in range(n)]
+    geschrieben = []
+    for t in zeiten:
+        ziel = raus / f"t{t:09.3f}.jpg".replace(".", "_", 1)
+        if _grab_frame(ffmpeg, src, t, ziel, "-q:v", "3"):
+            geschrieben.append(ziel)
+    if not geschrieben:
+        print("fail: no frame could be read", file=sys.stderr)
+        return 1
+    print(f"ok: {len(geschrieben)} frame(s) in {raus}")
+    for g in geschrieben:
+        print(f"  {g.name}")
+    return 0
 
 
 def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
@@ -6682,7 +9114,7 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
     command = (payload.get("tool_input", {}) or {}).get("command", "") or ""
     if not command.strip():
         return 0
-    treffer = _DELETE_VERB_RE.search(command)
+    treffer = _delete_verb_in(command)
     if not treffer:
         return 0
     if any(hint in command for hint in _DELETE_ALLOWED_HINTS):
@@ -6692,7 +9124,7 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
         f"things. Use `zanmai.py file trash --path <path>`, which keeps the file and its original "
         f"path so `zanmai.py file restore` can bring it back. What is genuinely finished with is "
         f"cleared by the retention sweep after {RETENTION_DAYS} days, and that is the only thing "
-        f"that deletes. Found: {treffer.group(0)!r}.",
+        f"that deletes. Found: {treffer!r}.",
         file=sys.stderr,
     )
     return 2
@@ -7381,6 +9813,68 @@ def _c2pa_manifest_state(path: Path) -> tuple[bool | None, str | None]:
         return (False, None)
 
 
+_VIDEO_SUFFIXES = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm")
+
+
+def _burn_visible_label_video(src: Path, text: str, font_path: str | None, out: Path) -> str:
+    """The same label on moving pictures, and it has to be built differently.
+
+    A still takes a discreet pill at low opacity. On video that frays: the mark has to survive
+    re-encoding by whatever platform it is uploaded to, and a semi-transparent one smears. So it
+    is drawn opaque, a little larger, and held for the whole clip rather than appearing somewhere.
+    Drawn as an image and composited, because whether this ffmpeg can draw text at all depends on
+    how it was built, and the common ones cannot.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg missing: a video label cannot be drawn")
+    masse = subprocess.run(
+        [shutil.which("ffprobe") or ffmpeg, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", str(src)],
+        capture_output=True, text=True)
+    try:
+        w, h = (int(x) for x in (masse.stdout or "").strip().split(",")[:2])
+    except ValueError:
+        w, h = 1920, 1080
+
+    font_px = max(_LABEL_MIN_PX, round(h * _LABEL_FONT_FRAC * 1.4))
+    pad_y, pad_x = round(h * _LABEL_PAD_Y_FRAC), round(h * _LABEL_PAD_X_FRAC)
+    margin = round(h * _LABEL_MARGIN_FRAC)
+    font, font_name = None, ""
+    for kandidat in ([font_path] if font_path else []) + list(_SANS_FONT_CANDIDATES):
+        try:
+            font = ImageFont.truetype(kandidat, font_px)
+            font_name = Path(kandidat).name
+            break
+        except (OSError, ValueError):
+            continue
+    if font is None:
+        font, font_name = ImageFont.load_default(), "PIL-default(bitmap)"
+
+    schicht = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    zeichne = ImageDraw.Draw(schicht)
+    l, o, r, u = zeichne.textbbox((0, 0), text, font=font)
+    pw, ph = (r - l) + 2 * pad_x, (u - o) + 2 * pad_y
+    x1, y1 = w - margin - pw, h - margin - ph
+    zeichne.rounded_rectangle([x1, y1, x1 + pw, y1 + ph], radius=ph // 2, fill=(0, 0, 0, 255))
+    zeichne.text((x1 + pad_x - l, y1 + pad_y - o), text, font=font, fill=(255, 255, 255, 255))
+    schicht_datei = out.with_name(out.stem + ".label.png")
+    schicht.save(schicht_datei)
+
+    ergebnis = subprocess.run(
+        [ffmpeg, "-y", "-i", str(src), "-loop", "1", "-i", str(schicht_datei),
+         "-filter_complex", "[0:v][1:v]overlay=0:0:eof_action=pass[v]",
+         "-map", "[v]", "-map", "0:a?", "-shortest",
+         "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p",
+         "-c:a", "copy", "-movflags", "+faststart", str(out), "-loglevel", "error"],
+        capture_output=True, text=True)
+    schicht_datei.unlink(missing_ok=True)
+    if ergebnis.returncode != 0:
+        raise RuntimeError((ergebnis.stderr or "")[-300:])
+    return font_name
+
+
 def _burn_visible_label(src: Path, text: str, font_path: str | None, out: Path) -> str:
     """Bottom-right rounded pill with light text, sized small. Returns font name."""
     from PIL import Image, ImageDraw, ImageFont
@@ -7632,7 +10126,9 @@ def cmd_media_mark(args: argparse.Namespace) -> int:
             status["visible_label"] = {"applied": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}
     elif args.visible_label:
         try:
-            font_used = _burn_visible_label(src, args.visible_label, args.font, out)
+            zeichner = (_burn_visible_label_video
+                        if src.suffix.lower() in _VIDEO_SUFFIXES else _burn_visible_label)
+            font_used = zeichner(src, args.visible_label, args.font, out)
             status["visible_label"] = {"applied": True, "text": args.visible_label,
                                        "font": font_used, "position": "bottom-right"}
             reencoded = True
@@ -8187,7 +10683,12 @@ def _required_tool_ids(reg: dict, expert: str, capability: str | None) -> list[s
     required set (fine-grained, e.g. carol html needs the renderer, not Affinity);
     without, the expert's full needed_by (coarse)."""
     if capability:
-        caps = ((reg.get("capabilities") or {}).get(expert) or {}).get(capability) or {}
+        alle = reg.get("capabilities") or {}
+        # A capability an expert does not define may still be one anybody may use. Motion graphics
+        # are the case that made this necessary: they are needed by whoever produces timed visuals,
+        # a cut today and a web page tomorrow, and copying the requirement into each expert is how
+        # two copies drift apart. Own entry first, shared as the fallback.
+        caps = (alle.get(expert) or {}).get(capability) or (alle.get("shared") or {}).get(capability) or {}
         return list(caps.get("required", []))
     tools = reg.get("tools") or {}
     return [tid for tid, spec in tools.items() if expert in (spec.get("needed_by") or [])]
@@ -8404,6 +10905,209 @@ def main(argv: list[str]) -> int:
     p_house.add_argument("vault", nargs="?", default=".")
     p_house.set_defaults(func=cmd_housekeeping)
 
+    p_video = sub.add_parser("video", help="The mechanic under a cut: probe, transcribe with word timings, check a cut sheet, cut, pull frames.")
+    sub_video = p_video.add_subparsers(dest="video_cmd", required=True)
+
+    pvi_probe = sub_video.add_parser("probe", help="What a file actually is: length, size, exact frame rate, whether it carries chapters.")
+    pvi_probe.add_argument("vault", nargs="?", default=".")
+    pvi_probe.add_argument("--file", required=True)
+    pvi_probe.set_defaults(func=cmd_video_probe)
+
+    pvi_tr = sub_video.add_parser("transcribe", help="One source to words with start and end times. Runs once per source; re-running reads the saved result.")
+    pvi_tr.add_argument("vault", nargs="?", default=".")
+    pvi_tr.add_argument("--file", required=True)
+    pvi_tr.add_argument("--slug", required=True, help="The job this belongs to.")
+    pvi_tr.add_argument("--language", default="auto")
+    pvi_tr.add_argument("--lexicon", help="Names from the vault, to bias the recogniser.")
+    pvi_tr.add_argument("--dtw-preset", dest="dtw_preset", help="Override the alignment preset; derived from the model by default.")
+    pvi_tr.add_argument("--force", action="store_true", help="Transcribe again even though a result exists.")
+    pvi_tr.set_defaults(func=cmd_video_transcribe)
+
+    pvi_cs = sub_video.add_parser("cutsheet", help="Check a cut sheet before anything renders, and say what it would produce.")
+    pvi_cs.add_argument("vault", nargs="?", default=".")
+    pvi_cs.add_argument("--file", required=True)
+    pvi_cs.add_argument("--words", help="The transcript, to check that no word is cut through.")
+    pvi_cs.add_argument("--text", action="store_true", help="Print the spoken line of every segment, so the cut can be read.")
+    pvi_cs.set_defaults(func=cmd_video_cutsheet)
+
+    pvi_pr = sub_video.add_parser("propose", help="A first cut sheet from the word timings: speech kept, long silence dropped. Measurement only.")
+    pvi_pr.add_argument("vault", nargs="?", default=".")
+    pvi_pr.add_argument("--words", required=True, help="The transcript written by `video transcribe`.")
+    pvi_pr.add_argument("--out", required=True)
+    pvi_pr.add_argument("--source", help="Override the source path recorded in the transcript.")
+    pvi_pr.add_argument("--gap", type=float, default=VIDEO_MIN_GAP, help="Silence longer than this is dropped.")
+    pvi_pr.add_argument("--padding", type=float, default=0.08, help="Breath left on each side of a kept passage.")
+    pvi_pr.add_argument("--boundary-tail", dest="boundary_tail", type=float, default=0.2, help="Margin after a passage that ends on a full stop.")
+    pvi_pr.add_argument("--boundary-lead", dest="boundary_lead", type=float, default=0.14, help="Margin before a passage that follows a sentence end.")
+    pvi_pr.add_argument("--end-tail", dest="end_tail", type=float, default=0.65, help="Margin after the final passage, so the last word rings out.")
+    pvi_pr.add_argument("--merge", type=float, default=0.35, help="Passages closer than this are joined rather than cut apart; a hole this small is not worth a visible jump.")
+    pvi_pr.add_argument("--tail", type=float, default=None, help="Margin after a kept passage. Larger than the one in front by default, because a word trails off below the level that counts as speech.")
+    pvi_pr.set_defaults(func=cmd_video_propose)
+
+    pvi_cut = sub_video.add_parser("cut", help="Assemble the kept passages into one file.")
+    pvi_cut.add_argument("vault", nargs="?", default=".")
+    pvi_cut.add_argument("--file", required=True, help="The cut sheet.")
+    pvi_cut.add_argument("--out", required=True)
+    pvi_cut.add_argument("--crf", type=int, default=19)
+    pvi_cut.add_argument("--preset", default="medium")
+    pvi_cut.add_argument("--size", help="Target WIDTHxHEIGHT. Without it, the first source decides, and a mismatch is reported.")
+    pvi_cut.add_argument("--fps", help="Target frame rate as an exact fraction, e.g. 30000/1001. Without it, the first source decides.")
+    pvi_cut.add_argument("--cover", type=float, default=0.0, help="Hide the seams: alternate the framing by this percent from passage to passage. About 5 is enough to stop a jump registering; 0 leaves the cuts bare.")
+    pvi_cut.set_defaults(func=cmd_video_cut)
+
+    pvi_co = sub_video.add_parser("correct", help="Fix spellings in a transcript before building from it. Without --replace it reports what looks unknown.")
+    pvi_co.add_argument("vault", nargs="?", default=".")
+    pvi_co.add_argument("--words", required=True)
+    pvi_co.add_argument("--replace", action="append", help="heard=correct, single whole words only. Repeatable.")
+    pvi_co.add_argument("--list", help="A file of heard=correct lines, one per line, that grows with the brand.")
+    pvi_co.add_argument("--threshold", type=float, default=0.55, help="Report words the recogniser was less certain about than this.")
+    pvi_co.add_argument("--out", help="Write elsewhere instead of in place.")
+    pvi_co.set_defaults(func=cmd_video_correct)
+
+    pvi_cap = sub_video.add_parser("caption", help="Captions from the transcript: a subtitle file, and optionally burned into a copy.")
+    pvi_cap.add_argument("vault", nargs="?", default=".")
+    pvi_cap.add_argument("--words", required=True)
+    pvi_cap.add_argument("--out", required=True, help="Where the subtitle file goes.")
+    pvi_cap.add_argument("--cutsheet", help="Remap the times onto the cut before writing.")
+    pvi_cap.add_argument("--style", choices=sorted(CAPTION_STYLES), default="subtitle", help="karaoke: short phrases, every comma breaks, for short pieces where each word is highlighted. subtitle: the broadcast convention, for anything long.")
+    pvi_cap.add_argument("--max-words", dest="max_words", type=int, default=0, help="Override the style's word limit.")
+    pvi_cap.add_argument("--max-chars", dest="max_chars", type=int, default=0, help="Override the style's character limit.")
+    pvi_cap.add_argument("--min-duration", dest="min_duration", type=float, default=0.0, help="Shorter lines are merged into their neighbour; anything under a second is a flash nobody reads.")
+    pvi_cap.add_argument("--burn", help="Also burn the captions into this file.")
+    pvi_cap.add_argument("--burn-out", dest="burn_out")
+    pvi_cap.add_argument("--slug", default="captions")
+    pvi_cap.add_argument("--font-file", dest="font_file", help="A real font file from the brand. Without one, a system font.")
+    pvi_cap.add_argument("--box-colour", dest="box_colour", default="#000000C0", help="Caption box, from the brand.")
+    pvi_cap.add_argument("--text-colour", dest="text_colour", default="#FFFFFF")
+    pvi_cap.add_argument("--font-size", dest="font_size", type=int, default=44, help="At a frame height of 1080; scaled for anything else.")
+    pvi_cap.add_argument("--margin", type=int, default=90, help="Distance from the bottom at a frame height of 1080.")
+    pvi_cap.add_argument("--crf", type=int, default=19)
+    pvi_cap.set_defaults(func=cmd_video_caption)
+
+    pvi_rf = sub_video.add_parser("reframe", help="Put the picture into another aspect ratio, by cropping or by fitting it whole.")
+    pvi_rf.add_argument("vault", nargs="?", default=".")
+    pvi_rf.add_argument("--file", required=True)
+    pvi_rf.add_argument("--out", required=True)
+    pvi_rf.add_argument("--format", required=True, help="wide, upright, square or classic.")
+    pvi_rf.add_argument("--fit", action="store_true", help="Keep the whole picture and fill the rest with a blurred enlargement, instead of cropping.")
+    pvi_rf.add_argument("--centre", type=float, default=0.5, help="Where the crop window sits across the width, 0 to 1.")
+    pvi_rf.add_argument("--height", type=int)
+    pvi_rf.add_argument("--crf", type=int, default=19)
+    pvi_rf.set_defaults(func=cmd_video_reframe)
+
+    pvi_mx = sub_video.add_parser("mix", help="The audio passes: denoise, a music bed, levelling. The picture is copied, never re-encoded.")
+    pvi_mx.add_argument("vault", nargs="?", default=".")
+    pvi_mx.add_argument("--file", required=True)
+    pvi_mx.add_argument("--out", required=True)
+    pvi_mx.add_argument("--music", help="A licensed track. Never downloaded, always supplied.")
+    pvi_mx.add_argument("--music-db", dest="music_db", type=float, default=-18.0)
+    pvi_mx.add_argument("--denoise", action="store_true")
+    pvi_mx.add_argument("--denoise-db", dest="denoise_db", type=float, default=6.0, help="How many decibels of noise to take out. Above about 12 the voice starts to sound hollow.")
+    pvi_mx.add_argument("--loudness", type=float, default=-16.0, help="Target in LUFS. -16 for speech on the web, -14 where a platform expects it.")
+    pvi_mx.set_defaults(func=cmd_video_mix)
+
+    pvi_ex = sub_video.add_parser("export", help="One file per purpose. The master is never overwritten.")
+    pvi_ex.add_argument("vault", nargs="?", default=".")
+    pvi_ex.add_argument("--file", required=True)
+    pvi_ex.add_argument("--name", required=True, help="What the piece is called, without a suffix.")
+    pvi_ex.add_argument("--profile", default="master,web", help="Comma-separated: master, web, platform.")
+    pvi_ex.add_argument("--out-dir", dest="out_dir")
+    pvi_ex.add_argument("--overwrite", action="store_true")
+    pvi_ex.set_defaults(func=cmd_video_export)
+
+    pvi_tx = sub_video.add_parser("text", help="Write the transcript out for editing, or read an edited one back as a cut.")
+    pvi_tx.add_argument("vault", nargs="?", default=".")
+    pvi_tx.add_argument("--words", required=True)
+    pvi_tx.add_argument("--write", help="Write the transcript here, in paragraphs, for editing.")
+    pvi_tx.add_argument("--read", help="Read the edited text back.")
+    pvi_tx.add_argument("--out", help="Where the cut sheet goes when reading back.")
+    pvi_tx.add_argument("--source", help="Override the source path recorded in the transcript.")
+    pvi_tx.add_argument("--paragraph-gap", dest="paragraph_gap", type=float, default=1.2)
+    pvi_tx.add_argument("--join", type=float, default=0.35, help="Kept words closer than this stay in one passage.")
+    pvi_tx.add_argument("--tolerance", type=int, default=0, help="How many added words are tolerated before the text is refused as reordered.")
+    pvi_tx.set_defaults(func=cmd_video_text)
+
+    pvi_sy = sub_video.add_parser("sync", help="The offset between two recordings of the same conversation, measured in their sound.")
+    pvi_sy.add_argument("vault", nargs="?", default=".")
+    pvi_sy.add_argument("--a", required=True)
+    pvi_sy.add_argument("--b", required=True)
+    pvi_sy.add_argument("--slug", default="sync")
+    pvi_sy.add_argument("--window", type=float, default=180.0, help="Seconds compared from the start of each file.")
+    pvi_sy.add_argument("--max-offset", dest="max_offset", type=float, default=60.0)
+    pvi_sy.add_argument("--min-confidence", dest="min_confidence", type=float, default=1.0)
+    pvi_sy.set_defaults(func=cmd_video_sync)
+
+    pvi_br = sub_video.add_parser("brand", help="An opening, a closing and a logo held throughout, from the brand.")
+    pvi_br.add_argument("vault", nargs="?", default=".")
+    pvi_br.add_argument("--file", required=True)
+    pvi_br.add_argument("--out", required=True)
+    pvi_br.add_argument("--intro")
+    pvi_br.add_argument("--outro")
+    pvi_br.add_argument("--logo")
+    pvi_br.add_argument("--logo-position", dest="logo_position", default="bottom-right")
+    pvi_br.add_argument("--logo-width", dest="logo_width", type=float, default=8.0, help="Percent of the frame width.")
+    pvi_br.add_argument("--logo-margin", dest="logo_margin", type=float, default=4.0, help="Percent of the frame, kept clear of the platform's own controls.")
+    pvi_br.add_argument("--logo-opacity", dest="logo_opacity", type=float, default=0.9)
+    pvi_br.add_argument("--slug", default="brand")
+    pvi_br.add_argument("--crf", type=int, default=19)
+    pvi_br.set_defaults(func=cmd_video_brand)
+
+    pvi_chap = sub_video.add_parser("chapters", help="Chapter marks from the transcript, to paste under a video.")
+    pvi_chap.add_argument("vault", nargs="?", default=".")
+    pvi_chap.add_argument("--words", required=True)
+    pvi_chap.add_argument("--out")
+    pvi_chap.add_argument("--count", type=int, default=8)
+    pvi_chap.add_argument("--min-gap", dest="min_gap", type=float, default=45.0)
+    pvi_chap.add_argument("--title-words", dest="title_words", type=int, default=6)
+    pvi_chap.set_defaults(func=cmd_video_chapters)
+
+    pvi_th = sub_video.add_parser("thumbnail", help="Candidates for a thumbnail: the sharpest, best-lit frames.")
+    pvi_th.add_argument("vault", nargs="?", default=".")
+    pvi_th.add_argument("--file", required=True)
+    pvi_th.add_argument("--out")
+    pvi_th.add_argument("--slug", default="thumbs")
+    pvi_th.add_argument("--sample", type=int, default=24)
+    pvi_th.add_argument("--keep", type=int, default=5)
+    pvi_th.set_defaults(func=cmd_video_thumbnail)
+
+    pvi_tl = sub_video.add_parser("timeline", help="One picture of the whole piece: filmstrip, loudness, words. The cheap way to look.")
+    pvi_tl.add_argument("vault", nargs="?", default=".")
+    pvi_tl.add_argument("--file", required=True)
+    pvi_tl.add_argument("--words", help="Transcript, to write the words along the strip.")
+    pvi_tl.add_argument("--columns", type=int, default=12)
+    pvi_tl.add_argument("--slug", default="timeline")
+    pvi_tl.add_argument("--out")
+    pvi_tl.set_defaults(func=cmd_video_timeline)
+
+    pvi_bf = sub_video.add_parser("brief", help="Everything needed to judge footage, in one call: facts, loudness, transcript, a few frames. Cheap on purpose.")
+    pvi_bf.add_argument("vault", nargs="?", default=".")
+    pvi_bf.add_argument("--file", required=True)
+    pvi_bf.add_argument("--slug", default="brief", help="Where the transcript is kept, so later steps reuse it.")
+    pvi_bf.add_argument("--language", default="auto")
+    pvi_bf.add_argument("--sample-over", dest="sample_over", type=float, default=600.0, help="Longer than this and the words come from three samples instead of the whole thing.")
+    pvi_bf.add_argument("--sample-seconds", dest="sample_seconds", type=float, default=90.0)
+    pvi_bf.add_argument("--columns", type=int, default=12, help="How many stills go into the one overview picture.")
+    pvi_bf.set_defaults(func=cmd_video_brief)
+
+    pvi_ck = sub_video.add_parser("check", help="The measurable half of a review: duplicated frames, brightness steps at the joins, actual length.")
+    pvi_ck.add_argument("vault", nargs="?", default=".")
+    pvi_ck.add_argument("--file", required=True)
+    pvi_ck.add_argument("--seams", help="Comma-separated seconds where a graphic was composited in. A plain cut is not a seam in this sense.")
+    pvi_ck.add_argument("--composited", action="store_true", help="The file came out of a composite. Only then are duplicated frames a fault rather than a still screen.")
+    pvi_ck.add_argument("--duplicate-limit", dest="duplicate_limit", type=float, default=8.0)
+    pvi_ck.add_argument("--luma-limit", dest="luma_limit", type=float, default=0.06)
+    pvi_ck.add_argument("--max-seams", dest="max_seams", type=int, default=40)
+    pvi_ck.set_defaults(func=cmd_video_check)
+
+    pvi_fr = sub_video.add_parser("frames", help="Pull frames so they can be looked at.")
+    pvi_fr.add_argument("vault", nargs="?", default=".")
+    pvi_fr.add_argument("--file", required=True)
+    pvi_fr.add_argument("--slug", default="review")
+    pvi_fr.add_argument("--at", help="Comma-separated seconds. Without it, an even sample.")
+    pvi_fr.add_argument("--count", type=int, default=6)
+    pvi_fr.add_argument("--out")
+    pvi_fr.set_defaults(func=cmd_video_frames)
+
     p_voice = sub.add_parser("voice", help="Voice notes waiting in the import folder: what waits, the vault's names, transcription, filing.")
     sub_voice = p_voice.add_subparsers(dest="voice_cmd", required=True)
 
@@ -8440,6 +11144,7 @@ def main(argv: list[str]) -> int:
     pw_open.add_argument("--goal", help="What finished looks like.")
     pw_open.add_argument("--deliverable", help="Where the result will land.")
     pw_open.add_argument("--workshop", help="Where the working files live.")
+    pw_open.add_argument("--due", help="YYYY-MM-DD, only where the work has a real deadline.")
     pw_open.set_defaults(func=cmd_work_open)
 
     pw_ask = sub_work.add_parser("ask", help="Record a question only the user can answer; marks the object as waiting.")
@@ -8463,6 +11168,7 @@ def main(argv: list[str]) -> int:
     pw_log.add_argument("--minutes", type=int)
     pw_log.add_argument("--workshop")
     pw_log.add_argument("--deliverable")
+    pw_log.add_argument("--due", help="Set or move the deadline, YYYY-MM-DD.")
     pw_log.set_defaults(func=cmd_work_log)
 
     pw_done = sub_work.add_parser("done", help="Close a work object.")
@@ -8475,6 +11181,43 @@ def main(argv: list[str]) -> int:
     pw_list.add_argument("vault", nargs="?", default=".")
     pw_list.add_argument("--state", help="Filter: open, 'waiting on you', done.")
     pw_list.set_defaults(func=cmd_work_list)
+
+    p_brand = sub.add_parser("brand", help="The brand a piece is built against: is there one, and what is still undecided in it.")
+    sub_brand = p_brand.add_subparsers(dest="brand_cmd", required=True)
+
+    pb_check = sub_brand.add_parser("check", help="Exit 1 when no brand exists. Run before dispatching anyone who produces something the user looks at.")
+    pb_check.add_argument("vault", nargs="?", default=".")
+    pb_check.add_argument("--brand", help="Check one brand by name instead of all.")
+    pb_check.add_argument("--limit", type=int, default=12, help="How many open fields to print per brand.")
+    pb_check.set_defaults(func=cmd_brand_check)
+
+    pb_list = sub_brand.add_parser("list", help="Every brand that exists, and where it lives.")
+    pb_list.add_argument("vault", nargs="?", default=".")
+    pb_list.set_defaults(func=cmd_brand_list)
+
+    p_task = sub.add_parser("task", help="Task lines on the user's own lists: write one they asked for, tick one off, see what is due.")
+    sub_task = p_task.add_subparsers(dest="task_cmd", required=True)
+
+    pt_add = sub_task.add_parser("add", help="Write a task the user asked for. The only route to a task line; inside an ordinary write it stays refused.")
+    pt_add.add_argument("vault", nargs="?", default=".")
+    pt_add.add_argument("--text", required=True, help="The task in the user's own words.")
+    pt_add.add_argument("--file", help="Which list it goes on. Default: today's journal entry.")
+    pt_add.add_argument("--due", help="YYYY-MM-DD, only where there is a real deadline.")
+    pt_add.add_argument("--agent", help="Name for the activity-log line.")
+    pt_add.set_defaults(func=cmd_task_add)
+
+    pt_done = sub_task.add_parser("done", help="Tick a task off, matched on a fragment of its text.")
+    pt_done.add_argument("vault", nargs="?", default=".")
+    pt_done.add_argument("--text", required=True, help="Enough of the wording to hit exactly one.")
+    pt_done.add_argument("--file", help="Restrict the search to one list.")
+    pt_done.add_argument("--agent", help="Name for the activity-log line.")
+    pt_done.set_defaults(func=cmd_task_done)
+
+    pt_list = sub_task.add_parser("list", help="Open tasks across the whole vault, wherever they sit.")
+    pt_list.add_argument("vault", nargs="?", default=".")
+    pt_list.add_argument("--due-within", dest="due_within", type=int, help="Only dated ones falling due within N days, overdue included.")
+    pt_list.add_argument("--limit", type=int, default=40)
+    pt_list.set_defaults(func=cmd_task_list)
 
     p_bundle = sub.add_parser("bundle", help="Bundle operations.")
     sub_bundle = p_bundle.add_subparsers(dest="subcmd", required=True)

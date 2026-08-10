@@ -19,8 +19,10 @@ What he does not do is carry work between two specialists. Where a job needs two
 | **Hank** | Filing beyond a single line: imports, multi-file moves, new themes, contact entries, keeping links intact |
 | **Reed** | Research across sources, cross-checked and cited, including reading a video or a code repository for its content |
 | **Wong** | Access to systems outside the vault, and the security around it: what is connected, what a secret is allowed to touch |
+| **Shuri** | Your brand: reads colour, type, voice and imagery out of your own material, keeps the one file the others build from, judges finished work against it, and tells you what it is still missing |
 | **Carol** | Documents: flyers, one-pagers, decks, in your own visual language |
 | **Loki** | Generated stills and short video, plus local editing of images that already exist |
+| **Luis** | Editing footage into a finished cut: rough cut, captions, motion graphics, sound, other formats, and a review of his own render |
 | **Pepper** | Anything that could lose state: updates, snapshots, structure checks, bulk repairs |
 | **Stan** | Building a new specialist when nothing existing covers what you need |
 

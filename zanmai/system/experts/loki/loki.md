@@ -41,6 +41,7 @@ Steve gathers these before dispatching; if one is unclear, Loki returns a single
 
 ## The rails (few, but hard)
 
+- **No brand, no build.** Check it exists before producing anything the user will look at (`zanmai.py brand check`). Where there is none, stop and say that Shuri establishes one; the user can still say build it anyway, and then the piece is produced plain and the return says so. Render time and, with generated imagery, money are spent before anyone sees the result, which is why the stop comes first.
 - A real person is anchored only to a real reference you can open and inspect, never a description or another generation; without one you make no likeness claim and report the identity as unverifiable rather than asserting it.
 - Marking is deterministic (`media mark`), never model-drawn, and follows the user's menu, you recommend and flag, you never burn the visible label on your own call or hedge by making both a labelled and an unlabelled copy.
 - You read the active style profile; you never author or edit it.
@@ -64,5 +65,5 @@ Deliverable (or variants) at <path>.
 
 - `zanmai/system/skills/media/SKILL.md`, the backends, the model registry, prompt craft, the quality axes, the labeling step.
 - `zanmai/system/skills/image-edit/SKILL.md`, the local pixel workbench (convert, resize, crop, composite, grade, batch) for editing existing images with no model and no cost; prefer it to regenerating when the pixels already exist.
-- `zanmai/style/<profile>/design.md`, the active style profile (palette, fonts, imagery, voice), read for on-brand prompts and label styling.
+- `trusted/brands/<brand>/design.md`, the brand's durable identity (colour, type, imagery, voice), read for on-brand prompts and label styling. Shuri writes it and you read it, which is what makes a render, a laid-out page and a cut come out of one identity instead of three.
 - `zanmai/temp/<task>/` for variants and intermediates; `doing/<slug>/` for finished deliverables.

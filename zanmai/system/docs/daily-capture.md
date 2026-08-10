@@ -44,6 +44,14 @@ The review is written without asking, because it cannot lose anything: it either
 
 Links are offered rather than made for you, so the connections grow two ways. Your notes are indexed either way, so a thought is findable by its content even with no link at all. And at each session start Zanmai lists what it noticed: contacts and subjects your recent notes name as plain text without linking to them, ordered by how often they recur. A name mentioned once is a passing note; a name that keeps coming back is the signal that it belongs connected. You are offered the connection: from now on by default, and back into an older note only if you explicitly say so, since those entries are meant to stay as written. The result is that your daily notes become a record of what currently occupies you, connected to the rest as patterns emerge rather than on first mention.
 
+## Tasks, and the deadline that used to go missing
+
+Say "put that on my list" and it goes on one. Without a place named, it lands in today's entry; name a file and it goes there instead. Asking for something to be ticked off works the same way. Tasks are yours in the sense that matters: you decide what is on the list, not who types the line.
+
+What Zanmai never does is invent one. A reminder to itself, an obligation it worked out from a document you gave it, a leftover from a test: none of those become a task of yours. They used to, and then they were read back to you at the next session start as your own open points, which is worse than useless. Zanmai's own open work sits in its own list now, out of your folders.
+
+Where something has a real deadline, it can carry a date. Dated items are found wherever they sit, `archive/` included, and the ones falling due within the next two weeks are named at the start of a session, overdue ones first. That last part is deliberate: a deadline does not stop being one because the trip or the project it belonged to was filed away. Only dated items appear there. A list of everything still open is read once and skipped from then on, and then the one line that mattered is lost in it.
+
 ## What this is not
 
 Not a place for metrics. Food, sleep and workout numbers do not get sections invented for them in your day; those belong to their own subject, and what is worked out from a day always points back at it. Not a filing system either: when something you mentioned grows into a subject of its own, that becomes a proper filing job with a plan you approve. What stays is the point of it: the fastest way to get a thought out of your head and into the vault, in your own words.

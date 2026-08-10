@@ -16,7 +16,7 @@ The scope is inspected first, so you can see what Zanmai looked at: which subfol
 
 Then the structure is worked out from the content of the material, not from the folder names it arrived in. Several groupings are considered each time, by place, by time, by person or organisation, by project phase, by type of material, by how broad a topic is, and the one that matches how you will later look for it is chosen. Mirroring the source folders is treated as a failure, not a shortcut, because the way material was organised elsewhere is rarely the way you will search for it here. If you name a grouping yourself, that one wins.
 
-Every single item gets its own classification into focus, habits or knowledge, with a reason. A knowledge theme can contain one item that is active preparation and therefore focus. Nothing inherits its class from the folder it lands in.
+Every single item gets its own classification into focus, doing, habits or knowledge, with a reason. A knowledge theme can contain one item that is active preparation and therefore focus. Nothing inherits its class from the folder it lands in.
 
 Attachments that carry structured information are read rather than filed blindly. A photographed business card becomes fields in a contact, a booking confirmation becomes a note with the actual dates, a ticket becomes an entry. The original file stays in the same folder as what was written from it, and the two link to each other.
 

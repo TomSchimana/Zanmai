@@ -8,7 +8,7 @@ version: "0.1.0"
 common:
   # every bundle file and entity file carries these
   required:
-    - kind         # one of: focus, habit, knowledge, contact/person, contact/organization
+    - kind         # one of: focus, doing, habit, knowledge, contact/person, contact/organization
     - slug         # kebab-case, ASCII, matches filename without .md
     - created      # YYYY-MM-DD
   optional:
@@ -33,6 +33,15 @@ kinds:
       - goal
       - status
       - due        # YYYY-MM-DD when applicable
+
+  doing:
+    description: the desk. one bundle per piece of work that has an end, with every draft of it together.
+    # Nothing beyond the common fields is required, and that is deliberate: what clears a bundle
+    # off the desk is read from the file dates, not from a field that has to be kept true by hand.
+    required: []
+    optional:
+      - status     # free text, for the user's own sense of where the piece stands
+      - due        # YYYY-MM-DD when the piece has a real deadline
 
   habit:
     description: recurring routines. user does this regularly.

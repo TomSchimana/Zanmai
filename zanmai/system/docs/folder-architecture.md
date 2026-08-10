@@ -84,7 +84,7 @@ The whole reasoning behind this is in [the idea behind Zanmai](philosophy.md).
 
 ## Themes, and the words for them
 
-A **theme** is a subject you keep material about, and it gets its own folder inside `focus`, `habits` or `knowledge`. Everything about that subject lives in there together. In the rest of this documentation and in Zanmai's own files, such a folder is called a **bundle**, so: a bundle is a theme's folder with its material inside.
+A **theme** is a subject you keep material about, and it gets its own folder inside `focus`, `doing`, `habits` or `knowledge`. Everything about that subject lives in there together. In the rest of this documentation and in Zanmai's own files, such a folder is called a **bundle**, so: a bundle is a theme's folder with its material inside.
 
 Each theme folder holds a main note carrying the theme itself, its description and what belongs to it. Internally that one is called the **truth file**, because it is the single place the theme's own facts live rather than being repeated across members. Alongside it sits an `INDEX.md` listing what is in the folder.
 

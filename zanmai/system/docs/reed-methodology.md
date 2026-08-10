@@ -4,11 +4,23 @@
 
 This doc carries Reed's research method in detail: how to frame, search, triangulate, calibrate confidence and synthesise. Reed reads it as reference. The expert contract (`experts/reed/reed.md`) carries identity, hard rules, output format and pointers, not the method itself.
 
+## Phase 0: how big is this run
+
+Set before anything else, because every number below reads off it (Reed contract Hard Rule 0). The default is the smallest size that answers the question.
+
+| Size | When | Sources | Sub-questions | Output |
+|---|---|---|---|---|
+| Quick look | One clear question with an obvious authoritative source: a price, a version, a date, a spec, "what is this repository" | One to three, the obvious ones first | None, the question has no parts | The answer in the return, no file |
+| Normal | The default for a real question: a comparison, a shortlist, a state of the art | Five candidates per major claim, filtered | Only where the question genuinely has parts | Deliverable file plus TL;DR |
+| Deep | The user asked for it, or the stakes are money, law, health, or something that cannot be taken back | As many as the contradiction needs | The full split | Deliverable file, confidence per item |
+
+Two rules around the table. **Escalation is named, never silent**: moving up a size costs the user time and money, so it happens on a stated reason. **A stop is cheaper than a wrong-sized run**: where the size is unclear, or where the honest size turns out far bigger than the question looked, Reed goes back with one question instead of spending. The failure this exists to stop is the one the user can measure: a couple of facts turned into a research project, when they would have found the same answer in a search engine in less time than the brief took to write.
+
 ## Reed's five-phase workflow
 
 ### Phase 1: sharpen the question
 
-Split the brief into three to seven sub-questions. Note ambiguities. Define what a good answer means for the user's use case (decision-grade versus survey versus quick check).
+Split the brief into sub-questions where the question actually has parts, three to seven on a normal run; a quick look skips this phase, because a question with one part does not gain a structure. Note ambiguities. Define what a good answer means for the user's use case (decision-grade versus survey versus quick check).
 
 The audience parameter (item 4 in the pre-dispatch brief) drives the rest.
 
@@ -25,7 +37,7 @@ The most common quiet failure is writing for the wrong audience. An expert getti
 
 ### Phase 2: discover sources
 
-`WebSearch` and `WebFetch`. Prefer primary sources (official docs, original announcements, peer-reviewed) over secondary (curated lists, reviews). Each source gets a one-line credibility note. Aim for at least five source candidates per major claim before filtering.
+`WebSearch` and `WebFetch`. Prefer primary sources (official docs, original announcements, peer-reviewed) over secondary (curated lists, reviews). Each source gets a one-line credibility note. On a normal run, aim for at least five source candidates per major claim before filtering. On a quick look, go straight to the source that owns the fact (the vendor's own page, the repository, the specification) and stop as soon as it answers; a search sweep around a fact its owner states is spending for the appearance of rigour.
 
 Cross-modal triage during search. Search results are not all the same shape. A video link is a video to watch, a GitHub link is a repository to read. Reed never cites sources that have not actually been consumed.
 
@@ -41,7 +53,7 @@ For the Bash patterns that drive the pipelines, see `reed-source-pipelines.md`.
 
 ### Phase 3: triangulate and calibrate
 
-Each weighty claim is anchored in two sources that do not share a lineage. The confidence vocabulary is fixed.
+On a normal or deep run, each weighty claim is anchored in two sources that do not share a lineage. A quick look does not fake that: it rests on the one source that owns the fact and says so, which the vocabulary below already has a word for. The confidence vocabulary is fixed.
 
 - High: three or more independent sources agree, no contradicting evidence.
 - Medium: two sources agree, or one strong primary source.

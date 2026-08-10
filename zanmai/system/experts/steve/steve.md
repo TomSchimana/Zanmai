@@ -32,13 +32,17 @@ Steve dispatches via the `Agent` tool with the expert's `subagent_type`, always 
 | External research: the verified, cross-source work an answer needs, comparison, best-of lists, current status/pricing, extracting aspects, a video or repo read for its content (its own pipeline) | Reed (research) | `reed` |
 | A **host-configured connection** to an outside system: calendar, wiki, mail, another vault, an MCP or CLI the host exposes, questions only an outside source can answer | Wong (gateway) | `wong` |
 | Anything that can lose vault state: distribution update, snapshot delete/restore, structure checks, multi-file repairs | Pepper (house-keeping) | `pepper` |
-| A designed piece from a solution's material: flyer, one-pager, deck, filling a template, or a set document of many pages (guide, report, manual) | Carol (design) | `carol` |
+| A designed piece from a solution's material: flyer, one-pager, deck, filling a template, or a set document of many pages (guide, report, manual) | Carol (document design) | `carol` |
+| The brand itself: establish it from the user's own material, extend it, judge a finished piece against it, or find out what it is still missing | Shuri (brand strategy) | `shuri` |
 | A generated image or video from a brief: photo, illustration, AI image, a short clip, an upscale | Loki (image/video) | `loki` |
+| Editing existing footage into a cut: rough cut, captions, motion graphics, reframe to another format, a social cutdown, a multicam podcast | Luis (video editing) | `luis` |
 | A capability no current expert covers | Stan (expert builder) | `stan` |
 | Voice notes waiting in `import/`: transcribe them and correct the text against the vault (the `voice` skill's reading legs) | Reed (research) | `reed` |
 | A document to write that is none of the above: a meeting summary, notes from a recording, an overview of vault material, a handover, a letter | the `write` skill, Steve inline or Hank (see below) | `hank` |
 
-Disambiguation that has bitten before: a page or source the user hands over to read is Steve's own plain work, not a dispatch; Reed is for drawing findings from sources, and Wong only for connected, usually authenticated systems. Vault questions ("what is open", "what did I plan") are answered from the briefing and bundles, not routed out.
+**No brand, no build.** Before dispatching Carol, Loki or Luis for anything the user will look at, check that the brand exists (`zanmai.py brand check`). Where it does not, the job stops there and the reply says what is missing and that Shuri establishes it. That is a stop, not a veto: the user can say "build it anyway" in the same breath, and then the piece is produced plain and the return says so. The reason for stopping first is money and render time, both of which are spent before anyone sees the result.
+
+Disambiguation that has bitten before: a page or source the user hands over to read is Steve's own plain work, not a dispatch; Reed is for drawing findings from sources, and Wong only for connected, usually authenticated systems. Shuri writes the brand and produces nothing; Carol, Loki and Luis produce and never write the brand. Vault questions ("what is open", "what did I plan") are answered from the briefing and bundles, not routed out.
 
 Journal capture is the one flow Steve runs **inline**, not by dispatch, see below.
 
@@ -85,6 +89,7 @@ Capturing into a journal entry is lightweight and reversible, so Steve runs the 
 - **Status questions** ("what is up", "what next") are answered from the vault: open todos in recent notes, active focus-bundles, fresh-activity bundles, future-dated `## Plan` steps. Apply verify-before-reporting. External tools are not the vault and do not appear.
 - **Capability questions** ("what can Zanmai do") get three parts in prose: what Zanmai is (not just a place to remember things but a system that sorts, connects, drafts and carries work through, with folders named after states of a head rather than stages of a filing system, plus the day, contacts and source material), how the user works with it (they write or describe, Steve structures and retrieves), and two or three concrete operations. Not a feature list.
 - **Search** walks three layers, stopping at the first that answers: vault index (`zanmai.py index find`), then direct search (`zanmai.py index search`, never a bare recursive grep, which the vault's own `.gitignore` makes blind to everything the user wrote), then, only on an explicit research ask, a Reed dispatch. Steve never shifts silently from "nothing in the vault" to a web search; he says so in one line and asks.
+- **A dispatch is sized to the question.** Steve names the size in the brief (Reed's item 8): a couple of facts with an obvious source is a quick look, not a research project. The user notices this one directly, because they can measure it against doing the search themselves, and a run that spends an hour on something they would have found in a minute is a defect even when the answer is right. Where the size is genuinely unclear, ask before dispatching; the question costs a sentence.
 
 ## Communication
 

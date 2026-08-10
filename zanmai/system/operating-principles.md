@@ -71,30 +71,36 @@ Tooling gaps surfaced during a run get one user-facing line at the end (so the u
 
 ## 8. Checkboxes are the user's
 
-**A markdown task belongs to the user. Every one of them, in every file. The AI reads them and
-answers from them, and writes none.** It does not add one, does not tick or untick one, does not
-delete one, and does not restyle or "correct" one. A third state some people use, `- [-]` for
-abandoned, is read the same way and left alone.
+**A markdown task belongs to the user. Every one of them, in every file.** Which is a statement
+about who wanted it, not about who typed it. Asked to put something on a list, the AI writes it, and
+that is ordinary service. What it must never do is **invent** one: a reminder to itself, an
+obligation it derived from a source, a leftover from a test. Those used to land on the user's lists
+and be read back to him at the next session start as his own open points, which is the actual
+damage. Nothing else is touched either way: an existing task is not restyled, not "corrected", not
+deleted, and the third state some people use, `- [-]` for abandoned, is read like the others and
+left alone.
 
-There is no exception, and the missing exception is the point. The earlier version of this rule
-allowed a checkbox when the user "asked for a list to tick through", which reads reasonable and is
-not enforceable: whether a request counts as that is a judgement, and the moment of the write is
-exactly where nobody can check the judgement before it lands. A rule with an edge like that is a
-rule that gets talked past. This one has no edge.
+**There is exactly one route.** `zanmai.py task add --text ... [--file ...] [--due YYYY-MM-DD]`
+writes a task, `task done` ticks one off, and `task list` shows what is open. Where no file is
+named, it goes on today's journal entry. Every one of them leaves a line in the activity log.
 
-**It is enforced, not asked for.** `zanmai.py hook checkbox-guard` runs before every `Write` and
-`Edit`, compares the task lines before and after, and refuses anything that changes the set. That is
-the whole rule; this section explains it and does not repeat it elsewhere. The reason it is a hook
-and not a sentence is that it *was* a sentence, in six places at once, and prose said six times is
-not a rule but evidence that the previous saying did not hold.
+**Everything else is refused, and enforced rather than asked for.** `zanmai.py hook checkbox-guard`
+runs before every `Write` and `Edit`, compares the task lines before and after, and refuses anything
+that changes the set. A box that appears while prose is being edited was not commissioned, whatever
+the intention was. The mechanic cannot read intent; what it can do is keep the commissioned path
+narrow, deliberate and logged, and close the wide one. The reason it is a hook and not a sentence is
+that it *was* a sentence, in six places at once, and prose said six times is not a rule but evidence
+that the previous saying did not hold.
 
-Nothing is lost by it. An obligation the AI works out from a source belongs in the reply as a
-sentence: advising is the job, entering is the user's call. Something the AI still owes belongs on a
-work object (`zanmai.py work`, section 13), which is the machine's own list and needs no checkbox in
-anybody's file.
+An obligation the AI worked out on its own belongs in the reply as a sentence: advising is the job,
+entering is the user's call. Something the AI still owes belongs on a work object (`zanmai.py work`,
+section 13), which is the machine's own list and has no business in anybody's file.
 
-A task in a journal entry needs no date at all: the entry is the date (the place carries what it can
-carry).
+**A date only where there is a deadline.** `--due` writes `📅 YYYY-MM-DD`, which the common task
+plugin reads too, so the date also shows up in the user's own queries. A task in a journal entry
+usually needs none: the entry is the date. What carries a date is found wherever it sits, `archive/`
+included, and is named at session start; a deadline does not stop being one because the bundle
+around it was filed away.
 
 ## 9. Tools-existence is not usage-intent
 
@@ -146,6 +152,34 @@ The reason is measured, not assumed. Handing the answer to a fresh run does not 
 
 ---
 
+## 14. Looking at material is a sample, never a full pass
+
+Reading something before working on it exists to spend less, not more. An examination that costs as
+much as the work it precedes has defeated its own purpose, and the user pays twice.
+
+So: **sample, do not exhaust.** A two-hour recording is judged from its beginning, its middle and
+its end, not from every minute of it. A hundred-page document is judged from its structure and a
+few passages, not by reading all of it. A folder of two thousand files is judged from a handful
+across it, not one by one.
+
+What costs almost nothing is used freely: metadata, measurements, a transcript, a structure listing,
+counts. What costs a great deal is rationed and deliberate: images, frames, rendering, anything that
+runs per item across a large set. Where a sample turns out not to be enough, take a second one and
+say why, rather than switching to completeness because it feels safer.
+
+Say what the sample was. "Read the first and last pages and four in between" is an honest basis for
+a judgement; "read it" when it was four pages is not.
+
+This binds every expert. It is not thoroughness that is being traded away, it is waste: the
+thoroughness belongs in the work itself, once the user has agreed to pay for it.
+
+**And a loop that checks its own work is bounded, always.** Two rounds, then hand over what is
+still open rather than starting a third. "Until it is right" reads as diligence and behaves as an
+open budget: every round costs a fresh piece of work plus a fresh look at it, and nobody agreed to
+that. A round that changes nothing is the signal to stop at once. What two rounds did not fix is
+either a judgement for the user or something the loop cannot see, and both belong in the return,
+named.
+
 ## 13. A piece of work is an object, and that object owns the work
 
 Anything that will not finish in this turn gets an object, in `zanmai/open.base/`: one row plus one page. So does everything a run produced with nobody in the chat, because there the object is the only place a result or a question can land. `zanmai.py work open` creates it and returns an id; `work log`, `work ask`, `work answer`, `work done` and `work list` are the whole vocabulary.
@@ -169,7 +203,7 @@ The vault is plain files, so the tools are the ordinary ones. Reading, copying a
   The reason is not caution about one file. Whoever deletes has to be right at the moment of deleting, and an AI reading a folder is the wrong thing to bet a life's material on. A wrong file in the trash costs a sentence; a wrong file gone costs the file.
 - **`zanmai.py file archive <path>`** for putting something away that is finished, same shape, same restore.
 - **`zanmai.py bundle remove-file`** when the file is a bundle member: it trashes and takes the index line out in one act, which is the pair that used to come apart.
-- **Checkboxes belong to the user** (section 8, enforced by `hook checkbox-guard`). Reading them is the job; writing, ticking or deleting one is not, by any route.
+- **`zanmai.py task add` / `task done`** for a task the user asked for (section 8). It is the only route: inside an ordinary write a task line stays refused, and a task nobody asked for is never written at all.
 - **Opening a file uses the platform default** (`open` on macOS, `xdg-open` on Linux, `start` on Windows) for every type, Markdown included. Whatever the user set as their editor is the right one; the AI does not name an application.
 
 Zanmai does not depend on any particular editor. The folder names, the journal and the trash are Zanmai's own, so the vault behaves identically whichever editor is open on it, and nothing in it is arranged for one.

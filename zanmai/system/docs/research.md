@@ -10,17 +10,23 @@ Ask to compare two options, for the current state of something, for the best of 
 
 Handing over a single page to read back is quick and happens directly. A comparison across sources is the bigger job and is announced before it runs, since it takes minutes.
 
+## How big the search gets
+
+Sized to what you asked, in three steps. A **quick look** is for one clear question with an obvious source, a price, a version number, a date, what a repository is: one to three sources, the answer straight back, no document. A **normal run** is the default for a real question and gathers several candidates per claim. A **deep run** happens when you ask for it, or when money, law, health or something irreversible is at stake.
+
+Moving up a step costs you time and money, so it is said out loud with a reason and never done quietly. Where the right size is unclear, or where the honest answer turns out to need far more than the question suggested, you get asked before anything is spent. The failure this prevents is the one you can measure yourself: a couple of facts turned into a research project, when a search engine would have got you there faster.
+
 ## What is asked of you first
 
 Two things shape the result more than anything else, so they are settled up front: what you will do with the answer, and who it is for. A beginner gets terms defined and the fundamentals included, an expert gets field vocabulary without translation and no basics, which is the difference between a useful answer and one you skim past. Where the result should be filed is settled too, so it does not land somewhere you have to go looking for it.
 
 ## How the answer is built
 
-The question is split into its actual sub-questions first, and gaps in the brief are named rather than guessed around.
+The question is split into its actual sub-questions first, where it has any, and gaps in the brief are named rather than guessed around. A question with one part does not get a structure built around it.
 
-Sources are then gathered with a preference for primary material, official documentation, original announcements, specifications, peer-reviewed work, over roundups and reviews. Every source gets a one-line note on how trustworthy it is. Several candidates are collected per important claim before any filtering happens.
+Sources are then gathered with a preference for primary material, official documentation, original announcements, specifications, peer-reviewed work, over roundups and reviews. Every source gets a one-line note on how trustworthy it is. On a normal run, several candidates are collected per important claim before any filtering happens; on a quick look, the source that owns the fact is read first and that is the end of it.
 
-Each weighty claim is anchored in two sources that are not variations of each other. What that yields is stated plainly: high confidence when three or more independent sources agree, medium when two agree or one strong primary source carries it, low when only one source says it or sources contradict, in which case the contradiction is named instead of smoothed over.
+On a normal or deep run, each weighty claim is anchored in two sources that are not variations of each other. What that yields is stated plainly: high confidence when three or more independent sources agree, medium when two agree or one strong primary source carries it, low when only one source says it or sources contradict, in which case the contradiction is named instead of smoothed over.
 
 Nothing is cited that was not actually read, and different kinds of source are handled differently.
 

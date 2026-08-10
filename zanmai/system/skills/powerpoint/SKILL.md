@@ -15,7 +15,7 @@ The theme can be default Office (Calibri, Office palette) while the brand lives 
 
 A deck built slide by slide from scratch is the slow way and the drifting way at once: measured on a real run, three slides cost half an hour, and the fourth slide invented what the first had already solved. So the order is fixed, and composing is the exception.
 
-**Harvest once.** `slide-library.py harvest <deck.pptx> --into zanmai/design/<brand>/slides/` reads a template or an approved deck and writes down, per slide, which master layout it uses, what its text slots are, and how much text each slot measurably holds (from the box and the type size in it, not from anyone's estimate). This runs when a brand's kit is first built and again whenever a deck is approved. The library is the user's own material, never a set of layouts we invented.
+**Harvest once.** `slide-library.py harvest <deck.pptx> --into trusted/brands/<brand>/slides/` reads a template or an approved deck and writes down, per slide, which master layout it uses, what its text slots are, and how much text each slot measurably holds (from the box and the type size in it, not from anyone's estimate). This runs when a brand's kit is first built and again whenever a deck is approved. The library is the user's own material, never a set of layouts we invented.
 
 **Then build in three tiers, in this order.**
 

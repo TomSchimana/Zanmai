@@ -7,7 +7,7 @@
 # distribution_paths get overwritten on update.
 # user_immune_paths are never touched on update.
 
-distribution_version: "0.1.0"
+distribution_version: "0.2.0"
 phase: "phase-1"
 schema_version: "0.1.0"
 
@@ -85,6 +85,9 @@ distribution_paths:
   - "zanmai/system/skills/media/SKILL.md"
   - "zanmai/system/skills/media/registry.json"
   - "zanmai/system/skills/image-edit/SKILL.md"
+  - "zanmai/system/skills/video/SKILL.md"
+  - "zanmai/system/skills/video-review/SKILL.md"
+  - "zanmai/system/skills/motion/SKILL.md"
   - "zanmai/system/experts/steve/steve.md"
   - "zanmai/system/experts/steve/greeting.md"
   - "zanmai/system/experts/hank/hank.md"
@@ -94,7 +97,10 @@ distribution_paths:
   - "zanmai/system/experts/carol/carol.md"
   - "zanmai/system/experts/stan/stan.md"
   - "zanmai/system/experts/loki/loki.md"
+  - "zanmai/system/experts/luis/luis.md"
+  - "zanmai/system/experts/shuri/shuri.md"
   - "zanmai/system/templates/focus-bundle.md"
+  - "zanmai/system/templates/doing-bundle.md"
   - "zanmai/system/templates/habit-bundle.md"
   - "zanmai/system/templates/knowledge-bundle.md"
   - "zanmai/system/templates/contact-person.md"
@@ -134,8 +140,10 @@ distribution_paths:
   - "zanmai/system/docs/importing.md"
   - "zanmai/system/docs/research.md"
   - "zanmai/system/docs/writing.md"
+  - "zanmai/system/docs/brand.md"
   - "zanmai/system/docs/design.md"
   - "zanmai/system/docs/images.md"
+  - "zanmai/system/docs/video.md"
   - "zanmai/system/docs/updates.md"
   - "zanmai/system/docs/tools.md"
   - "zanmai/system/docs/install/index.md"
@@ -151,7 +159,6 @@ user_immune_paths:
   - "zanmai/extensions/**"
   - "zanmai/connections/**"
   - "zanmai/memory/**"
-  - "zanmai/design/**"
   - "zanmai/logs/**"
   - "zanmai/history/**"
   - "zanmai/temp/**"

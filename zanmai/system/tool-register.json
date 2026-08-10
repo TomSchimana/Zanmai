@@ -77,7 +77,8 @@
       "needed_by": [
         "loki",
         "carol",
-        "wong"
+        "wong",
+        "luis"
       ],
       "os": {
         "macos": {
@@ -251,7 +252,8 @@
       "needed_by": [
         "reed",
         "loki",
-        "steve"
+        "steve",
+        "luis"
       ],
       "os": {
         "macos": {
@@ -314,7 +316,8 @@
       "kind": "binary",
       "tier": "on-demand",
       "needed_by": [
-        "reed"
+        "reed",
+        "luis"
       ],
       "os": {
         "macos": {
@@ -344,7 +347,8 @@
       "tier": "on-demand",
       "needed_by": [
         "reed",
-        "steve"
+        "steve",
+        "luis"
       ],
       "os": {
         "macos": {
@@ -666,7 +670,8 @@
       "tier": "on-demand",
       "needed_by": [
         "reed",
-        "steve"
+        "steve",
+        "luis"
       ],
       "detect": {
         "method": "file-glob",
@@ -711,7 +716,8 @@
       "needed_by": [
         "reed",
         "steve",
-        "loki"
+        "loki",
+        "luis"
       ],
       "detect": {
         "method": "which"
@@ -742,10 +748,49 @@
           "verified": false
         }
       }
+    },
+    "hyperframes": {
+      "purpose": "Builds a motion graphic from markup and renders it frame by frame in a headless browser, which is what lets a cut carry graphics at all. Fetched on first use of the motion skill; pinned to one version, because every graphic is tuned against one version's behaviour and a silent upgrade breaks renders that were already signed off.",
+      "kind": "node-package",
+      "tier": "on-demand",
+      "needed_by": [
+        "luis"
+      ],
+      "detect": {
+        "method": "which",
+        "version_flag": "--version"
+      },
+      "os": {
+        "macos": {
+          "invoke": "hyperframes",
+          "verified": false
+        },
+        "linux": {
+          "invoke": "hyperframes",
+          "verified": false
+        },
+        "windows": {
+          "invoke": "hyperframes.cmd",
+          "verified": false
+        }
+      },
+      "provision": {
+        "method": "node-package",
+        "note": "Needs node 22 or newer. Pin the version once it works."
+      }
     }
   },
   "capabilities": {
-    "_meta": "Per-expert, per-path REQUIRED tool ids. `tools preflight <expert> --capability <cap>` gates only on the required set, so a job takes only what that path needs (a screen flyer over html needs the renderer, not the Affinity MCP). Without --capability, preflight falls back to the expert's full needed_by (coarse). Optional refinements stay in needed_by and are surfaced by the expert, not gated.",
+    "_meta": "Per-expert, per-path REQUIRED tool ids. `tools preflight <expert> --capability <cap>` gates only on the required set, so a job takes only what that path needs (a screen flyer over html needs the renderer, not the Affinity MCP). Without --capability, preflight falls back to the expert's full needed_by (coarse). Optional refinements stay in needed_by and are surfaced by the expert, not gated. A capability under `shared` belongs to no single expert and is resolved for any of them that does not define its own: motion graphics are needed by whoever produces timed visuals, a cut today and a web page tomorrow, and a copy per expert is how two copies drift apart.",
+    "shared": {
+      "motion": {
+        "required": [
+          "ffmpeg",
+          "node",
+          "hyperframes"
+        ]
+      }
+    },
     "carol": {
       "html": {
         "required": [
@@ -765,6 +810,29 @@
       "powerpoint": {
         "required": [
           "python_pptx"
+        ]
+      }
+    },
+    "luis": {
+      "cut": {
+        "required": [
+          "ffmpeg",
+          "ffprobe",
+          "whisper",
+          "whisper-model"
+        ]
+      },
+      "captions": {
+        "required": [
+          "ffmpeg",
+          "whisper",
+          "whisper-model"
+        ]
+      },
+      "export": {
+        "required": [
+          "ffmpeg",
+          "ffprobe"
         ]
       }
     }

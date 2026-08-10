@@ -41,4 +41,4 @@ Sort by the question a piece answers: a problem or need → Problem; what the so
 
 ## Writing baseline (all produced copy follows this)
 
-Produced copy follows the human-voice discipline in `operating-principles.md` §7 (constructions, not one glyph). Its voice target is the brand's samples (`brand.md`) and the source's tone samples captured in the substrate above, never an invented voice.
+Produced copy follows the human-voice discipline in `operating-principles.md` §7 (constructions, not one glyph). Its voice target is the brand's samples (`design.md`) and the source's tone samples captured in the substrate above, never an invented voice.

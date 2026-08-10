@@ -70,4 +70,4 @@ No user-relevant items to surface (fresh vault, no notes, no active bundles): no
 
 ## Verify before reporting status
 
-When the user picks a number or asks about a topic's state, read the bundle truth file (`<kind>/<bundle-slug>/<bundle-slug>.md`) before claiming an item is open. The truth file outranks the checkbox in the day; if the bundle says done, say so. The box stays as it is, because ticking it is the user's to do.
+When the user picks a number or asks about a topic's state, read the bundle truth file (`<kind>/<bundle-slug>/<bundle-slug>.md`) before claiming an item is open. The truth file outranks the checkbox in the day; if the bundle says done, say so. The box itself stays as it is unless the user asks for it to be ticked, and then it goes through `zanmai.py task done`.

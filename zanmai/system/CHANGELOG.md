@@ -4,6 +4,55 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.2.0] - 2026-08-10
+
+### Added
+
+- **Luis edits video.** Footage and your notes in, a finished cut out: the rough cut decided from the
+  transcript, captions, sound, other formats, and he watches his own render before you do. You can
+  also edit by editing the transcript, delete a paragraph and exactly that leaves the video.
+  → [Editing video](docs/video.md)
+- **Shuri owns your brand.** Colour, type, voice, whitespace and imagery, read out of your own
+  material into one file that every other specialist builds from, in a format a coding agent reads
+  directly. She judges finished work against it, and she tells you what is still missing rather than
+  waiting to be asked: a type scale of two levels, no spacing rhythm, or a button whose text sits
+  below readable contrast. Nothing on-brand gets produced without a brand: the job stops and asks,
+  and you can still say build it anyway.
+  → [Your brand](docs/brand.md)
+- **Ask for something to go on your list and it goes on your list.** Into today's entry, or into a
+  file you name; ticking off works the same way. Zanmai still never invents a task of its own.
+  → [Daily, weekly and monthly notes](docs/daily-capture.md)
+- **Deadlines are found wherever they sit.** A task can carry a date, and whatever falls due in the
+  next two weeks is named at the start of a session, overdue first, `archive/` included.
+  → [Daily, weekly and monthly notes](docs/daily-capture.md)
+
+### Changed
+
+- **A search is sized to the question.** A price or a version number gets one to three sources and a
+  straight answer; a real comparison gets the full method; money, law or health gets the deep run.
+  Where the right size is unclear you are asked before anything is spent.
+  → [Research](docs/research.md)
+- **Your brand lives at `trusted/brands/<brand>/design.md`.** It used to sit in the system folder,
+  which is the part of the vault you never open by hand, and a brand is not that.
+  → [Your brand](docs/brand.md)
+- **Looking at material is a sample, not a full pass, and a self-check stops after two rounds.**
+  Reading something before working on it exists to spend less, not more, and "until it passes" is an
+  open budget. What two rounds did not fix comes back to you named.
+  → [Operating principles](docs/operating-principles.md)
+
+### Fixed
+
+- **A video dropped into the import folder could be taken for a voice note** and read out as if
+  someone had spoken it. What a file is now comes from the file, not from its extension.
+- **The desk could not be filed onto.** `doing/` existed as a folder but not as a kind of bundle, so
+  nine commands refused it and anything written there landed unchecked.
+- **Generated images could not come out on brand**, because image generation read a folder no other
+  part of Zanmai ever wrote to.
+- **Looking at the trash was mistaken for emptying it**, so listing that folder and even discarding a
+  file were refused. Removal is still refused on the verb alone.
+- **Captions broke at character counts instead of at meaning**, and cutting between two cameras of
+  different sizes failed outright.
+
 ## [0.1.0] - 2026-08-09
 
 The first release. There is nothing before it, so this entry describes what Zanmai is rather than

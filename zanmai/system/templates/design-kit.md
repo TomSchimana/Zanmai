@@ -4,10 +4,10 @@ The build layer for one format of one brand: block geometry and page density, th
 part that genuinely changes between a flyer, a deck, a trade-show wall. Values, not
 adjectives. Produced by the decompose step, consumed at build time, refined on
 session close, curated (stale patterns removed, not appended around). One file per
-brand × format. Store: `zanmai/design/<brand>/<format>.md`.
+brand × format. Store: `trusted/brands/<brand>/<format>.md`.
 
 Colour, type, voice, imagery, shape tokens and the never-list are **not** here, 
-they are brand-durable and live once in `brand.md` (`design-brand` template). This
+they are brand-durable and live once in `design.md` (`design-brand` template). This
 file reads them from there and holds only what is specific to this format.
 
 Source templates: <files this format was read from>
@@ -39,7 +39,7 @@ scale_ratio: <1.25>          # each step up from the base
 scale_steps: <4>
 leading_ratio: <1.45>        # times the base size
 spacing_unit_pt: <optional, defaults to one line of leading>
-radius_mm: <2>               # from brand.md, restated here so the build reads one file
+radius_mm: <2>               # from design.md, restated here so the build reads one file
 ```
 
 - density budget: <how much this one surface carries before it must split to a second>
@@ -48,7 +48,7 @@ radius_mm: <2>               # from brand.md, restated here so the build reads o
 
 ## Blocks (the inventory)
 Per block: where it sits, its box + padding, which type levels it uses (from
-`brand.md`), colour roles, icon slot, and what is fixed vs. what varies. These are
+`design.md`), colour roles, icon slot, and what is fixed vs. what varies. These are
 the Lego pieces for this format.
 
 A single-surface piece (flyer, one-pager, poster):
@@ -66,7 +66,7 @@ A multi-surface document (report, guide, manual):
 - quote: <the forms and what picks between them>
 - table: <the forms; header treatment; how a wide one is handled>
 - code or fixed-width surface: <ground, width, how it differs without a second typeface>
-- figure: <width options; caption level and position; radius and frame per `brand.md`>
+- figure: <width options; caption level and position; radius and frame per `design.md`>
 - page furniture: <folio position, running head, where they stop>
 
 ## Form ceiling (binding)
