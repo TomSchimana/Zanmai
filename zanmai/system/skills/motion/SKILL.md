@@ -17,6 +17,15 @@ the wrong lesson: it looks like a result, it collapses at the first real graphic
 missing prerequisite so nobody ever installs it. The user can then fetch the renderer or decide the
 piece runs without motion graphics. Both are answers; improvising is not.
 
+**How it is driven.** `zanmai.py tools ensure hyperframes` installs the renderer into the vault's
+own runtime tree, pinned to one version; it lands at
+`zanmai/runtime/node/node_modules/.bin/hyperframes` and is not on the PATH, so it is called by that
+path. A piece is created once (`hyperframes init <name> --example blank --non-interactive`,
+inside `zanmai/temp/<task>/`), checked (`lint`, `validate`, or `check` for both plus layout) and
+rendered (`render`), which writes an MP4 into the project's `renders/`. Measured on the first run:
+a ten-second composition, three hundred frames, six seconds of wall time. The project it creates
+carries its own notes; read those for the composition format rather than guessing at it.
+
 ## Deciding, before building
 
 **Most moments do not deserve one.** Restraint is the working assumption, and the case has to be made for adding, never for leaving out. A moment qualifies when it opens the piece, when it names something concrete that can be shown (a figure, a screen, a contrast), when it is the payoff a sentence was building toward, when a picture would replace a paragraph of explanation, or when the user asked. Everything between those, the connective sentences, the asides, the emotional lines, is stronger without.

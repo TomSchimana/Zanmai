@@ -4,6 +4,28 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.2.1] - 2026-08-10
+
+### Added
+
+- **Setup asks once whether to fetch the tools Zanmai can fetch itself.** You see how many are
+  already there and what the rest are for, and you say yes or later; what needs you, an account or
+  money is listed separately with the one command that does it. Until now a missing tool turned up
+  for the first time in the middle of a job that was already running.
+  → [Tools Zanmai uses](docs/tools.md)
+
+### Fixed
+
+- **Motion graphics could not be installed by anybody.** The renderer was listed as fetched on
+  demand, but nothing knew how to fetch that kind of tool, so the request answered "no provisioner"
+  and did nothing. It now installs into the vault's own runtime, pinned to one version, and it has
+  been run end to end: a ten-second composition rendered in six seconds. A check now fails the build
+  if any tool promises a way to install itself that does not exist.
+- **A specialist's job no longer shows you a red error before it starts.** Handing work to a
+  specialist in the mode that would freeze the conversation used to be rejected, which worked and
+  which you saw every single time. It is corrected on the way through instead.
+  → [Hooks](docs/hooks.md)
+
 ## [0.2.0] - 2026-08-10
 
 ### Added

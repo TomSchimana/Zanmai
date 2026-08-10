@@ -750,7 +750,7 @@
       }
     },
     "hyperframes": {
-      "purpose": "Builds a motion graphic from markup and renders it frame by frame in a headless browser, which is what lets a cut carry graphics at all. Fetched on first use of the motion skill; pinned to one version, because every graphic is tuned against one version's behaviour and a silent upgrade breaks renders that were already signed off.",
+      "purpose": "Builds a motion graphic from markup and renders it frame by frame in a headless browser, which is what lets a cut carry graphics at all. Fetched on first use of the motion skill and pinned to one version, because every graphic is tuned against one version's behaviour and a silent upgrade breaks renders that were already signed off.",
       "kind": "node-package",
       "tier": "on-demand",
       "needed_by": [
@@ -763,7 +763,7 @@
       "os": {
         "macos": {
           "invoke": "hyperframes",
-          "verified": false
+          "verified": true
         },
         "linux": {
           "invoke": "hyperframes",
@@ -776,7 +776,11 @@
       },
       "provision": {
         "method": "node-package",
-        "note": "Needs node 22 or newer. Pin the version once it works."
+        "package": "hyperframes",
+        "version_pin": "0.7.104",
+        "root": "zanmai/runtime/node",
+        "into": "zanmai/runtime/node/node_modules/.bin",
+        "note": "Needs node 22 or newer. Installed into the vault's runtime tree, not globally."
       }
     }
   },

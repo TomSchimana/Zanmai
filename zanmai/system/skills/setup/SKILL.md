@@ -116,6 +116,23 @@ The script creates the folder skeleton plus:
 
 Init writes the owner-contact at `contacts/people/<slug>.md` with an English body. If the user's writing language is not English, Steve reads the file, translates every line from `# <Full Name>` onwards into the user's writing language, and writes it back. The frontmatter block between the two `---` lines stays English, those labels are machine-readable. Code identifiers in backticks (`nickname`, `owner_contact`, `zanmai/user.md`, `close-session`) stay verbatim. Section headings, prose, sub-category bullets and `(empty)` placeholders all translate. If the user's writing language is English, skip this step.
 
+### Step 3c: Offer to fetch the prerequisites, once
+
+Run `zanmai.py tools ensure-all <vault>` and read what it prints. It reports three groups: what is
+already here, what Zanmai can fetch by itself, and what the user installs with one command each.
+
+Put the first group in front of them in their own language, in a few lines: how many are already
+there, what the fetchable ones are for (their purpose, never their package names), and the question
+whether to fetch them now. On a yes, run the same command with `--yes` and report per item what came
+of it. On a no or a later, say nothing further about it; the offer is not repeated.
+
+The ones they install themselves are named afterwards, each with the one command that does it, as
+information rather than as a task. Anything host-configured is not mentioned at all here.
+
+Why this sits in setup: without it, a missing prerequisite is met for the first time in the middle
+of a job that is already running, which is where it is most expensive and least welcome. Asking once,
+at the only moment nothing is running, is the cheap version of the same conversation.
+
 ### Step 4: Confirm
 
 No snapshot here. A snapshot exists to undo a change, and a vault that was just set up holds nothing

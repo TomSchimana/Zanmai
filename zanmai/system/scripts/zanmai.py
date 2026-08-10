@@ -9157,15 +9157,23 @@ def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
     if tool_input.get("run_in_background") is not False:
         return 0
     subagent = str(tool_input.get("subagent_type") or "agent")
-    print(
-        f"dispatch-guard: refusing this {subagent} dispatch because it sets "
-        "run_in_background: false, which holds this turn until the job returns, so "
-        "nothing the user writes meanwhile reaches you. Call the Agent tool again "
-        "with run_in_background: true, say in one line what is running, and relay "
-        "the return when the notification lands.",
-        file=sys.stderr,
-    )
-    return 2
+    # Corrected, not refused. Refusing worked, and the user watched it work: a red error on their
+    # screen at nearly every dispatch, followed by a retry that spent a turn saying the same thing
+    # twice. A guard that fires as routine is a rule sitting in the wrong place. The host lets a
+    # PreToolUse hook hand back an amended input, so the flag is simply put right on the way
+    # through, and neither the user nor the run ever sees the wrong version.
+    korrigiert = dict(tool_input)
+    korrigiert["run_in_background"] = True
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "permissionDecisionReason": (
+            f"dispatch-guard: this {subagent} dispatch asked to run synchronously, which would "
+            "hold the turn until the job returns and cut the user off meanwhile. Switched to the "
+            "background; say in one line what is running and relay the return when it lands."),
+        "updatedInput": korrigiert,
+    }}, ensure_ascii=False))
+    return 0
 
 
 
@@ -10557,6 +10565,69 @@ def _fetch_pinned_binary(vault: Path, tool_id: str, spec: dict, os_spec: dict, p
             "canary": "compiled" if canary else "none"}
 
 
+def cmd_tools_ensure_all(args: argparse.Namespace) -> int:
+    """Everything this vault could need, in one pass, offered at setup instead of drop by drop.
+
+    Without `--yes` it only reports, and that report is the question the user answers. Nothing that
+    costs money, needs an account or wants a decision is included: those are listed as theirs to
+    do. The point is that a user should not meet a missing prerequisite for the first time in the
+    middle of a job that is already running.
+    """
+    import io
+    import contextlib
+    vault = Path(args.vault).resolve()
+    tools = (_load_register().get("tools") or {})
+    osname = _current_os()
+
+    da, selbst, automatisch, extern = [], [], [], []
+    for tid, spec in sorted(tools.items()):
+        if spec.get("kind") == "mcp":
+            extern.append(tid)
+            continue
+        if _detect_tool(vault, tid, spec, osname).get("present") is True:
+            da.append(tid)
+            continue
+        method = (spec.get("provision") or {}).get("method")
+        ziel = automatisch if method in ("venv-pip", "node-package", "file-fetch", "binary-fetch") else selbst
+        ziel.append((tid, spec, method))
+
+    print(f"{len(da)} of {len(tools)} tool(s) already here.")
+    if automatisch:
+        print(f"\nZanmai can fetch these itself ({len(automatisch)}):")
+        for tid, spec, _m in automatisch:
+            print(f"  {tid}: {(spec.get('purpose') or '').split('.')[0]}.")
+    if selbst:
+        print(f"\nThese are yours to install, each with the one command that does it ({len(selbst)}):")
+        for tid, spec, _m in selbst:
+            hint = ((spec.get("os") or {}).get(osname) or {}).get("install_hint") or {}
+            print(f"  {tid}: {hint.get('text') or (spec.get('purpose') or '').split('.')[0]}")
+    if extern:
+        print(f"\nConfigured at the host, not here: {', '.join(extern)}")
+    if not automatisch:
+        print("\nNothing left for Zanmai to fetch.")
+        return 0
+    if not args.yes:
+        print("\nSay the word and Zanmai fetches the first group; the second stays yours.")
+        return 0
+
+    print("")
+    fehler = 0
+    for tid, _spec, _m in automatisch:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cmd_tools_ensure(argparse.Namespace(vault=str(vault), id=tid))
+        try:
+            ergebnis = json.loads(buf.getvalue())
+        except json.JSONDecodeError:
+            ergebnis = {"state": "unreadable"}
+        zustand = ergebnis.get("state", "?")
+        print(f"  {tid}: {zustand}" + (f" ({ergebnis.get('detail','')[:80]})"
+                                       if zustand == "WARNING" else ""))
+        fehler += 1 if rc != 0 else 0
+    print(f"\nok: {len(automatisch) - fehler} fetched, {fehler} did not work out")
+    return 0
+
+
 def cmd_tools_ensure(args: argparse.Namespace) -> int:
     import subprocess
     vault = Path(args.vault).resolve()
@@ -10617,6 +10688,50 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
         result = _fetch_pinned_binary(vault, args.id, spec, os_spec, prov)
         print(json.dumps({"id": args.id, **result}, ensure_ascii=False, indent=2))
         return 0 if result.get("state") == "installed" else 1
+    if method == "node-package":
+        # Installed into the vault's own runtime tree, never globally: a global install needs
+        # rights this script must not assume, and it would leak one vault's pinned version into
+        # every other project on the machine. Detection already looks in the runtime tree first
+        # (`provision.into`), so the copy is found right after it lands.
+        npm = shutil.which("npm")
+        if not npm:
+            print(json.dumps({"id": args.id, "state": "needs-user", "tier": tier,
+                              "hint": "Node 22 or newer, which brings npm. macOS: brew install node. "
+                                      "Windows: winget install OpenJS.NodeJS. Linux: your package manager.",
+                              "guide": "zanmai/system/docs/install/node.md"},
+                             ensure_ascii=False, indent=2))
+            return 0
+        wurzel = vault / (prov.get("root") or f"{RUNTIME_DIR}/node")
+        wurzel.mkdir(parents=True, exist_ok=True)
+        pin = prov.get("version_pin")
+        paket = prov.get("package") or args.id
+        spez = f"{paket}@{pin}" if pin else paket
+        try:
+            r = subprocess.run([npm, "install", "--prefix", str(wurzel), "--no-fund",
+                                "--no-audit", "--loglevel", "error", spez],
+                               capture_output=True, text=True, timeout=900)
+        except Exception as e:
+            print(json.dumps({"id": args.id, "state": "WARNING", "detail": f"{type(e).__name__}: {e}"}))
+            return 1
+        if r.returncode != 0:
+            print(json.dumps({"id": args.id, "state": "WARNING",
+                              "detail": (r.stderr or r.stdout).strip()[:300]}, ensure_ascii=False))
+            return 1
+        ok = _detect_tool(vault, args.id, spec, osname)
+        print(json.dumps({"id": args.id, "state": "installed" if ok.get("present") else "WARNING",
+                          "package": spez, "root": str(wurzel.relative_to(vault)),
+                          "version": ok.get("version"), "path": ok.get("path")},
+                         ensure_ascii=False, indent=2))
+        return 0 if ok.get("present") else 1
+    if method == "message":
+        # Nothing to fetch: this one is installed by the user, and the honest answer is the hint for
+        # their platform. It used to fall through to "no-provisioner", which reads like a defect in
+        # Zanmai rather than a step for the user.
+        hint = ((spec.get("os") or {}).get(osname) or {}).get("install_hint") or {}
+        print(json.dumps({"id": args.id, "state": "needs-user", "tier": tier,
+                          "hint": hint.get("text") or spec.get("purpose"),
+                          "guide": hint.get("guide")}, ensure_ascii=False, indent=2))
+        return 0
     if method == "wong":
         print(json.dumps({"id": args.id, "state": "wong", "detail": "provisioned by Wong",
                           "recipe": prov.get("recipe"), "storage": prov.get("storage")}, ensure_ascii=False, indent=2))
@@ -10812,6 +10927,11 @@ def main(argv: list[str]) -> int:
     pt_ens.add_argument("id")
     pt_ens.add_argument("vault", nargs="?", default=".")
     pt_ens.set_defaults(func=cmd_tools_ensure)
+
+    pt_all = sub_tools.add_parser("ensure-all", help="What this vault still needs, in one pass. Reports without --yes; that report is the question the user answers.")
+    pt_all.add_argument("vault", nargs="?", default=".")
+    pt_all.add_argument("--yes", action="store_true", help="Fetch everything Zanmai can fetch itself. What needs the user, or money, or an account stays theirs.")
+    pt_all.set_defaults(func=cmd_tools_ensure_all)
 
     # setup -----
     p_setup = sub.add_parser("setup", help="First-time install, validate, and (future) update.")
