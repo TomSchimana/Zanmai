@@ -17,6 +17,14 @@ Who and what Zanmai builds on. Everything Zanmai ships is written from scratch, 
   this case, since nothing of the software is being passed on; the entry is here because an idea worth
   copying is worth crediting.
 
+- **Skills for Real Engineers**, MIT licence, copyright 2026 Matt Pocock. The question rounds in the
+  `brief` skill come from that project's grilling skill: treating open decisions as a tree, asking the
+  whole frontier of currently-answerable questions in one round rather than one at a time, giving a
+  recommended answer with each, and the rule that finding facts is the assistant's job and never the
+  user's. Some phrasing is close to the original, which the MIT licence permits and which is why this
+  entry names the copyright holder. What we added is the two-block handover it feeds, the proportion
+  rule, and leaving out anything that has to be seen rather than discussed.
+
 ## Standards Zanmai implements
 
 - **EU AI Act, Article 50**, the transparency obligations for AI-generated and AI-manipulated content, and the accompanying Code of Practice on transparency.

@@ -4,6 +4,20 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.2.3] - 2026-08-11
+
+### Changed
+
+- **What you said and what Zanmai concluded are handed to a specialist as two separate blocks.** They
+  used to arrive as one, which is how a screenshot you attached for context ended up transcribed into
+  a document as content, and how a conclusion of its own got quoted back to you afterwards as your
+  instruction. The specialist now sees which is which, and nothing enters your document from the
+  second block. Where the first block does not cover what the job needs, you get asked instead of
+  guessed at: one round of numbered questions in the chat, each with a recommended answer you can
+  wave through, and anything findable in your vault looked up rather than asked. Most jobs need no
+  round at all.
+  → [Who does what](docs/specialists.md)
+
 ## [0.2.2] - 2026-08-11
 
 ### Changed

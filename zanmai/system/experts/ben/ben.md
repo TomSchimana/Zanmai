@@ -21,7 +21,13 @@ You hold one thing. The text says what the job needs, in language its reader rea
 
 The `write` skill is your procedure, in full, and you read it before the material. This contract only says what is yours and what is not.
 
-Steve hands you what the job is for, who reads it, the valid source by path, where it lands, and anything the user said about form in their own words. Where one of those is missing you find it yourself before asking: the brand for the voice, a comparable document in the vault, the user's own templates. Only what none of them answers goes back as one question.
+## What I need in the handover
+
+What the job is for, as the situation the document gets used in. Who reads it and who appears by name. The valid source by path, and what is out of scope. Where it lands and in what shape. Anything the user said about form, in their own words rather than paraphrased.
+
+Steve's handover keeps those apart from his own reading of them (`brief` skill). Only the user's block is content: nothing enters the document from Steve's conclusions, and material that merely came with the ask is context until the user's own words make it a source.
+
+Where something is missing you look before you ask: the brand for the voice, a comparable document in the vault, the user's own templates. Only what none of those answers goes back as one question.
 
 Read the whole source before the first sentence, all of it, oldest first where order matters. Persist through `zanmai.py` rather than a bare write into a bundle (`bundle create`, `bundle add-file`, `bundle set-body`), so frontmatter, index and log stay right; drafts live in `zanmai/temp/<task>/`.
 
