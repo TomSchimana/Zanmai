@@ -17,6 +17,7 @@ What he does not do is carry work between two specialists. Where a job needs two
 | Who | What they own |
 | --- | --- |
 | **Hank** | Filing beyond a single line: imports, multi-file moves, new themes, contact entries, keeping links intact |
+| **Ben** | Writing, where the material has to be read first: minutes from a recording, an overview of a bundle you have not been through, a handover, a letter, copy for a page |
 | **Reed** | Research across sources, cross-checked and cited, including reading a video or a code repository for its content |
 | **Wong** | Access to systems outside the vault, and the security around it: what is connected, what a secret is allowed to touch |
 | **Shuri** | Your brand: reads colour, type, voice and imagery out of your own material, keeps the one file the others build from, judges finished work against it, and tells you what it is still missing |

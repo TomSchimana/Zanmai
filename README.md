@@ -10,7 +10,7 @@ already there.
 Everything in it opens in any editor, with or without this. The AI is Claude, through
 [Claude Code](https://claude.com/claude-code).
 
-> **Developer preview, 0.2.1.** Filing, search and the journal are in daily use; design and image
+> **Developer preview, 0.2.2.** Filing, search and the journal are in daily use; design and image
 > generation work but are still being sharpened. A new version can change how things behave, so keep
 > your own backups and read the [changelog](zanmai/system/CHANGELOG.md) before you update.
 
@@ -25,7 +25,7 @@ file type, because sorting by type would cut apart the very thing you were keepi
 **What comes out**
 
 - **[Documents in your own design](zanmai/system/docs/design.md)**: it measures the templates you already use and builds in that language. Print-ready PDF, or PowerPoint and Affinity to keep editing.
-- **[Minutes from a recording](zanmai/system/docs/writing.md)**: throw in the meeting audio, get the write-up.
+- **[Text written for its purpose](zanmai/system/docs/writing.md)**: minutes from a recording, a handover, copy for a page. It settles what the document is used for before the first sentence, asks if that is not findable, and gives you the points without a frame, a derivation or advice on how to run your own meeting.
 - **[A finished cut](zanmai/system/docs/video.md)**: footage and your notes in, a video out, with captions and levelled sound. Delete a paragraph from the transcript and exactly that leaves the video.
 - **[A summary of a video](zanmai/system/docs/research.md)**: it reads the picture as well, so what is only on a slide still lands in the text.
 - **[Research you can check](zanmai/system/docs/research.md)**: real sources, cited only where it actually read them.

@@ -5147,6 +5147,7 @@ _ROSTER: list[tuple[str, bool, bool]] = [
     ("loki",    True,    True),
     ("luis",    True,    True),
     ("shuri",   True,    True),
+    ("ben",     True,    True),
 ]
 _AGENT_NAMES: list[str] = [name for name, adapter, _ in _ROSTER if adapter]
 _MEMORY_AGENTS: list[str] = [name for name, _, memory in _ROSTER if memory]

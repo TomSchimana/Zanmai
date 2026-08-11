@@ -4,6 +4,51 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.2.2] - 2026-08-11
+
+### Changed
+
+- **The habits that make text read as machine-written are named and avoided while writing.** Not a
+  filter afterwards: the shapes go into the writing rules, so they never get produced. They come
+  from a catalogue human editors built across thousands of machine-written texts, and they are
+  described as shapes rather than words, so they hold in whatever language you write in. The
+  strongest is the urge to prove itself right, hedging and citing and qualifying where somebody with
+  a spine would write the finding and stand behind it. Then the bullet that opens with bold words
+  and a colon, claimed significance in place of content, the plain verb avoided, framing by
+  negation, everything in threes, headings that arrive by template, and the officialese every
+  language keeps for forms and ministries.
+- **Documents are written for what you use them for, not for the topic.** Before the first sentence,
+  the situation the document gets used in is settled, and where that cannot be found in your ask, in
+  the material or in your vault, you are asked once. A note you read on your phone during a meeting
+  and a handover for someone who was not there are now different documents. There is no internal
+  version and no external one: plain language is the constant, and what changes with the reader is
+  only how much goes in.
+  → [Documents written for you](docs/writing.md)
+- **No document tells you what to do any more.** "Suggested approach", "you should", a ranking of
+  your own topics by importance: banned outright, and enforced on the finished file rather than
+  asked for. Ask for a recommendation and you get one, in its own section; asking once no longer
+  switches the whole document into advice mode. A screenshot or file you send along is context for
+  the job now, not a list of fields to copy in, so your colleague's reporting line stops turning up
+  in your meeting notes.
+- **Which model runs a job is decided at the moment the job is handed over.** Each specialist still
+  has a default you can override in your profile, and on top of that Steve can raise or lower it for
+  one particular job: up for a long chain of tool calls or a mistake that would be expensive to
+  undo, down for bounded, mechanical work. A raise spends your money, so it is said out loud in the
+  line that announces the work. No skill carries a model of its own any more, which used to let a
+  procedure quietly overrule both the specialist's default and your own setting. Writing runs on
+  Sonnet now: measured across model tiers, having a voice to write against changes the result more
+  than a heavier model does, so the effort goes into reading your brand and a comparable document.
+- **Writing has its own specialist, Ben.** It used to sit with the filing expert, handed over
+  whenever a document would take a few minutes, which is a fact about waiting time and not about who
+  should write. Ben settles the purpose, finds the voice himself (your brand where the piece carries
+  it outward, otherwise a comparable document or your own templates) and reads the finished file
+  back against its purpose before you see it. Hank files and no longer writes.
+  → [The specialists](docs/specialists.md)
+- **Who writes now follows where the material is.** Points you dictated, or substance gathered in
+  the conversation you are in, get written right there instead of being handed to a background run
+  that would need re-briefing. Only material nobody has read yet, a transcript, a bundle of forty
+  documents, goes to the background. Saying who should write it overrides all of that.
+
 ## [0.2.1] - 2026-08-10
 
 ### Added

@@ -7,7 +7,7 @@
 # distribution_paths get overwritten on update.
 # user_immune_paths are never touched on update.
 
-distribution_version: "0.2.1"
+distribution_version: "0.2.2"
 phase: "phase-1"
 schema_version: "0.1.0"
 
@@ -99,6 +99,7 @@ distribution_paths:
   - "zanmai/system/experts/loki/loki.md"
   - "zanmai/system/experts/luis/luis.md"
   - "zanmai/system/experts/shuri/shuri.md"
+  - "zanmai/system/experts/ben/ben.md"
   - "zanmai/system/templates/focus-bundle.md"
   - "zanmai/system/templates/doing-bundle.md"
   - "zanmai/system/templates/habit-bundle.md"
