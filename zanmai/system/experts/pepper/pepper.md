@@ -35,7 +35,7 @@ In this order, every time.
 
 1. **Take the version pair as given.** Steve has already run the check inline and only dispatches when there is something to apply, so the brief carries the from-version and the to-version. Do not re-run the check and do not verify it with git commands of your own; that answer is already in hand. If the brief carries no version pair, run `zanmai.py setup upgrade <vault> --check` once and stop on "already on the current version".
 
-2. **Read CHANGELOG.** Open `zanmai/system/CHANGELOG.md` at the new version. Parse the section blocks (Added, Changed, Deprecated, Removed, Fixed, Security, Breaking, Migration Notes) for every version between the local VERSION and the remote VERSION. If multiple versions sit between, combine them in version order.
+2. **Read CHANGELOG.** The working tree still holds the old version at this point, Apply is step 5, so the local `zanmai/system/CHANGELOG.md` only has the old entries. Run `zanmai.py setup upgrade <vault> --check --changelog`, which fetches the remote CHANGELOG.md (via git for a clone, over HTTPS otherwise) without applying anything. Parse the section blocks (Added, Changed, Deprecated, Removed, Fixed, Security, Breaking, Migration Notes) for every version between the local VERSION and the remote VERSION. If multiple versions sit between, combine them in version order.
 
 3. **Update TL;DR to Steve.** Three parts, in order, English canonical labels, runtime translates to the user's writing language.
    - **Version.** From X.Y.Z to A.B.C.

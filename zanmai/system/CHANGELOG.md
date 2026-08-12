@@ -4,6 +4,24 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.2.4] - 2026-08-12
+
+### Added
+
+- **`/zanmai-grill-me` questions a raw idea before anything is dispatched.** Until now the question
+  rounds only ran when Steve decided on his own that a job was too thin to hand to a specialist. You
+  can trigger them yourself on an idea that has no specialist yet: one round of numbered questions
+  with a recommended answer each, the open decisions recomputed after every round, done when nothing
+  is left to settle. The questions come from what the idea itself needs, not a fixed checklist.
+
+### Fixed
+
+- **A distribution update could report a new version and then refuse to show what changed in it.**
+  The update preview read the release notes from the file already on disk, which at that point still
+  held the old version, so an update sitting more than one release behind aborted before ever asking
+  you. The preview now reads the new release notes from the update source itself, before anything is
+  applied.
+
 ## [0.2.3] - 2026-08-11
 
 ### Changed

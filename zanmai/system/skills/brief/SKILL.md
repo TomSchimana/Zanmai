@@ -31,6 +31,23 @@ Number the questions and give a recommended answer with each, so the user can wa
 
 Some things cannot be settled in words at all: how a layout reads, whether a tone is right, whether a render works. Do not ask about those. Build the smallest version, show it, and ask about that.
 
+## Run alone, on a raw idea
+
+`/zanmai-grill-me <topic>` starts the round mechanism directly, with nothing dispatched yet and no
+expert's input list to compare against. The user has an idea, it is still unshaped, and they want it
+questioned before anything is built or written.
+
+The frontier here does not come from a contract. It comes from what the idea itself needs settled
+before anyone could act on it: what it is for, its scope, what it depends on, what would block a
+decision. Read that off the idea and off comparable work already in the vault or on disk, the same
+way a missing fact is looked up rather than asked in the dispatch case. A fixed checklist run every
+time would turn this into the form the mechanism exists to avoid; the questions come from this idea,
+not a template.
+
+There is no handover to write, because there is nothing to hand over to yet. The command ends when
+the frontier is empty: the idea sits clarified in the conversation, ready for a normal dispatch (which
+runs its own brief against the chosen expert's contract) or for the user to just go build it themselves.
+
 ## Proportion
 
 Most handovers need no round at all. A named source, a clear ask, an expert whose inputs are all present: brief it and go. The rounds are for a job that is expensive, hard to reverse, or built on something the user has not said yet, and their purpose is to replace an invented assumption with a real answer, not to make the user work for their own request.

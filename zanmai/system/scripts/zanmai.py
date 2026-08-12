@@ -5161,6 +5161,7 @@ _SKILL_SYMLINK_MAP: list[tuple[str, str]] = [
     ("zanmai-connection", "manage-connections"),
     ("zanmai-voice", "voice"),
     ("zanmai-write", "write"),
+    ("zanmai-grill-me", "brief"),
 ]
 
 
@@ -6024,6 +6025,35 @@ def _remote_version_via_git(vault: Path, branch: str) -> str:
     return ""
 
 
+def _remote_changelog_via_git(vault: Path, branch: str) -> str:
+    """The origin's CHANGELOG.md, unapplied.
+
+    A preview built before Apply (Pepper's Update workflow step 2, before step
+    5) has no local file to read yet: the working tree still holds the old
+    version. `fetch` already ran in `_remote_version_via_git` right before
+    this is called, so the ref is current; a second cheap fetch here would
+    only be needed if this were ever called on its own.
+    """
+    import subprocess
+
+    shown = subprocess.run(
+        ["git", "-C", str(vault), "show", f"origin/{branch}:{SYSTEM_MATERIAL_DIR}/CHANGELOG.md"],
+        capture_output=True, text=True, timeout=120,
+    )
+    return shown.stdout if shown.returncode == 0 else ""
+
+
+def _remote_changelog_via_https(source: str, branch: str) -> str:
+    """The origin's CHANGELOG.md for a non-clone vault, fetched over HTTPS, unapplied."""
+    try:
+        raw = _fetch(
+            f"https://raw.githubusercontent.com/{source.strip('/')}/{branch}/{SYSTEM_MATERIAL_DIR}/CHANGELOG.md"
+        )
+        return raw.decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _upgrade_via_git(vault: Path, branch: str) -> tuple[bool, str]:
     """Fast-forward a cloned vault, so it stays a clean clone.
 
@@ -6369,6 +6399,14 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
 
     print(f"update available: {local} -> {remote} (from {origin})")
     if args.check:
+        if getattr(args, "changelog", False):
+            changelog = (_remote_changelog_via_git(vault, branch) if is_clone
+                         else _remote_changelog_via_https(source, branch))
+            if changelog:
+                print("--- remote CHANGELOG.md ---")
+                print(changelog)
+            else:
+                print("warning: could not read the remote CHANGELOG.md", file=sys.stderr)
         return 0
 
     # a clone is upgraded through git, so it stays a clean clone and a manual
@@ -10962,6 +11000,8 @@ def main(argv: list[str]) -> int:
     ps_upgrade = sub_setup.add_parser("upgrade", help="Fetch the newest published version over HTTPS and replace the distribution files. Works the same whether the vault was cloned or unpacked from an archive. Never touches user-immune paths; Pepper snapshots first.")
     ps_upgrade.add_argument("vault_root", nargs="?", default=".")
     ps_upgrade.add_argument("--check", action="store_true", help="Only report whether a newer version exists.")
+    ps_upgrade.add_argument("--changelog", action="store_true",
+                             help="With --check, also print the remote CHANGELOG.md, unapplied.")
     ps_upgrade.set_defaults(func=cmd_setup_upgrade)
 
     ps_post = sub_setup.add_parser("post-upgrade", help="The tail of an upgrade, run by the new script on itself: host refresh, verification, version marker. Called by 'setup upgrade', not by hand.")
