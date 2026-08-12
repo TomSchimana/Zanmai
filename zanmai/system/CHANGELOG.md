@@ -4,6 +4,21 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.2.5] - 2026-08-12
+
+### Added
+
+- **A double-clickable starter icon, so opening a terminal and typing a command is no longer the price
+  of entry.** At the end of first-time setup, or anytime afterward by simply asking for an icon, an
+  app, or a shortcut, Zanmai builds one: on macOS an app under `/Applications`, reachable from
+  Spotlight, Launchpad or the Dock; on Windows a Desktop shortcut. It detects what terminal apps are
+  actually installed and asks which to use when there is a real choice, and it suggests the vault
+  folder's own name, never a fixed product name, so a private vault and a work vault on the same
+  machine get two distinct, correctly labelled icons. The Windows path is written against documented
+  behaviour and not yet run on real Windows hardware, the same status as the rest of Zanmai's Windows
+  support.
+  → [Setup](docs/setup.md)
+
 ## [0.2.4] - 2026-08-12
 
 ### Added

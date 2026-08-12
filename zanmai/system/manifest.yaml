@@ -7,7 +7,7 @@
 # distribution_paths get overwritten on update.
 # user_immune_paths are never touched on update.
 
-distribution_version: "0.2.4"
+distribution_version: "0.2.5"
 phase: "phase-1"
 schema_version: "0.1.0"
 
@@ -57,6 +57,8 @@ distribution_paths:
   - "zanmai/system/icons/eu-ai/modified-white.svg"
   - "zanmai/system/icons/eu-ai/modified-white-transparent.png"
   - "zanmai/system/icons/eu-ai/modified-white-transparent.svg"
+  - "zanmai/system/icons/app-icon.png"
+  - "zanmai/system/icons/app-icon.ico"
   - "zanmai/system/schema/frontmatter-v1.yaml"
   - "zanmai/system/scripts/zanmai.py"
   - "zanmai/system/scripts/image-edit.py"
@@ -65,6 +67,7 @@ distribution_paths:
   - "zanmai/system/scripts/typst-canary.typ"
   - "zanmai/system/scripts/slide-library.py"
   - "zanmai/system/skills/setup/SKILL.md"
+  - "zanmai/system/skills/create-launcher/SKILL.md"
   - "zanmai/system/skills/snapshot/SKILL.md"
   - "zanmai/system/skills/close-session/SKILL.md"
   - "zanmai/system/skills/import-bundle/SKILL.md"

@@ -57,6 +57,22 @@ Setup runs once. Re-running with an existing `zanmai/user.md` is refused. The hi
 
 If the user wants to change their name or language after setup, the path for now is a direct edit of `zanmai/user.md` plus a manual rename of the owner-contact file. A `zanmai.py setup update` subcommand that does per-field edits is a future addition.
 
+## Launcher icon
+
+The last step of setup offers a double-clickable starter: an icon that opens a terminal already in the
+vault folder and running Claude, so a person who did not set the vault up themselves never has to find
+the folder or type a command by hand. It is a yes-or-no question, not assumed either way.
+
+Saying no here is not final. The same offer is available anytime by asking, in any phrasing, for an
+icon, an app, a launcher or a shortcut. Building it detects what terminal apps are actually installed
+(macOS: Terminal plus a scan for others; Windows: the system default, no choice offered there) and asks
+what to call it, defaulting to the vault folder's own name rather than a fixed product name, so two
+vaults on one machine (a private one and a work one, say) get two distinct, correctly named icons.
+
+On macOS this creates an app under `/Applications`, reachable from Spotlight, Launchpad, or the Dock.
+On Windows it creates a shortcut on the Desktop; this path is written against documented behaviour but
+not run on real Windows hardware, the same status as the rest of Zanmai's Windows support.
+
 ## Version
 
 `zanmai/system/VERSION` is a plain `key: value` file holding the current Zanmai distribution version:
@@ -73,7 +89,9 @@ The user can read it any time via `cat zanmai/system/VERSION` or by asking Steve
 ## Files
 
 - `zanmai/system/scripts/zanmai.py` (`setup init` subcommand): the single CLI; deterministic state change for first-time install. The first-run migration is an internal function in zanmai.py.
+- `zanmai/system/scripts/zanmai.py` (`launcher detect-terminals`, `launcher create` subcommands): the launcher-icon mechanic, callable independently of setup.
 - `zanmai/system/skills/setup/SKILL.md`: the dialogue.
+- `zanmai/system/skills/create-launcher/SKILL.md`: the launcher-icon dialogue, offered once from setup and reusable anytime.
 - `zanmai/system/VERSION`: distribution version.
 - `zanmai/user.md`: output, the user profile (carries `zanmai_version_installed`).
 - `contacts/people/<slug>.md`: owner-contact, also output.

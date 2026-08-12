@@ -10267,6 +10267,197 @@ def _current_os() -> str:
     return "linux"
 
 
+# id, app name for the macOS scan below. Terminal itself is not in this list:
+# it ships with every macOS install, so it is always offered without a
+# filesystem check, and it is the only one launched through a `.command` file
+# rather than `-e`, because it runs the file as a full login shell and the
+# others (tested: Ghostty) do not, they get PATH only through an explicit
+# absolute binary path.
+_MAC_TERMINAL_CANDIDATES = [
+    ("ghostty", "Ghostty"),
+    ("iterm", "iTerm"),
+    ("warp", "Warp"),
+    ("alacritty", "Alacritty"),
+    ("kitty", "kitty"),
+    ("wezterm", "WezTerm"),
+    ("hyper", "Hyper"),
+]
+
+
+def _detect_terminals(osname: str) -> list[dict]:
+    """Terminal apps this machine can start a vault session in.
+
+    macOS always offers Terminal (system app) plus whatever else this scan
+    finds under /Applications, so the caller can turn the list into a choice.
+    Windows offers exactly one, no choice: Windows Terminal if `wt` resolves,
+    else the always-present Command Prompt. Kept to one option deliberately,
+    Windows terminal alternatives are not verified the way Terminal and
+    Ghostty are on macOS.
+    """
+    if osname == "windows":
+        if shutil.which("wt"):
+            return [{"id": "wt", "name": "Windows Terminal"}]
+        return [{"id": "cmd", "name": "Command Prompt"}]
+    if osname != "macos":
+        return [{"id": "generic", "name": "the default terminal"}]
+    found = [{"id": "terminal", "name": "Terminal"}]
+    for tid, name in _MAC_TERMINAL_CANDIDATES:
+        if (Path("/Applications") / f"{name}.app").exists():
+            found.append({"id": tid, "name": name})
+    return found
+
+
+_MACOS_LAUNCHER_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>{name}</string>
+  <key>CFBundleDisplayName</key><string>{name}</string>
+  <key>CFBundleIdentifier</key><string>{bundle_id}</string>
+  <key>CFBundleVersion</key><string>0.1</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>launch</string>
+  <key>CFBundleIconFile</key><string>icon.icns</string>
+  <key>LSMinimumSystemVersion</key><string>10.13</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+"""
+
+
+def _launcher_create_macos(vault: Path, name: str, terminal_id: str, icon_png: Path, claude_bin: str) -> int:
+    for tool in ("sips", "iconutil"):
+        if not shutil.which(tool):
+            print(f"error: {tool} not found, cannot build a macOS icon", file=sys.stderr)
+            return 1
+
+    app_dir = Path("/Applications") / f"{name}.app"
+    if app_dir.exists():
+        print(f"error: {app_dir} already exists, pick a different name or remove it first", file=sys.stderr)
+        return 1
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as work:
+        work_path = Path(work)
+        iconset = work_path / "icon.iconset"
+        iconset.mkdir()
+        for sz in (16, 32, 128, 256, 512):
+            subprocess.run(["sips", "-z", str(sz), str(sz), str(icon_png),
+                             "--out", str(iconset / f"icon_{sz}x{sz}.png")],
+                            check=True, capture_output=True)
+            dbl = sz * 2
+            subprocess.run(["sips", "-z", str(dbl), str(dbl), str(icon_png),
+                             "--out", str(iconset / f"icon_{sz}x{sz}@2x.png")],
+                            check=True, capture_output=True)
+        icns = work_path / "icon.icns"
+        subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(icns)],
+                        check=True, capture_output=True)
+
+        macos_dir = app_dir / "Contents" / "MacOS"
+        resources_dir = app_dir / "Contents" / "Resources"
+        macos_dir.mkdir(parents=True)
+        resources_dir.mkdir(parents=True)
+        shutil.copy2(icns, resources_dir / "icon.icns")
+
+        bundle_id = "dev.zanmai.launcher." + re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        (app_dir / "Contents" / "Info.plist").write_text(
+            _MACOS_LAUNCHER_PLIST.format(name=name, bundle_id=bundle_id), encoding="utf-8")
+
+        vault_escaped = str(vault).replace("'", "'\\''")
+        if terminal_id == "terminal":
+            start_cmd = resources_dir / "start.command"
+            start_cmd.write_text(f"#!/bin/bash\ncd '{vault_escaped}'\nexec '{claude_bin}'\n", encoding="utf-8")
+            start_cmd.chmod(0o755)
+            launch_body = (
+                "#!/bin/bash\n"
+                'DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"\n'
+                'exec open -a Terminal "$DIR/start.command"\n'
+            )
+        else:
+            app_name = next((n for tid, n in _MAC_TERMINAL_CANDIDATES if tid == terminal_id), terminal_id)
+            inner = f"cd '{vault_escaped}' && exec '{claude_bin}'"
+            inner_escaped = inner.replace('"', '\\"')
+            launch_body = f"#!/bin/bash\nopen -na '{app_name}' --args -e /bin/zsh -c \"{inner_escaped}\"\n"
+        (macos_dir / "launch").write_text(launch_body, encoding="utf-8")
+        (macos_dir / "launch").chmod(0o755)
+
+    subprocess.run(["xattr", "-cr", str(app_dir)], capture_output=True)
+    print(f"ok: {app_dir}")
+    return 0
+
+
+def _launcher_create_windows(vault: Path, name: str, terminal_id: str, icon_ico: Path, claude_bin: str) -> int:
+    """Designed against documented PowerShell/WScript.Shell behaviour, never run on
+    real Windows hardware, same status as the rest of this project's Windows path.
+    """
+    desktop = Path.home() / "Desktop"
+    lnk_path = desktop / f"{name}.lnk"
+    if terminal_id == "wt":
+        target = "wt.exe"
+        arguments = f'-d "{vault}" {claude_bin}'
+    else:
+        target = "cmd.exe"
+        arguments = f'/k "cd /d ""{vault}"" && {claude_bin}"'
+
+    ps_script = (
+        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');"
+        "$s.TargetPath = '{target}';"
+        "$s.Arguments = '{args}';"
+        "$s.IconLocation = '{icon}';"
+        "$s.WorkingDirectory = '{cwd}';"
+        "$s.Save()"
+    ).format(lnk=str(lnk_path), target=target, args=arguments.replace("'", "''"),
+             icon=str(icon_ico), cwd=str(vault))
+
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", ps_script],
+                             capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"error: PowerShell could not build the shortcut: {result.stderr.strip()}", file=sys.stderr)
+        return 1
+    print(f"ok: {lnk_path}")
+    return 0
+
+
+def cmd_launcher_detect_terminals(args: argparse.Namespace) -> int:
+    for t in _detect_terminals(_current_os()):
+        print(f"{t['id']}\t{t['name']}")
+    return 0
+
+
+def cmd_launcher_create(args: argparse.Namespace) -> int:
+    """Build a double-clickable starter for this vault: an .app on macOS, a .lnk
+    on Windows. Deliberately its own command, independent of `setup init`, so it
+    can be asked for anytime in a session, not only once during first install.
+    """
+    vault = Path(args.vault_root).resolve()
+    if not (vault / SYSTEM_MATERIAL_DIR / "manifest.yaml").exists():
+        print(f"error: no Zanmai system folder at {vault}", file=sys.stderr)
+        return 1
+    name = args.name.strip()
+    if not name:
+        print("error: --name must not be empty", file=sys.stderr)
+        return 1
+
+    osname = _current_os()
+    claude_bin = shutil.which("claude") or "claude"
+
+    if osname == "macos":
+        icon_png = vault / SYSTEM_MATERIAL_DIR / "icons" / "app-icon.png"
+        if not icon_png.exists():
+            print(f"error: missing shipped icon at {icon_png}", file=sys.stderr)
+            return 1
+        return _launcher_create_macos(vault, name, args.terminal, icon_png, claude_bin)
+    if osname == "windows":
+        icon_ico = vault / SYSTEM_MATERIAL_DIR / "icons" / "app-icon.ico"
+        if not icon_ico.exists():
+            print(f"error: missing shipped icon at {icon_ico}", file=sys.stderr)
+            return 1
+        return _launcher_create_windows(vault, name, args.terminal, icon_ico, claude_bin)
+    print("error: no launcher mechanic for this platform yet", file=sys.stderr)
+    return 1
+
+
 def _runtime_venv_dir(vault: Path) -> Path:
     return vault / RUNTIME_DIR / "venv"
 
@@ -11739,7 +11930,18 @@ def main(argv: list[str]) -> int:
     ph_delete = sub_hook.add_parser("delete-guard", help="PreToolUse Bash. Refuses any command that removes something; discarding goes through `file trash`.")
     ph_delete.set_defaults(func=cmd_hook_delete_guard)
 
+    # launcher -----
+    p_launcher = sub.add_parser("launcher", help="Double-clickable starter for this vault (an .app on macOS, a .lnk on Windows). Callable anytime, not only during setup.")
+    sub_launcher = p_launcher.add_subparsers(dest="subcmd", required=True)
 
+    pl_detect = sub_launcher.add_parser("detect-terminals", help="List id/name pairs of terminal apps this machine can start a vault session in, for the caller to offer as a choice.")
+    pl_detect.set_defaults(func=cmd_launcher_detect_terminals)
+
+    pl_create = sub_launcher.add_parser("create", help="Build the starter. macOS: an .app under /Applications. Windows: a .lnk on the Desktop (designed, unverified).")
+    pl_create.add_argument("vault_root", nargs="?", default=".")
+    pl_create.add_argument("--name", required=True, help="Display name for the starter.")
+    pl_create.add_argument("--terminal", required=True, help="A terminal id from 'launcher detect-terminals'.")
+    pl_create.set_defaults(func=cmd_launcher_create)
 
     args = parser.parse_args(argv[1:])
     return args.func(args)

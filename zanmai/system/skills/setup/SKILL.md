@@ -133,6 +133,17 @@ Why this sits in setup: without it, a missing prerequisite is met for the first 
 of a job that is already running, which is where it is most expensive and least welcome. Asking once,
 at the only moment nothing is running, is the cheap version of the same conversation.
 
+### Step 3d: Offer a launcher icon
+
+Ask, via the `AskUserQuestion` form (two options, one sentence each): build a one-click starter now, or
+skip it. There is no sensible default to apply silently here, people genuinely differ on whether they
+want an icon, so this is asked rather than assumed.
+
+On yes, run the `create-launcher` skill's workflow (detect installed terminals, ask the name, build it,
+confirm) inline, then continue to Step 4. On no, say nothing further about it and continue to Step 4:
+a "no" here is about this moment, not a standing refusal, the user can ask for it anytime later the
+same way `create-launcher` describes.
+
 ### Step 4: Confirm
 
 No snapshot here. A snapshot exists to undo a change, and a vault that was just set up holds nothing
@@ -192,3 +203,5 @@ If any of these, re-read this skill file and rerun the workflow from Step 1.
 
 - `zanmai/system/scripts/zanmai.py` (`setup init` subcommand): the single CLI; the deterministic state change for first-time install.
 - `zanmai/system/manifest.yaml`: canonical list of folders and distribution files.
+- `zanmai/system/skills/create-launcher/SKILL.md`: Step 3d's optional offer, and the same skill the
+  user can invoke directly, anytime, by asking for an icon, an app or a shortcut.
