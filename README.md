@@ -10,7 +10,7 @@ already there.
 Everything in it opens in any editor, with or without this. The AI is Claude, through
 [Claude Code](https://claude.com/claude-code).
 
-> **Developer preview, 0.2.5.** Filing, search and the journal are in daily use; design and image
+> **Developer preview, 0.3.0.** Filing, search and the journal are in daily use; design and image
 > generation work but are still being sharpened. A new version can change how things behave, so keep
 > your own backups and read the [changelog](zanmai/system/CHANGELOG.md) before you update.
 
@@ -47,7 +47,9 @@ file type, because sorting by type would cut apart the very thing you were keepi
 
 ## Requirements
 
-Three things, with a command for each.
+Three things, with a command for each. Homebrew comes from [brew.sh](https://brew.sh); `winget`
+ships with Windows 10 and 11 already, or get it from the [Microsoft
+Store](https://apps.microsoft.com/detail/9nblggh4nns1) if it is missing.
 
 | what you need | macOS | Windows (PowerShell) |
 | --- | --- | --- |

@@ -24,6 +24,14 @@ The slash-command form is the strongest possible trigger. Steve dispatches Peppe
 - The user types `/zanmai-update`.
 - Steve may invoke this skill on the natural-language equivalent if the intent is unambiguous, but the slash-command form is the canonical strongest trigger.
 
+## Channel
+
+By default a vault tracks the published release. `zanmai.py setup upgrade . --channel <name>` (for
+example `beta`) switches which branch it tracks and remembers the choice in `zanmai/user.md`, so it
+survives every later update; `--channel release` switches back. Steve only runs this on an explicit
+user request naming the channel, never on his own judgement, since a beta channel by definition carries
+material that has not gone through the normal release check.
+
 ## When not to use
 
 - The user wants a snapshot, a restore, a structure check, or a bulk repair. Those are also Pepper's domain but go through their own paths (slash-commands or natural-language triggers), not through this skill.

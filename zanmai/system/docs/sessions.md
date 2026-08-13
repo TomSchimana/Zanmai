@@ -8,7 +8,7 @@ What happens when you open a session, and why closing it properly matters.
 
 Before the first word reaches you, Zanmai reads its own state: your profile, your own contact entry, when the last session ended, and the current layout of your vault. It also compares the vault against its index and rebuilds it if anything changed, which is how edits you made directly in your editor are picked up rather than missed.
 
-Out of that comes a short briefing: how to address you, what is currently open, what happened recently, and any hints worth surfacing. That briefing is for Zanmai, not a wall of text for you. What you see is a greeting with a handful of things you could pick up, or a direct answer if you started with a question.
+Out of that comes a short briefing: how to address you, what is currently open, what happened recently, and any hints worth surfacing. That briefing is for Zanmai, not a wall of text for you. What you see is a greeting naming what is actually open, or a direct answer if you started with a question. That list is a walk over five places, in order: what the last close left as next, work waiting on you, anything due or overdue, files whose name carries a date from today onward, and bundles touched in the last two days. It names what it finds and nothing else, so one open thing is one line and a quiet vault gets no list at all.
 
 If the vault has nothing in it yet, you get one sentence and a question instead of a made-up list.
 

@@ -8,6 +8,8 @@ Bringing a folder, an export or a pile of loose files into the vault and having 
 
 Drop it into `import`, or just say where it is. Then ask for it to be imported. Anything works: notes from another app, PDFs, screenshots, tickets, calendar files, a folder of mixed material from a project.
 
+`import` is for material that still needs sorting out. If you already know it belongs to a piece of work you are on, it can go straight into that piece's own folder under `doing` instead, see [Folder architecture](folder-architecture.md).
+
 Three things are asked before the work starts, as a short form rather than a conversation, because they change the outcome: whether Zanmai should apply its own conventions or keep the source structure as closely as possible, what exactly is in scope, and what to do when something already exists in the vault.
 
 ## What happens before anything moves

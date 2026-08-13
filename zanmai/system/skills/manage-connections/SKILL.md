@@ -19,6 +19,21 @@ A connection is this vault reaching one source outside it, an MCP server or a lo
 
 A read that should become a vault file goes back to Steve, who dispatches Hank; Wong writes no vault files. Setting one up includes one menu, read only or read and write; Wong configures what the user chose, never a level it picked for them, and puts every outgoing write to them first (wong.md hard rule 4).
 
+## A browser OAuth round trip never goes through a dispatched agent
+
+Some sources authorise this way: an authorise call returns a login URL, the user signs in and confirms
+in their browser, and a callback URL comes back with a code Wong or Loki completes the login with.
+That pending login is bound to the live connection instance on the source's own server, not durably to
+the code or state alone, so it dies the moment the agent that started it ends, whether or not the
+answer is relayed back later. This holds even for a run parked the proper way (operating-principles
+§12): a parked run is still its own process, separate from the connection the pending login is bound
+to, so parking does not rescue it either. The only path that keeps the same connection alive across the
+wait for the user's reply is one with no dispatch boundary in it at all: Steve makes both calls itself,
+in its own ongoing conversation with the user, never handed to Wong or any other expert as a background
+agent for this specific exchange. Establishing the connection (registration, scope, credential storage)
+stays Wong's as usual; only this one authorise-then-complete pair, when it needs the user's browser, is
+kept out of dispatch.
+
 ## Credentials and security (Wong's second half)
 
 Wong decides per connection: **(a)** if the source keeps its secret safely in its own config, it stays there and Wong holds nothing; **(b)** only if it cannot, Wong stores the secret in the OS keychain or an `.env` outside the vault (gitignored, `chmod 600`, masked). A secret never enters the vault, a commit or the chat, the vault holds a reference at most. Wong reviews each new connection for credential hygiene and least privilege.

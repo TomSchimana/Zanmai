@@ -33,6 +33,8 @@ What was actually accomplished. Concrete artefacts (files written, decisions tak
 
 The single most important next step for the next session. Plus one backup item if there is a natural follow-up. One or two items, not a backlog. The full backlog lives elsewhere, this is the entry point for the next session.
 
+**Before this section is written, every open point of the session goes onto a work object.** For each one that is still open: `zanmai.py work open` where no object exists yet, then `zanmai.py work ask --id <id> --question "<what only the user can settle>"` for anything that waits on them, and `work log` for what was done. That is what makes the point survive the session and reachable at the next start, in the editor or on a phone. Prose in this log is the narrative, and the object is the state; the state is written first, and this section is then read off it.
+
 Read it off `zanmai.py work list`, do not compose it from memory of the conversation. Anything still waiting on the user is named here with its short id, because that is the one class of open item the next session cannot work out for itself: the work is done as far as it can go and stopped on a decision. A specialist parked on such a decision does not survive the close (operating-principles §12), so the object and its workshop are what the next session picks up from.
 
 ### Intent

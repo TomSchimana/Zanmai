@@ -2679,10 +2679,54 @@ def _task_due_soon(vault: Path, days: int, eintraege: list[dict] | None = None) 
             eintrag = dict(eintrag)
             eintrag["days"] = (tag - heute).days
             faellig.append(eintrag)
-    return sorted(faellig, key=lambda e: e["due"])
+    # Nearest to today first, overdue or not. A task due tomorrow, written today, is
+    # what a session start exists to surface; sorted purely chronologically, it sorts
+    # dead last behind months of unresolved backlog and never makes the 12-item cap
+    # below, since the backlog only grows and a fresh item always lands after it.
+    return sorted(faellig, key=lambda e: abs(e["days"]))
 
 
 _BRIEFING_DUE_DAYS = 14
+
+
+_DATEINAME_DATUM = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
+
+
+def _dated_files_ahead(vault: Path, days: int) -> list[dict]:
+    """Files whose own name carries a date from today onward, anywhere in the user's folders.
+
+    The other three date sources are places the machine keeps itself: a task line it wrote, a bundle's
+    `due:` field, a work object. A meeting prepared yesterday for tomorrow sits in none of them, and on
+    2026-08-12 that is exactly what went missing from a greeting while the file for it lay in the
+    vault. A date in a filename is the user's own convention and costs one walk to read.
+
+    The system folder and the journal are skipped: a log or a daily entry named by its date is the
+    date axis itself, not something coming up.
+    """
+    heute = datetime.now().date()
+    grenze = heute + timedelta(days=days)
+    treffer: list[dict] = []
+    for pfad in vault.rglob("*.md"):
+        rel = pfad.relative_to(vault)
+        erste = rel.parts[0]
+        if erste.startswith(".") or erste in (SYSTEM_DIR, IMPORT_DIR, JOURNAL_DIR):
+            continue
+        m = _DATEINAME_DATUM.search(pfad.stem)
+        if not m:
+            continue
+        try:
+            wann = datetime.strptime(m.group(0), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if not (heute <= wann <= grenze):
+            continue
+        treffer.append({
+            "date": m.group(0),
+            "days": (wann - heute).days,
+            "label": _human_label_for_slug(pfad.stem[len(m.group(0)):].strip("-_ ") or pfad.stem),
+            "path": rel.as_posix(),
+        })
+    return sorted(treffer, key=lambda e: e["days"])
 
 
 def _work_due_soon(vault: Path, days: int) -> list[dict]:
@@ -2697,7 +2741,7 @@ def _work_due_soon(vault: Path, days: int) -> list[dict]:
             continue
         if datetime.strptime(wert, "%Y-%m-%d").date() <= grenze:
             faellig.append(row)
-    return sorted(faellig, key=lambda r: r.get("due") or "")
+    return sorted(faellig, key=lambda r: abs((datetime.strptime(r["due"], "%Y-%m-%d").date() - heute).days))
 
 
 def _task_target(vault: Path, given: str | None) -> Path:
@@ -4033,7 +4077,7 @@ def _render_briefing(vault: Path) -> str:
     focus_bundles = _active_focus_bundles(vault)
     recent_ops = _recent_operations(vault, limit=3)
     recent_activity = _recent_activity_bundles(vault, hours_back=48)
-    close_next = _close_session_next_items(vault, limit=3)
+    close_next = _close_session_next_items(vault, limit=1)
     # One walk over the vault feeds all three task sections below, which is also what keeps them
     # from disagreeing with each other.
     offene_aufgaben = _task_scan(vault)
@@ -4061,7 +4105,8 @@ def _render_briefing(vault: Path) -> str:
     # skipped from then on, and then the one line that mattered is lost in it.
     faellig = _task_due_soon(vault, _BRIEFING_DUE_DAYS, eintraege=offene_aufgaben)
     work_faellig = _work_due_soon(vault, _BRIEFING_DUE_DAYS)
-    if faellig or work_faellig:
+    datiert = _dated_files_ahead(vault, _BRIEFING_DUE_DAYS)
+    if faellig or work_faellig or datiert:
         lines.append(f"## Due (next {_BRIEFING_DUE_DAYS} days, overdue included)")
         lines.append("")
         for eintrag in faellig[:12]:
@@ -4073,6 +4118,13 @@ def _render_briefing(vault: Path) -> str:
             lines.append(f"- _... plus {len(faellig) - 12} more dated item(s)_")
         for row in work_faellig[:8]:
             lines.append(f"- **{row['due']}** (work object) {row.get('work','')}")
+        for eintrag in datiert[:8]:
+            wann = ("today" if eintrag["days"] == 0
+                    else "tomorrow" if eintrag["days"] == 1
+                    else f"in {eintrag['days']} days")
+            lines.append(f"- **{eintrag['date']}** ({wann}) {eintrag['label']} _({eintrag['path']})_")
+        if len(datiert) > 8:
+            lines.append(f"- _... plus {len(datiert) - 8} more dated file(s)_")
         lines.append("")
 
     # 1) Current state
@@ -4172,6 +4224,19 @@ def _render_briefing(vault: Path) -> str:
     return "\n".join(lines)
 
 
+_BRIEFING_REQUIRED = ("## Current state", "## Open items", "## Gaps and hints")
+
+
+def _briefing_sections_missing(content: str) -> list[str]:
+    """Which of the briefing's fixed sections did not make it into the rendered text.
+
+    The greet walks this file, so a section that fell out is a source that silently went quiet. It
+    reads as "nothing open" rather than as "the renderer broke", which is the more expensive of the
+    two failures because nobody looks for it.
+    """
+    return [s for s in _BRIEFING_REQUIRED if s not in content]
+
+
 def cmd_briefing(args: argparse.Namespace) -> int:
     """Atomic rebuild of `zanmai/memory/briefing.md`. Triggered by `/close-session`,
     after `memory report`, or manually. The authority for Steve's session-start
@@ -4182,8 +4247,15 @@ def cmd_briefing(args: argparse.Namespace) -> int:
     content = _render_briefing(vault)
     target.write_text(content, encoding="utf-8")
     _append_activity_log(vault, "zanmai.py", "briefing.md rebuilt from vault state")
+    fehlt = _briefing_sections_missing(content)
     if not getattr(args, "quiet", False):
         print(f"ok: briefing rebuilt -> {target.relative_to(vault)}")
+    if fehlt:
+        # Whoever generates a text that behaviour is built on checks that text. A briefing that
+        # swallowed a section looks exactly like a full one from the outside, and the greet then
+        # reads from a source that silently lost the part it existed for.
+        print("warning: briefing is missing section(s): " + ", ".join(fehlt), file=sys.stderr)
+        return 1
     return 0
 
 
@@ -5068,6 +5140,38 @@ def _required_folders(vault_root: Path) -> list[str]:
     return folders
 
 
+# The fixed family the vault root may hold, plus the generated files that live there. Anything
+# else at the root is either a dotfile (an editor's or the OS's own business, left alone by
+# design) or a folder that arrived outside any write Zanmai made, a manual Finder action, a
+# colleague dropping something into a shared sync folder, a half-finished move. No hook can see
+# or refuse that, since it happens outside any Claude Code session, so this is a detector rather
+# than a guard: it surfaces the entry so it gets dealt with in days, not found by accident weeks
+# later.
+_VAULT_ROOT_ALLOWED_DIRS = frozenset({
+    JOURNAL_DIR, FOCUS_DIR, DOING_DIR, HABITS_DIR, KNOWLEDGE_DIR, TRUSTED_DIR,
+    ARCHIVE_DIR, CONTACTS_DIR, IMPORT_DIR, SYSTEM_DIR,
+})
+_VAULT_ROOT_ALLOWED_FILES = frozenset({"CLAUDE.md", "README.md", "INDEX.md"})
+
+
+def _unexpected_root_entries(vault: Path) -> list[str]:
+    """Names at the vault root outside the fixed family, dotfiles excluded. Empty when the root
+    is exactly what setup and the folder architecture say it should be."""
+    if not vault.is_dir():
+        return []
+    found = []
+    for entry in sorted(vault.iterdir()):
+        name = entry.name
+        if name.startswith("."):
+            continue
+        if entry.is_dir() and name in _VAULT_ROOT_ALLOWED_DIRS:
+            continue
+        if entry.is_file() and name in _VAULT_ROOT_ALLOWED_FILES:
+            continue
+        found.append(name)
+    return found
+
+
 def _frontmatter_block(text: str) -> str:
     """Return a contract's raw `---`-fenced frontmatter block, fences included,
     or an empty string when there is none."""
@@ -5245,6 +5349,7 @@ preferred_address: {address_field}
 language: "{language}"
 owner_contact: "{owner_contact_slug}"
 python_cmd: "{python_cmd}"
+update_channel: ""
 auto_snapshots: true
 created: "{today}"
 ---
@@ -5273,6 +5378,7 @@ Add anything you want Steve to know about you here: preferences, working style, 
   decides how hard its own work is. A job that genuinely needs more says so and waits for you.
 - `auto_snapshots: true`. Master switch for every snapshot Zanmai takes on its own, which is only ever before it overwrites existing material (update, bulk repair, vault-wide rename, restore). When `false`, all `zanmai.py snapshot create` calls exit silently with `skip: auto_snapshots disabled` and no folder is written, useful when the user has their own backup discipline (git, Time Machine, ...). Flip it with `zanmai.py snapshot enable` / `disable` or by editing this line directly.
 - `python_cmd: "{python_cmd}"`. The Python invocation that worked at setup time. Steve uses this when running scripts, substitutes for `python3` in skill template phrasing. On Windows this is often `py -3` or `python`, on Linux and macOS usually `python3`.
+- `update_channel: ""`. Which branch `zanmai.py setup upgrade` tracks. Empty means the published release. Set with `zanmai.py setup upgrade . --channel <name>`, which switches immediately and remembers the choice here, update-immune so it survives every future update; `--channel release` switches back.
 """
 
 
@@ -5506,6 +5612,7 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
                     "matcher": "Write|Edit",
                     "hooks": [
                         {"type": "command", "command": f'{python_cmd} "{zb}" hook checkbox-guard'},
+                        {"type": "command", "command": f'{python_cmd} "{zb}" hook prose-guard'},
                         {"type": "command", "command": f'{python_cmd} "{zb}" hook kind-required'},
                         {"type": "command", "command": f'{python_cmd} "{zb}" hook permission-guard'},
                     ],
@@ -6164,7 +6271,8 @@ def _quiet_update_probe(vault: Path) -> str:
 
     manifest = vault / SYSTEM_MATERIAL_DIR / "manifest.yaml"
     source = _manifest_scalar(manifest, "update_source") if manifest.exists() else ""
-    branch = _manifest_scalar(manifest, "update_branch") or "main" if manifest.exists() else "main"
+    default_branch = _manifest_scalar(manifest, "update_branch") or "main" if manifest.exists() else "main"
+    branch = _update_channel(vault) or default_branch
     available = ""
     if source:
         try:
@@ -6339,6 +6447,39 @@ def cmd_setup_post_upgrade(args: argparse.Namespace) -> int:
     return 0
 
 
+def _update_channel(vault: Path) -> str:
+    """The branch `zanmai/user.md` names to track, or "" for the manifest's default.
+
+    Update-immune by construction: `user.md` is never touched by an update, so a
+    channel choice survives the very upgrades it steers. "release" and "" both
+    mean "no override, follow the manifest's `update_branch`" (currently `main`).
+    """
+    user_md = vault / SYSTEM_DIR / "user.md"
+    if not user_md.exists():
+        return ""
+    try:
+        fm, _order, _body = _split_frontmatter(user_md.read_text(encoding="utf-8"))
+    except OSError:
+        return ""
+    channel = str(fm.get("update_channel") or "").strip()
+    return "" if channel in ("", "release") else channel
+
+
+def _set_update_channel(vault: Path, channel: str) -> None:
+    """Persist the channel choice to `zanmai/user.md`. "release" clears the override."""
+    user_md = vault / SYSTEM_DIR / "user.md"
+    if not user_md.exists():
+        return
+    text = user_md.read_text(encoding="utf-8")
+    fm, order, body = _split_frontmatter(text)
+    fm["update_channel"] = "" if channel == "release" else channel
+    if "update_channel" not in order:
+        # Placed right after python_cmd, next to the other setup-time fields.
+        insert_at = order.index("python_cmd") + 1 if "python_cmd" in order else len(order)
+        order.insert(insert_at, "update_channel")
+    user_md.write_text(_render_frontmatter(fm, order) + body, encoding="utf-8")
+
+
 def cmd_setup_upgrade(args: argparse.Namespace) -> int:
     """Replace the distribution files with the newest published version.
 
@@ -6353,8 +6494,13 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
         print(f"error: no Zanmai system folder at {vault}", file=sys.stderr)
         return 1
 
+    requested_channel = getattr(args, "channel", None)
+    if requested_channel:
+        _set_update_channel(vault, requested_channel)
+
     local = _distribution_version(vault)
-    branch = _manifest_scalar(manifest, "update_branch") or "main"
+    channel = _update_channel(vault)
+    branch = channel or _manifest_scalar(manifest, "update_branch") or "main"
     is_clone = bool(_clone_remote(vault))
 
     # Named per branch, because a clone asks its own git remote and every other vault
@@ -6393,11 +6539,12 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
             print("error: the update source reports no version", file=sys.stderr)
             return 1
 
+    channel_note = f", channel: {channel}" if channel else ""
     if not _is_newer(remote, local):
-        print(f"ok: already on the current version ({local})")
+        print(f"ok: already on the current version ({local}{channel_note})")
         return 0
 
-    print(f"update available: {local} -> {remote} (from {origin})")
+    print(f"update available: {local} -> {remote} (from {origin}{channel_note})")
     if args.check:
         if getattr(args, "changelog", False):
             changelog = (_remote_changelog_via_git(vault, branch) if is_clone
@@ -6554,6 +6701,16 @@ def cmd_setup_validate(args: argparse.Namespace) -> int:
                 f"fact exists once: {', '.join(conflicts[:5])}"
                 + (" …" if len(conflicts) > 5 else "")
             )
+
+    stray = _unexpected_root_entries(vault)
+    if stray:
+        fails.append(
+            f"{len(stray)} entr(y/ies) at the vault root outside the folder architecture: "
+            f"{', '.join(stray[:5])}"
+            + (" …" if len(stray) > 5 else "")
+            + ". Nothing writes there on its own, this got created outside a Zanmai session, "
+              "move its contents into the right theme and remove it."
+        )
 
     if fails:
         for f in fails:
@@ -7180,6 +7337,114 @@ def cmd_hook_checkbox_guard(args: argparse.Namespace) -> int:
               "[--due YYYY-MM-DD]`, and tick it off with `task done`.", file=sys.stderr)
         print("  Not asked for one: an obligation you worked out goes in the reply as a sentence, "
               "and something you still owe goes on a work object via `zanmai.py work`.",
+              file=sys.stderr)
+        return 2
+    return 0
+
+
+# A dash splitting a sentence is the single most recognisable machine-made construction, and the one
+# the house style bans first (operating-principles section 7). Prose said it in five files across the
+# distribution and it still reached a page the user's colleagues read: 21 of them in one produced
+# document, written by a run that had the rule in context. A sentence that has not held is either
+# built or dropped (principle 4), so it is built here.
+#
+# Em dash always. En dash only when it is doing the same job, which is why the spaces matter: a number
+# range (`2020–2024`) is legitimate typography and stays.
+#
+# Written as codepoints on purpose. A guard that carries the character it bans fails the project's own
+# style check on its own implementation, and the fix for that is never to widen the check: it is to
+# keep the forbidden thing out of the guard.
+_HOOK_EM_DASH = "\u2014"
+_HOOK_EN_DASH_SENTENCE = re.compile("\\s\u2013\\s")
+
+
+def _hook_dash_hits(text: str) -> list[str]:
+    """Every line of `text` carrying a dash used as sentence punctuation, whitespace-normalised.
+
+    Normalised the same way as the checkbox lines, so that rewrapping a paragraph does not read as a
+    new occurrence. The comparison is what keeps this off the user's own words: only a construction
+    that was not in the file before is refused.
+    """
+    treffer: list[str] = []
+    for line in text.splitlines():
+        if _HOOK_EM_DASH in line or _HOOK_EN_DASH_SENTENCE.search(line):
+            treffer.append(" ".join(line.split()))
+    return treffer
+
+
+def _hook_authored_by_ai(text: str, datei: Path) -> bool:
+    """Whether this file's frontmatter says the AI wrote the content.
+
+    `source:` is a required frontmatter field with three values (organic, collaborative,
+    ai-generated). The guard binds on the two that mean the AI produced the prose. On `organic`, on a
+    file that carries no frontmatter, and on anything unreadable it does not bind at all: principle 2
+    outranks house style, and refusing an import of the user's own writing because they like dashes
+    would cost the whole operation to save a line.
+    """
+    for quelle in (text, ""):
+        if not quelle:
+            try:
+                quelle = datei.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return False
+        fm, _, _ = _split_frontmatter(quelle)
+        if isinstance(fm, dict) and fm.get("source"):
+            return str(fm["source"]).strip().lower() in ("ai-generated", "collaborative")
+    return False
+
+
+def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
+    """PreToolUse Write|Edit: refuse a dash-as-punctuation the AI is adding to its own prose.
+
+    Mechanic: compare the dash lines before and after, exactly as `checkbox-guard` compares task
+    lines. Only a line that was not there before is refused, so moving, importing or re-indenting the
+    user's material passes untouched. Binds only where the frontmatter says the AI wrote the content.
+
+    The refusal names the line and what to do instead, because a refusal with no route named produces
+    a report about the refusal rather than the work.
+    """
+    payload = _hook_read_payload()
+    if not payload:
+        return 0
+    tool = payload.get("tool_name", "")
+    if tool not in ("Write", "Edit", "MultiEdit"):
+        return 0
+    tool_input = payload.get("tool_input") or {}
+    file_path = tool_input.get("file_path", "")
+    if not file_path.endswith((".md", ".markdown")):
+        return 0
+
+    paare: list[tuple[str, str]] = []
+    if tool == "Write":
+        neu_text = tool_input.get("content") or ""
+        try:
+            vorher = Path(file_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            vorher = ""
+        if not _hook_authored_by_ai(neu_text, Path(file_path)):
+            return 0
+        paare.append((vorher, neu_text))
+    elif tool == "Edit":
+        if not _hook_authored_by_ai("", Path(file_path)):
+            return 0
+        paare.append((tool_input.get("old_string") or "", tool_input.get("new_string") or ""))
+    else:
+        if not _hook_authored_by_ai("", Path(file_path)):
+            return 0
+        for edit in tool_input.get("edits") or []:
+            paare.append((edit.get("old_string") or "", edit.get("new_string") or ""))
+
+    for vorher, nachher in paare:
+        alt, neu = _hook_dash_hits(vorher), _hook_dash_hits(nachher)
+        dazu = [z for z in neu if z not in alt]
+        if not dazu:
+            continue
+        rel = Path(file_path).name
+        print(f"prose-guard: refusing {tool} on {rel}, {len(dazu)} line(s) use a dash as sentence "
+              f"punctuation. First: {dazu[0][:140]}", file=sys.stderr)
+        print("  Finish the thought, or split it into two sentences. A hyphen inside a compound word "
+              "and a number range keep their dash.", file=sys.stderr)
+        print("  Rewrite those lines and write the file again; the rest of the content is fine.",
               file=sys.stderr)
         return 2
     return 0
@@ -9627,6 +9892,16 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     for note in _sweep_retention(vault):
         lines.append(f"- Housekeeping: {note}")
 
+    stray = _unexpected_root_entries(vault)
+    if stray:
+        lines.append(
+            f"- {len(stray)} entr(y/ies) at the vault root do not belong to the folder architecture: "
+            f"{', '.join(stray[:5])}"
+            + (" …" if len(stray) > 5 else "")
+            + ". This did not come from a Zanmai write. Name it once, in one line, and offer to move "
+              "its contents into the right theme."
+        )
+
     lines.append(f"- The journal lives under `{JOURNAL_DIR}/`, one bundle per period, four kinds (daily, weekly, monthly, yearly). It is always there; there is no switch and nothing to configure.")
     lines.append("- Journal operations go through `zanmai.py journal` and the `journal` skill. The AI never writes into an entry on its own initiative, only on direct user instruction. The one exception is the period rollup, which appends and never overwrites.")
 
@@ -9658,7 +9933,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
         notes = _session_collect_recent_journal(index, vault)
         window_desc = f"last {_SESSION_DAILY_WINDOW_DAYS} days Daily, last {_SESSION_WEEKLY_WINDOW_DAYS // 7} weeks Weekly, last {_SESSION_MONTHLY_WINDOW_DAYS // 30} months Monthly"
         if not notes:
-            lines.append(f"- No Daily, Weekly or Monthly notes in the recent window ({window_desc}). Topic suggestions for the greet come from active focus bundles, recent operations and open items already synthesised in `zanmai/memory/briefing.md`. Render the greet as the numbered-topic-choice format from steve.md Regular Session (3-5 numbered topics with short hints, not prose, not bullets), even when only a few focus bundles are active, open items per bundle and recent operations supply the extra topics.")
+            lines.append(f"- No Daily, Weekly or Monthly notes in the recent window ({window_desc}). The greet still runs the same walk over what is open, from `zanmai/memory/briefing.md` and the work objects; with fewer sources it simply finds fewer items, and it names the ones it finds.")
         else:
             daily = [n for n in notes if n["path"].startswith(f"{DAILY_DIR}/")]
             weekly = [n for n in notes if n["path"].startswith(f"{WEEKLY_DIR}/")]
@@ -9716,47 +9991,43 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
         lines.append("- `zanmai/memory/briefing.md` does not exist yet. Run `zanmai.py memory briefing` once to build the first version.")
 
     lines.append("")
-    lines.append(
-        "Greet only when the user opens with a bare greeting or empty turn. "
-        "If the first message is a direct request (research question, filing task, edit, observation, naming question), "
-        "skip the greet entirely and respond to that request directly, but run the three session-start reads first; skipping the greet is not skipping the reads. "
-        "Then apply pre-dispatch for research, plan-before-write for filing. "
-        "The greet exists to surface what is open when the user has not already said what they want. Once they have, it is filler."
-    )
+    greeting_path = vault / SYSTEM_MATERIAL_DIR / "experts" / "steve" / "greeting.md"
+    try:
+        greeting_full = greeting_path.read_text(encoding="utf-8") if greeting_path.exists() else ""
+    except OSError:
+        greeting_full = ""
+    # Verbatim, never paraphrased here: a hand-kept second copy of the greet shape
+    # is exactly how the six-line cap and the no-reverify rule were fixed in
+    # greeting.md and still never reached a real session. One file decides the
+    # shape, this hook only carries it into context.
+    # Only the section a normal, already-set-up session needs: the onboarding and
+    # empty-vault branches (`## First session...`, `## Empty vault`) are for states
+    # this hook already detects separately, and including them here every single
+    # day just made every hook payload big enough to get cut to a preview, which is
+    # the one thing "so the greet needs zero further tool calls" was for.
+    match = re.search(r"(?ms)^## Regular session: the walk\n.*?(?=^## Empty vault)", greeting_full)
+    greeting_text = match.group(0).strip() if match else greeting_full
+    if greeting_text.strip():
+        lines.append("---")
+        lines.append(f"Greet shape, verbatim from `{SYSTEM_MATERIAL_DIR}/experts/steve/greeting.md`, "
+                      f"address the user as **{preferred}** where it applies:")
+        lines.append("")
+        lines.append(greeting_text)
+    else:
+        lines.append(
+            f"- `{SYSTEM_MATERIAL_DIR}/experts/steve/greeting.md` missing or unreadable, "
+            "read it directly before any greet."
+        )
     lines.append("")
     lines.append(
-        f"When a greet is appropriate, address the user as **{preferred}** (translate any user-facing wording to the user's writing language at runtime). "
-        "The shape is a teaser plus a numbered menu, not a single full proposal. "
-        "First line: a short greeting line carrying the address only. "
-        "Then one short context line drawn from the briefing. "
-        "Then three to five numbered options drawn from recent activity, open items and the current state, each one line. "
-        "Recent-activity bundles (yesterday's research, today's import, a habit touched this morning) count as user attention and belong alongside open todos, not below them. "
-        "Render bundle references as human labels (the readable name with spaces and capitalisation), not as kebab-case slugs. "
-        "The wikilink may follow in parentheses if the user needs the click target. "
-        "End with one short closing line in the user's writing language inviting the user to pick a number or describe what they have planned. "
-        "Detailed proposals (output path plus content sketch) come after the user picks a number, not in the greet. "
-        "Avoid menu-pressuring closers and warmth-only filler sentences with no information content."
-    )
-    lines.append("")
-    lines.append(
-        "Pre-dispatch is mandatory before any Reed dispatch, and Steve never runs Reed's pipeline tools directly. "
-        "When the user asks for research, video, audio or repository extraction, comparisons, state-of-the-art, or any external-sourcing question (pattern-match intent, not literal strings), "
-        "state the planned brief in one user-facing sentence in the user's writing language, ask for confirmation, wait, then dispatch Reed via the `Agent` tool with `subagent_type: reed`. "
-        "Steve must not call WebFetch on external video, audio, podcast or repository URLs, must not invoke Bash with external-source fetchers, transcription or repo cloning, and must not preview or probe a source before dispatch. "
-        "Running any of those in the main loop is Reed's work in Steve's identity. "
-        "See CLAUDE.md Hard Rule 9 and the Steve contract sections on research dispatch and Directive 5 for the full procedure."
-    )
-    lines.append("")
-    lines.append(
-        "Verify before reporting status on a greet item. When the user picks a number from the greet or asks about the state of a topic, "
-        "do not just expand the briefing line into a status report. Daily-note todos drift. "
-        "A checkbox from two weeks ago is often already done and documented in the bundle, but the checkbox stayed unticked. "
-        "Before the status reply: read the relevant bundle truth file (`<kind>/<bundle-slug>/<bundle-slug>.md`). "
-        "If the bundle contradicts the todo (a ticked checkbox, a status field that says done, a confirmation number filled in), "
-        "name the discrepancy explicitly in the reply. Do not offer to tick it: the box is the user's, "
-        "and a write that changes one is refused (operating-principles section 8). "
-        "One or two reads are cheap, much cheaper than producing a wrong briefing. "
-        "See `zanmai/system/experts/steve/steve.md` for the follow-up procedure."
+        "Handed over, or found: that is the line for Reed. Pages the user hands over, by URL or by path, are Steve's own plain work. "
+        "He fetches them, reads them and answers in the chat, however many there are and whether or not the answer is a comparison between them. "
+        "Reed is dispatched where the sources still have to be found: `find out`, `what is out there`, `what does it cost these days`, a survey of a field, "
+        "or a source with its own pipeline (video, audio, podcast, repository), which Reed fetches with his own tools. "
+        "Where the user names who does it, that word decides and outranks this rule. "
+        "Before a Reed dispatch, state the planned brief in one user-facing sentence in the user's writing language, ask for confirmation, wait, "
+        "then dispatch via the `Agent` tool with `subagent_type: reed`. "
+        "See CLAUDE.md Hard Rule 9 and the Steve contract, Routing and Directive 4."
     )
 
     print("\n".join(lines))
@@ -11191,6 +11462,10 @@ def main(argv: list[str]) -> int:
     ps_upgrade = sub_setup.add_parser("upgrade", help="Fetch the newest published version over HTTPS and replace the distribution files. Works the same whether the vault was cloned or unpacked from an archive. Never touches user-immune paths; Pepper snapshots first.")
     ps_upgrade.add_argument("vault_root", nargs="?", default=".")
     ps_upgrade.add_argument("--check", action="store_true", help="Only report whether a newer version exists.")
+    ps_upgrade.add_argument("--channel", metavar="NAME",
+                             help="Switch which branch this vault tracks (e.g. 'beta') and remember "
+                                  "the choice in zanmai/user.md. 'release' switches back to the "
+                                  "manifest's default branch. Omit to use whatever is already set.")
     ps_upgrade.add_argument("--changelog", action="store_true",
                              help="With --check, also print the remote CHANGELOG.md, unapplied.")
     ps_upgrade.set_defaults(func=cmd_setup_upgrade)
@@ -11914,6 +12189,9 @@ def main(argv: list[str]) -> int:
 
     ph_check = sub_hook.add_parser("checkbox-guard", help="PreToolUse Write|Edit. Refuses any write that adds, removes or ticks a markdown task. Checkboxes are the user's.")
     ph_check.set_defaults(func=cmd_hook_checkbox_guard)
+
+    ph_prose = sub_hook.add_parser("prose-guard", help="PreToolUse Write|Edit. Refuses a dash used as sentence punctuation in prose the AI wrote (source: ai-generated or collaborative).")
+    ph_prose.set_defaults(func=cmd_hook_prose_guard)
 
     ph_kind = sub_hook.add_parser("kind-required", help="PreToolUse Write|Edit. Refuses writes into a bundle root without valid kind frontmatter.")
     ph_kind.set_defaults(func=cmd_hook_kind_required)

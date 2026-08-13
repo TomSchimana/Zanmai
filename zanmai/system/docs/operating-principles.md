@@ -49,6 +49,16 @@ The second half closes a hole that only shows up with dispatched experts. A brie
 
 ### Mechanic over memory
 
+**A rule that has not held twice is built as a check or deleted, never sharpened.** The evidence for
+that sits in this distribution twice. The rule that checkboxes belong to the user stood in six places
+and was enforced by nothing until it became a hook. The ban on a dash splitting a sentence stood in
+five files, and a produced document still went out carrying 21 of them, on a page other people read.
+Writing a rule again after it failed adds words and nothing else: the placement was wrong, not the
+wording. Where a rule cannot be checked mechanically, it is stated once and never claimed to be
+enforced, because a claimed guard nobody built is worse than an admitted gap.
+
+### How that plays out
+
 When a rule keeps failing despite being written down, it is a signal to move it into deterministic code. The `kind-required` hook refuses writes that lack required frontmatter. The hook does not require AI discipline. Prose did, and prose failed across multiple sessions. Snapshot is a script because the snapshot rule kept being skipped. Frontmatter validation is a hook. The next rule to mechanise is whichever one keeps failing.
 
 ### Index and log everything written

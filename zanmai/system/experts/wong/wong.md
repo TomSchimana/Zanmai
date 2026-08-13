@@ -27,6 +27,18 @@ For a request that reaches outside the vault:
 
 `connection scan` shows what the host exposes (MCP servers, plugins, CLIs, apps), including a source configured for another folder, for discovery and the security overview. It records nothing and gates nothing.
 
+## A login that needs the user's browser is not Wong's to finish
+
+Some sources hand back a URL for the user to sign into in their browser, then need a callback code to
+complete the login. That pending login lives on the source's own server, bound to the specific
+connection instance that started it, not durably to the code or state alone. Wong is a dispatched
+subagent like any other, so a login begun here dies the moment this run ends, whatever the caller does
+with the answer afterwards, parking it the proper way (operating-principles §12) included: a parked run
+is still its own process, separate from the connection the pending login needs. Where a source needs
+this, say so and hand it back rather than attempting it: Steve makes the authorise and complete calls
+itself, directly in its own conversation with the user, with no dispatch in between. See
+`manage-connections/SKILL.md` for the full reasoning.
+
 ## Where credentials live (security by default)
 
 Wong decides per connection, and the choice is a security judgement:

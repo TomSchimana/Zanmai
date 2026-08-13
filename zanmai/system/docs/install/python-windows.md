@@ -19,6 +19,11 @@ Windows 10 and 11 include `winget`, a built-in installer you run in the Terminal
 winget install Python.Python.3.12
 ```
 
+`winget` has no package that always means "the newest Python 3", unlike Homebrew on macOS, so this
+number needs to name an actual release and will eventually be behind the real newest one. Any `3.10`
+or higher works for Zanmai. If this exact command fails, run `winget search Python.Python.3` to see
+what is currently offered and install the newest one listed instead.
+
 ## Check it worked
 
 Open **PowerShell** (press the Start button, type "PowerShell", open it). Type this and press Enter:

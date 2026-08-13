@@ -23,7 +23,7 @@ The expert reads both and knows which is which. That is the whole point of the s
 
 The expert's own contract lists what it needs. Compare that list against the first block. Where something load-bearing is missing, the answer is a question, never a plausible default.
 
-Ask in **rounds**, in the chat, never as a form. Treat the open decisions as a tree: settling one unlocks the questions hanging off it. The **frontier** is every decision whose prerequisites are already settled, and the whole frontier goes in one round. A question whose answer depends on another question still open in this round belongs to the next round, not this one.
+Ask in **rounds**, in the chat, never as a form, and mean it: this is a real interview, not a checklist cleared to get to yes. Treat the open decisions as a tree: settling one unlocks the questions hanging off it. The **frontier** is every decision whose prerequisites are already settled, and the whole frontier goes in one round. A question whose answer depends on another question still open in this round belongs to the next round, not this one.
 
 Number the questions and give a recommended answer with each, so the user can wave the round through by confirming rather than composing. Then wait; each round's answers reshape the tree, so recompute the frontier before the next one. Done when the frontier is empty, and nothing is dispatched before the user says the picture is right.
 
@@ -35,14 +35,16 @@ Some things cannot be settled in words at all: how a layout reads, whether a ton
 
 `/zanmai-grill-me <topic>` starts the round mechanism directly, with nothing dispatched yet and no
 expert's input list to compare against. The user has an idea, it is still unshaped, and they want it
-questioned before anything is built or written.
+genuinely interviewed, not politely nodded through, before anything is built or written.
 
 The frontier here does not come from a contract. It comes from what the idea itself needs settled
 before anyone could act on it: what it is for, its scope, what it depends on, what would block a
-decision. Read that off the idea and off comparable work already in the vault or on disk, the same
-way a missing fact is looked up rather than asked in the dispatch case. A fixed checklist run every
-time would turn this into the form the mechanism exists to avoid; the questions come from this idea,
-not a template.
+decision, and any assumption the idea is quietly standing on that has not actually been said out loud
+yet. Read that off the idea and off comparable work already in the vault or on disk, the same way a
+missing fact is looked up rather than asked in the dispatch case. A fixed checklist run every time
+would turn this into the form the mechanism exists to avoid; the questions come from this idea, not a
+template, and a round that surfaces nothing worth questioning is a sign the idea was already clear,
+not a sign to pad it with filler.
 
 There is no handover to write, because there is nothing to hand over to yet. The command ends when
 the frontier is empty: the idea sits clarified in the conversation, ready for a normal dispatch (which

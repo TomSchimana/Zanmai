@@ -4,6 +4,81 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.3.0] - 2026-08-12
+
+**The rule set is smaller, and the rules that kept failing are checks now.** A session start named four
+topics, none of which mattered, and left out a meeting the next day that stood in its own briefing.
+Looking for the cause turned up the shape behind it: a refusal that names no alternative produces a
+report about the refusal instead of the work. Across the fourteen files that govern behaviour there
+were 499 sentences carrying a prohibition, 274 of them with no route named. This release takes the
+three files the main loop actually runs on down to 363 and 206, and turns the two worst-behaved rules
+into machinery. Nothing was dropped, and the ten specialist contracts were read line by line and left
+alone: their prohibitions already name where the work goes instead.
+
+### Added
+
+- **`prose-guard`**, a check that refuses a dash used as sentence punctuation in prose Zanmai wrote
+  itself. That construction was banned in five files of the distribution and a produced document still
+  went out carrying 21 of them, on a page other people read. Your own writing is untouched: it binds
+  only where the frontmatter says the AI produced the content, and it compares the lines before and
+  after, so moving, importing or re-saving your material passes. Compound words and number ranges keep
+  their dash. Nine cases in the self-test.
+- **Files whose name carries a date from today onward are found and surfaced.** The briefing used to
+  see a date in three places only, all of them places Zanmai keeps itself: a task line it wrote, a
+  bundle's `due` field, a work object. A meeting prepared yesterday for tomorrow sits in none of them.
+  It is now read straight off the filename, anywhere in your own folders, with the journal and the
+  system folder skipped because a daily entry named by its date is the calendar, not something coming
+  up.
+- **The briefing checks itself.** A rebuild that lost a section used to look exactly like a full one,
+  and the greet then read from a source that had gone quiet. A missing section is now named and the
+  command exits non-zero.
+
+### Changed
+
+- **The session start is a walk over what is open, not a composed list of topics.** The instruction
+  used to ask for three to five items and to fill up from whatever was reachable, which is how a line
+  from a contact file describing what you do became a "topic" and how tomorrow's meeting did not
+  appear. There are now five sources in a fixed order: what the last close left as next, work waiting
+  on you, anything due or overdue, files dated from today onward, and bundles touched in the last two
+  days. Nothing else is a source. There is no target number, so one open thing is one line and a quiet
+  vault gets no list at all. Every line is checked against its truth file before it is written rather
+  than after you pick it.
+- **A page you hand over is read by Steve, not dispatched.** URLs or paths you pass in are his own
+  plain work, however many there are and whether or not the answer compares them; the researcher is
+  for finding sources you have not named. Three places used to disagree about this and the loudest one
+  won, so four catalogue pages and a plain question turned into a background job.
+- **A piece of work gets its object at the dispatch**, rather than when someone judges it will outlive
+  the turn. That judgement was made in the same breath as the work and always came out the same way,
+  which is why the list of open work stayed empty while open points were written as prose into logs.
+  The session close now writes each open point onto its object before it writes the log.
+- **`operating-principles.md` rewritten**: 5389 words to 3381, prohibitions 115 to 49, of which 76
+  named no alternative before and 34 do now. Every rule is still there; the reasoning behind them moved
+  to the background page that already existed for it, and each remaining refusal says what to do
+  instead.
+- **Checkboxes: the one route is taken rather than reported.** Asked to add items to a file that
+  already holds checkboxes, the run makes the `task add` calls and finishes. Handing the work back with
+  the name of the guard on it is a defect.
+- **A rule that has not held twice is built as a check or deleted**, never sharpened and never repeated
+  in a second file.
+
+## [0.2.6] - 2026-08-12
+
+### Changed
+
+- **The first message after setup now says what Zanmai actually does, and who does the work.**
+  Until now it named practical next steps (close a session, the slash commands) without saying what
+  the specialists are for, so a first-time user saw names like Carol or Loki with nothing attached to
+  them. It now lists what each one is for, its name in parentheses, and ends by asking what you are
+  actually trying to get done instead of a generic "what would you like to start with".
+- **An answer drawn from one page of the documentation now says when a real alternative exists**,
+  instead of answering as if that page were the whole picture. Asking where files go used to come back
+  as "into `import`" only; it now also names that material you already recognise can go straight into
+  its own `doing` folder, and invites the follow-up question rather than stopping there.
+- **`/zanmai-grill-me` and the question rounds behind a dispatch interview more rigorously.** The
+  mechanic (frontier, rounds, numbered questions with a recommendation each) was already faithful to
+  where it came from, but the questions themselves had drifted toward "what does this need to start"
+  and away from actually pressing on an idea's weak points before you build it.
+
 ## [0.2.5] - 2026-08-12
 
 ### Added
