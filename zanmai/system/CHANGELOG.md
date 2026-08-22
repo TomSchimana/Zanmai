@@ -4,6 +4,32 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.3.1] - 2026-08-22
+
+**Steve now does the small stuff himself, and the morning greeting stopped losing items.**
+
+### Added
+
+- **Office files are read directly.** Word, Excel and PowerPoint files show their text, their tables
+  row by row, and their images as separate files with a marker at the spot they belong, instead of
+  being containers nothing could open.
+
+### Changed
+
+- **A specialist is dispatched only where the step genuinely needs one.** Reading a quick fact with an
+  obvious source, a source you already have access to (a passwordless machine, a mail account you
+  already set up), or a small edit to a file that already exists, Steve now does directly instead of
+  sending Reed or Wong off on a full run for it. Reed and Wong still take over research that weighs
+  sources against each other, and any connection setup or credential or security choice.
+
+### Fixed
+
+- **The morning greeting stopped losing or misnumbering items.** A backlog item could push out
+  today's actual task, an internal work-object ID leaked into what you read, and an overflow line
+  broke the numbering. All three are fixed and locked in as test cases.
+- **Deleting no longer sends your own material and Zanmai's own working files down the same path.**
+  What you throw away goes to the trash; what Zanmai discards from its own temp folder does not.
+
 ## [0.3.0] - 2026-08-12
 
 **The rule set is smaller, and the rules that kept failing are checks now.** A session start named four

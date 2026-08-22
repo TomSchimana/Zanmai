@@ -8,7 +8,7 @@ A sourced, written answer you can keep, rather than something that merely sounds
 
 Ask to compare two options, for the current state of something, for the best of a category, or hand over a page, video or code repository to be read. Anything you might act on goes through research rather than being answered from memory, because a plausible-looking list produced from memory cannot be checked and quietly goes out of date.
 
-Handing over a single page to read back is quick and happens directly. A comparison across sources is the bigger job and is announced before it runs, since it takes minutes.
+Handing over a single page to read back is quick and happens directly. A single fact with an obvious owner, a price, a version, a date, is also answered directly with a quick web look, no research run at all. A comparison across sources is the bigger job and is announced before it runs, since it takes minutes.
 
 ## How big the search gets
 

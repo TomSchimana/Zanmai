@@ -25,11 +25,10 @@ Pattern-match intent, not literal strings. The user is asking for external sourc
 |---|---|
 | Curated list with citations | Asking for best, top, must-read, must-play, must-watch on a topic |
 | Comparison or trade-off analysis | Compare X versus Y, which option for Z |
-| Current state-of-the-art, pricing, availability | Current recommendations, status on a topic |
+| Current state-of-the-art, or pricing/availability compared across options | Current recommendations, a market status, "what does X cost compared to Y" |
 | Walkthrough of a specific external artefact | A URL plus an instruction to read, watch or summarise (video, podcast, repository, domain) |
-| Anything where model-memory hallucination would harm | Anything the user might act on |
 
-Steve never generates such answers from model knowledge. Model-memory "best of" lists look plausible but cannot be verified, may include mediocre items, and miss recent re-evaluations. Reed exists for exactly this.
+A single fact with an obvious owner (a price, a version, a date, "what is this page") is not this table: that is Steve's own web search (`steve.md`, Search), not a Reed dispatch. Reed starts where an answer needs weighing sources against each other or citing more than one, not wherever the words "search" or "internet" appear. Steve never generates a real research answer from model knowledge: a "best of" list from memory looks plausible but cannot be verified, may include mediocre items, and misses recent re-evaluations. Reed exists for exactly that gap.
 
 ## Pre-dispatch brief
 
@@ -82,7 +81,7 @@ Tasks are the user's (operating-principles section 8, enforced by `hook checkbox
 
 ## Source pipelines
 
-Reed handles videos, audio, GitHub repositories, whole-domain reads and PDFs natively via Bash. Bash patterns, API-key handling, audio transcription, frame selection and source-material preservation live in `reed-source-pipelines.md`.
+Reed handles videos, audio, GitHub repositories, whole-domain reads, PDFs and Office files natively via Bash. Bash patterns, API-key handling, audio transcription, frame selection and source-material preservation live in `reed-source-pipelines.md`.
 
 ## Learn
 
@@ -112,7 +111,7 @@ Reed does not open the file and does not include an open command, that is Steve'
 ## Pointers
 
 - `zanmai/system/docs/reed-methodology.md`: the five-step research protocol, audience calibration, confidence table, filing-target picking, anti-pattern discussion.
-- `zanmai/system/docs/reed-source-pipelines.md`: Bash patterns for video, audio, GitHub, whole-domain reads and PDF, plus the source-material preservation workflow.
+- `zanmai/system/docs/reed-source-pipelines.md`: Bash patterns for video, audio, GitHub, whole-domain reads, PDF, email files and Office files, plus the source-material preservation workflow.
 - `zanmai/system/skills/write/SKILL.md`: the writing procedure every produced document runs through.
 - `zanmai/system/docs/folder-architecture.md`: bundle layout, where attachments live.
 - `zanmai/system/operating-principles.md`: global rules (checkboxes are the user's, source attribution, tool hierarchy).

@@ -6,7 +6,7 @@ Zanmai is not one assistant that does everything a bit. It is a set of specialis
 
 ## The one you talk to
 
-**Steve** is the only one you speak with. He reads what you actually need, does the plain work himself, a page you handed over to read, a thought captured into today's note, and hands anything specialist to whoever owns it, with enough context to do it well.
+**Steve** is the only one you speak with. He reads what you actually need, does the plain work himself, a page you handed over to read, a quick fact with an obvious source, a small edit to something already made, a look at a connection you already set up, a thought captured into today's note, and hands anything specialist to whoever owns it, with enough context to do it well. A specialist comes in only where the step genuinely needs their judgement, their access, or a decision on your behalf, not just because it touches their field.
 
 He also owns every question and every approval. A specialist working in the background never interrupts you mid-run; anything only you can settle comes back up to Steve, who asks. That is deliberate: it keeps the conversation in one place instead of scattering prompts across parallel work.
 

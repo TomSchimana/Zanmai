@@ -28,7 +28,7 @@ Filler and false starts stay in a journal entry. That is how people talk, and ed
 
 ## Where a note ends up
 
-Depending on what it turns out to be: a journal entry goes into today's note as spoken, an instruction is carried out the way it would be if you had typed it, an idea goes to the theme it belongs to, and something about work already running goes onto that work. One note can be more than one of these, and gets split.
+Depending on what it turns out to be: a journal entry goes into the note for the day you spoke it, not the day it happens to be read, an instruction is carried out the way it would be if you had typed it, an idea goes to the theme it belongs to, and something about work already running goes onto that work. One note can be more than one of these, and gets split.
 
 **The recording itself is kept**, in the day you spoke it, beside whatever came out of it. It moves out of the import folder so it cannot be read twice, and it is not deleted: it is yours, a transcript is a reading of it, and keeping the original next to the reading is what makes a garbled word repairable years later.
 

@@ -197,6 +197,96 @@ Local PDF the user pointed at: `Read` it directly with the path.
 
 Citation: filename or URL plus page range.
 
+## Email files (.eml) with attachments
+
+An `.eml` is a container, not something `Read` can open directly: the PDF or image inside it is
+MIME-encoded, not yet a file on disk. Extract with the standard library only, no third-party PDF
+package (no `pypdf`, nothing that needs installing):
+
+```python
+import email, email.policy, pathlib
+msg = email.message_from_bytes(pathlib.Path("<source>.eml").read_bytes(), policy=email.policy.default)
+for part in msg.walk():
+    name = part.get_filename()
+    if name:
+        pathlib.Path(f"$work_dir/{name}").write_bytes(part.get_payload(decode=True))
+```
+
+Then `Read` each extracted file exactly like any other local PDF or image, and read the email's own
+body the same way (`msg.get_body(preferencelist=("plain", "html"))`, as text). Extraction is the only
+step that needs code; reading the result is `Read`'s job, same as everywhere else in this document.
+
+## Office files (.docx, .xlsx, .pptx)
+
+Same situation as the `.eml`, one format further: a `.docx` is a zip archive of XML, so `Read` on the
+path returns binary noise. It is also the case where improvising costs the most time, because the
+file opens far enough to look readable. Standard library only, no `python-docx`, nothing that needs
+installing. Do not reach for `unzip` either: the archive is the easy part, and a shell tool gives you
+thirteen loose XML files instead of the text.
+
+```python
+import pathlib, sys, zipfile, xml.etree.ElementTree as ET
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+DRAW = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+PKG = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+source, work_dir = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+work_dir.mkdir(parents=True, exist_ok=True)
+
+with zipfile.ZipFile(source) as archive:
+    body = ET.fromstring(archive.read("word/document.xml")).find(W + "body")
+    rels = {r.get("Id"): r.get("Target")
+            for r in ET.fromstring(archive.read("word/_rels/document.xml.rels"))
+            if r.tag == PKG + "Relationship"}
+    for name in archive.namelist():          # images become files Read can open
+        if name.startswith("word/media/"):
+            (work_dir / pathlib.Path(name).name).write_bytes(archive.read(name))
+
+def para(node):
+    out = []
+    for el in node.iter():
+        if el.tag == W + "t":
+            out.append(el.text or "")
+        elif el.tag == W + "tab":
+            out.append("\t")
+        elif el.tag in (W + "br", W + "cr"):
+            out.append("\n")
+        elif el.tag == DRAW + "blip":        # keep where the picture sits in the text
+            out.append(f" [image: {pathlib.Path(rels.get(el.get(REL + 'embed'), '?')).name}] ")
+    return " ".join("".join(out).split())
+
+lines = []
+for block in body:
+    if block.tag == W + "p":
+        if (text := para(block)):
+            lines.append(text)
+    elif block.tag == W + "tbl":             # a table read cell by cell, not flattened
+        for row in block.findall(W + "tr"):
+            cells = [" ".join(para(p) for p in cell.findall(W + "p")).strip()
+                     for cell in row.findall(W + "tc")]
+            if any(cells):
+                lines.append(" | ".join(cells))
+(work_dir / f"{source.stem}.txt").write_text("\n".join(lines), encoding="utf-8")
+```
+
+Then `Read` the `.txt` and each extracted image. Three details are what make this worth writing down
+rather than improvising each time.
+
+- **Tables come out as rows.** Walking every `w:t` in the file is the obvious shortcut and it turns a
+  table of figures into one run-on line, which is unusable for exactly the documents that carry
+  tables.
+- **The image marker keeps the reference.** A document that says "see screenshot 1" is worthless if
+  the text and the pictures arrive as two unrelated piles. The `[image: …]` marker sits where the
+  picture sits.
+- **Everything lands in `$work_dir` under `zanmai/temp/`**, not in a scratch folder of the host's.
+  That is where the retention sweep can clear it and where the delete-guard permits a cleanup.
+
+`.xlsx` and `.pptx` are the same kind of archive with different parts inside, so the approach carries
+over but the part names do not: print `zipfile.ZipFile(source).namelist()` and work from what is
+actually in that file rather than from a remembered path. A legacy `.doc` or a `.pages` file is not
+this format at all and no amount of unzipping makes it one; that needs the user to export it, which
+is a question to ask, not a workaround to build.
+
 ## Cleanup and source-material preservation
 
 After Step 4 (synthesise), run `rm -rf "$work_dir"` for every temp dir. The deliverable in the vault is the durable artefact. Downloaded videos and cloned repos are not.

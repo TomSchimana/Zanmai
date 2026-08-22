@@ -25,14 +25,14 @@ The journal is always there, so there is nothing to check first. Capture happens
 5. **Stub the obvious, propose the rest.** When the input clearly names a real, returnable person or organization (a full name with context, a named company), create the stub via `zanmai.py contact create` so the link resolves. When the name is a fragment, a one-off, or ambiguous, flag it as a proposal and create nothing. When in doubt, propose, a daily carries many transient names, and recurrence across days is the signal to promote one.
 6. **Template-independent.** Require and write no template. If the entry already carries a shell the user's editor put there, append below whatever is there. Otherwise append into a plain note.
 7. **No proactive mood.** Never invent a `mood:` value. Record mood only when the user gave a signal or asked to log one.
-8. **Text only.** Audio (`mp3`, `wav`, `m4a`, voice memos) is transcribed by Reed first: Steve dispatches Reed, takes the transcript back, then runs this capture with the text. This skill handles no audio itself.
+8. **Text only.** Audio (`mp3`, `wav`, `m4a`, voice memos) is transcribed by Reed first: Steve dispatches Reed, takes the transcript back, then runs this capture with the text. This skill handles no audio itself. Where that text is bound for the daily, the day is the recording's own day, not today (Hard Rule 1's own logic, applied backward): use `zanmai.py voice journal-append` instead of `journal append` for that one case.
 
 ## Capture workflow
 
 In order, every input.
 
-1. **Resolve target.** Default today's daily. If the trigger names the weekly, the monthly, the yearly, or a specific past period, use that (past periods only on explicit request). Read the target entry and classify its state: missing, shell only, has user content.
-2. **Append verbatim.** `zanmai.py journal append --kind <daily|weekly|monthly|yearly> --text "<the user's words>"`, unchanged. The command creates the bundle folder and the entry if they are not there, appends below whatever is already in it, and logs the write. Never assemble the path by hand: the ISO week is the trap, the week of 1 January belongs to the previous year more often than not.
+1. **Resolve target.** Default today's daily, today meaning the day the words were said or written, not the day they are read. That is the same day for a live chat dump, so the default holds for the normal case without anyone thinking about it. If the trigger names the weekly, the monthly, the yearly, or a specific past period, use that (past periods only on explicit request). Read the target entry and classify its state: missing, shell only, has user content.
+2. **Append verbatim.** `zanmai.py journal append --kind <daily|weekly|monthly|yearly> --text "<the user's words>"`, unchanged. The command creates the bundle folder and the entry if they are not there, appends below whatever is already in it, and logs the write. Never assemble the path by hand: the ISO week is the trap, the week of 1 January belongs to the previous year more often than not. Text read off a voice recording is the one case where the day of writing and the day of speaking can genuinely differ: use `zanmai.py voice journal-append` instead (`voice` skill Step 5), it derives the target day from the recording rather than defaulting to today.
 3. **Mirror mood.** If the input carries a mood signal, stated ("müde", "on fire") or clearly implied, write it into the note's frontmatter via `Edit` on the frontmatter block, never into the body as a reshaped line.
 4. **Habit side effects.** For an activity that matches an existing habit bundle in `habits/`, write `- [x] [[<habit-slug>]]` as a pointer and update the habit bundle's `last_done:` field. The bundle is the canonical completion record; the note holds the pointer.
 5. **Entities.** For a clearly identified person or organization with no contact file, create the stub (Hard Rule 5). For entity-shaped but uncertain names, prepare a flag for the user. For entities that already have files, propose `[[wikilink]]`s. Read `zanmai/memory/patterns.json` once to match known slugs.
@@ -81,6 +81,7 @@ zanmai.py journal read       --kind <kind> [--date]              print it, or sa
 zanmai.py journal list       --kind <kind> [--limit N]           what exists, with bundle contents
 zanmai.py journal rollup-due [--date]                            which rollups are due, and from what
 zanmai.py journal rollup     --kind <kind> --text "…"            write it, once per period
+zanmai.py voice journal-append --file <recording> --text "…"     voice-derived only, dates by the recording
 ```
 
 `<kind>` is `daily`, `weekly`, `monthly` or `yearly`. Use `Edit` on an entry only for something no

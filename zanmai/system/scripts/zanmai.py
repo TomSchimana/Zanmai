@@ -1509,6 +1509,20 @@ def _recording_order_disagreement(files: list[Path]) -> str | None:
     return "order differs"
 
 
+def _recording_date(path: Path) -> tuple[datetime, str]:
+    """The day a recording was made, and how that was determined.
+
+    Same signal `voice scan` already orders by: the file's own date first, a timestamp
+    parsed from the name second. A running number or no signal at all cannot date
+    anything, today stands in and the caller is told why rather than presenting it as
+    the recording's own date.
+    """
+    rank, value, basis, _shown = _recording_order_key(path)
+    if rank in (0, 1):
+        return datetime.fromtimestamp(value), basis
+    return datetime.now(), "no date signal, using today"
+
+
 def _pending_recordings(vault: Path) -> list[Path]:
     """Every recording waiting in the import folder, sub-folders included."""
     folder = _recordings_dir(vault)
@@ -1873,6 +1887,28 @@ def cmd_voice_archive(args: argparse.Namespace) -> int:
     _append_activity_log(vault, args.agent or "zanmai.py",
                          f"filed recording {target.relative_to(vault)}")
     print(f"ok: recording kept at {target.relative_to(vault)}")
+    return 0
+
+
+def cmd_voice_journal_append(args: argparse.Namespace) -> int:
+    """Append text to the daily note for the day a recording was made, not the day it is read.
+
+    A recording processed days after it was spoken still belongs to the day it was
+    spoken on: the words were true then, and misplacing "heute war kein guter Tag" a
+    week later reads as if it happened on the wrong day. The date is derived here, from
+    the recording itself, so the caller never has to work it out or remember to pass it.
+    """
+    vault = Path(args.vault).resolve()
+    source = Path(args.file)
+    if not source.is_absolute():
+        source = vault / args.file
+    if not source.is_file():
+        print(f"fail: no such recording: {args.file}", file=sys.stderr)
+        return 1
+    date, basis = _recording_date(source)
+    rel = _journal_append(vault, _journal_note(vault, "daily", date), args.text,
+                          "voice journal append")
+    print(f"ok: appended to {rel} (dated by {basis})")
     return 0
 
 
@@ -4066,6 +4102,253 @@ def cmd_journal_rollup(args: argparse.Namespace) -> int:
     return 0
 
 
+# The greet list, decided here instead of in the prompt.
+#
+# `experts/steve/greeting.md` used to carry the whole judgement: which sources, in what order, a cap
+# of six, the overflow as its own numbered line rather than a nested sub-bullet, no work-object id.
+# Each of those was written down plainly, with its reason, and each broke in a live session anyway.
+# On 2026-08-12 two months of meeting backlog buried a task written that same day. On 2026-08-14 a
+# work-object id reached the user. On 2026-08-17 the overflow came back as a sub-bullet and the
+# numbering jumped from 4 to 6. A rule that does not hold on the third attempt is not a wording
+# problem, so ordering, the cap, the overflow line and id-stripping happen here. What is left to
+# judgement is the wording of a line and the closing sentence.
+_GREET_CAP = 6
+_GREET_WEEK_DAYS = 7          # what still counts as coming up rather than later
+_GREET_RECENT_OVERDUE = 14    # older than this, an overdue item is backlog: counted, not listed
+_GREET_UNDATED_DAYS = 7       # how fresh a journal or focus file must be for its undated items
+
+# Two orders, and keeping them apart is the point. Which items get one of the six slots is decided
+# by urgency alone; how the chosen ones are laid out is decided by group. Sorting the selection by
+# group instead was tried first and reproduced the 2026-08-12 defect in miniature: a four-day-old
+# test entry took slot one from seven items due that day, because "overdue" led the group order.
+_GREET_GROUPS = ("waiting", "overdue", "today", "tomorrow", "this week", "open")
+
+_GREET_HEADINGS = {
+    "waiting": "Waiting on you",
+    "overdue": "Overdue",
+    "today": "Today",
+    "tomorrow": "Tomorrow",
+    "this week": "Coming up",
+    "open": "Open, no date",
+}
+
+_GREET_LINK_RE = re.compile(r"\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]")
+
+
+def _greet_group(days: int) -> str:
+    """Which time group a day-distance belongs to."""
+    if days < 0:
+        return "overdue"
+    if days == 0:
+        return "today"
+    if days == 1:
+        return "tomorrow"
+    return "this week"
+
+
+def _greet_text(raw: str) -> str:
+    """The display form of an item: wikilinks reduced to what they show, whitespace normalised.
+
+    A greet line is read, not clicked, so `[[anna-berg|Anna]]` has to arrive as `Anna`. Doing it
+    here rather than asking for it means a link cannot survive into the greet by being overlooked.
+    """
+    ohne_link = _GREET_LINK_RE.sub(
+        lambda m: (m.group(2) or _human_label_for_slug(m.group(1))).strip(), raw or ""
+    )
+    return re.sub(r"\s+", " ", ohne_link).strip()
+
+
+_GREET_SAME_SHARE = 0.6   # how much of the shorter wording has to appear in the longer one
+
+
+def _greet_words(text: str) -> set[str]:
+    """The words of an item that carry its meaning, for comparing two wordings of one matter."""
+    return {w for w in re.findall(r"\w+", text.lower()) if len(w) >= 4}
+
+
+def _greet_same(a: dict, b: dict) -> bool:
+    """Whether two entries are the same matter said twice.
+
+    They arrive from separate lists that do not know about each other: a task line in the journal, a
+    work object, a dated file. A real vault had four items sitting in two of those at once, worded
+    differently each time, because the task line keeps the user's own sentence while the work object
+    carries the shorthand the machine wrote for it. Comparing the strings catches none of those, so
+    the overlap of the meaningful words decides, and only for entries that fall on the same day. Two
+    different jobs sharing a date and one word stay two jobs.
+    """
+    if (a.get("due") or "") != (b.get("due") or ""):
+        return False
+    wa, wb = a["words"], b["words"]
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / min(len(wa), len(wb)) >= _GREET_SAME_SHARE
+
+
+def _greet_items(vault: Path, now: datetime | None = None) -> dict:
+    """What the greet names: chosen, grouped, sorted and capped, ready to be worded.
+
+    Returns `{"items": [...], "overflow": {...} | None, "totals": {...}}`. Every item carries its
+    group, its display text and where it came from. The caller renders them in the order given and
+    adds nothing: the selection is the decision, and it was made here.
+    """
+    jetzt = now or datetime.now()
+    heute = jetzt.date()
+    aufgaben = _task_scan(vault)
+
+    kandidaten: list[dict] = []
+    rueckstand = 0
+
+    def aufnehmen(gruppe: str, roh: str, quelle: str, naehe: int,
+                  rang: int = 1, faellig: str = "") -> None:
+        text = _greet_text(roh)
+        if not text:
+            return
+        neu = {"group": gruppe, "text": text, "source": quelle, "near": naehe,
+               "rank": rang, "due": faellig, "words": _greet_words(text)}
+        for alt in kandidaten:
+            if _greet_same(alt, neu):
+                # Keep the earlier one: task lines carry the user's own wording, work objects carry
+                # a shorthand the machine wrote. Only the rank is taken over, because "waiting on
+                # you" is a fact about the matter no matter which source states it.
+                alt["rank"] = min(alt["rank"], rang)
+                if rang == 0:
+                    alt["group"] = "waiting"
+                return
+        kandidaten.append(neu)
+
+    for eintrag in _task_due_soon(vault, _GREET_WEEK_DAYS, eintraege=aufgaben):
+        tage = eintrag["days"]
+        if tage < -_GREET_RECENT_OVERDUE:
+            rueckstand += 1
+            continue
+        aufnehmen(_greet_group(tage), eintrag["text"], eintrag["path"], abs(tage),
+                  faellig=eintrag["due"])
+
+    for row in _work_due_soon(vault, _GREET_WEEK_DAYS):
+        faellig = (row.get("due") or "").strip()
+        if not _task_date_ok(faellig):
+            continue
+        tage = (datetime.strptime(faellig, "%Y-%m-%d").date() - heute).days
+        if tage < -_GREET_RECENT_OVERDUE:
+            rueckstand += 1
+            continue
+        # `waiting on you` is the one urgency signal in the vault that is a recorded fact rather
+        # than a judgement: something is on the user and the machine cannot move it. It goes first,
+        # ahead of distance. Without it a hard deadline four days out sits behind every routine
+        # item due today and drops out of the six.
+        wartet = (row.get("state") or "").strip() == "waiting on you"
+        # The row's `id` stays here. It is the handle for `zanmai.py work` and tells the user
+        # nothing; on 2026-08-14 one reached a greet because the rule against it lived in prose.
+        aufnehmen("waiting" if wartet else _greet_group(tage), row.get("work", ""),
+                  "work object", abs(tage), rang=0 if wartet else 1, faellig=faellig)
+
+    for eintrag in _dated_files_ahead(vault, _GREET_WEEK_DAYS):
+        aufnehmen(_greet_group(eintrag["days"]), eintrag["label"], eintrag["path"],
+                  abs(eintrag["days"]), faellig=eintrag["date"])
+
+    # Undated, and only from a file touched in the last few days: a task written into today's
+    # journal belongs in the greet whether it carries a date or not. The window is what stops a
+    # month of ticked-over lists from arriving as if it were current.
+    frisch = _collect_open_todos(vault, _journal_roots() + [FOCUS_DIR],
+                                 days_back=_GREET_UNDATED_DAYS, eintraege=aufgaben)
+    for t in sorted((t for t in frisch if not t["due"]), key=lambda t: t["mtime"], reverse=True):
+        aufnehmen("open", t["text"], t["path"], _GREET_WEEK_DAYS + 1)
+
+    # Selection by urgency: what waits on the user first, then distance from today, and an overdue
+    # item ahead of a coming one at equal distance because that one is already missed.
+    kandidaten.sort(key=lambda e: (e["rank"], e["near"], 0 if e["group"] == "overdue" else 1))
+
+    # The cap is six lines including the overflow line, never six plus one. Where an overflow is
+    # needed it takes the last slot, which is why the visible list is cut one short.
+    braucht_ueberlauf = rueckstand > 0 or len(kandidaten) > _GREET_CAP
+    grenze = _GREET_CAP - 1 if braucht_ueberlauf else _GREET_CAP
+    sichtbar = kandidaten[:grenze]
+    verdeckt = kandidaten[grenze:]
+
+    # Layout by group, once the six are settled. Same items, read in an order that says something.
+    ordnung = {name: i for i, name in enumerate(_GREET_GROUPS)}
+    sichtbar.sort(key=lambda e: (ordnung[e["group"]], e["near"]))
+
+    ueberlauf = None
+    if braucht_ueberlauf:
+        heute_verdeckt = sum(1 for e in verdeckt if e["group"] == "today")
+        offen_verdeckt = sum(1 for e in verdeckt if e["group"] == "open")
+        nah_verdeckt = len(verdeckt) - offen_verdeckt
+        teile: list[str] = []
+        if nah_verdeckt:
+            zusatz = f" ({heute_verdeckt} of them today)" if heute_verdeckt else ""
+            teile.append(f"{nah_verdeckt} more within the next {_GREET_WEEK_DAYS} days{zusatz}")
+        if offen_verdeckt:
+            # Counted apart, because folding an undated item into "within the next 7 days" states a
+            # deadline nobody wrote.
+            teile.append(f"{offen_verdeckt} open with no date")
+        if rueckstand:
+            teile.append(f"{rueckstand} older overdue")
+        ueberlauf = {
+            "group": "more",
+            "text": ", ".join(teile),
+            "hidden_near": nah_verdeckt,
+            "hidden_today": heute_verdeckt,
+            "hidden_undated": offen_verdeckt,
+            "hidden_backlog": rueckstand,
+        }
+
+    return {
+        "items": sichtbar,
+        "overflow": ueberlauf,
+        "totals": {
+            "open_tasks": len(aufgaben),
+            "candidates": len(kandidaten),
+            "backlog": rueckstand,
+        },
+    }
+
+
+def _greet_block(vault: Path, now: datetime | None = None) -> list[str]:
+    """The greet list as hook output: numbered, grouped, capped, nothing left to arrange.
+
+    Rendered as data rather than as a suggestion. The numbers are printed, so they cannot skip; the
+    overflow arrives as its own numbered line, so it cannot become a sub-bullet; an empty vault
+    prints no list at all rather than a padded one.
+    """
+    walk = _greet_items(vault, now=now)
+    items = walk["items"]
+    ueberlauf = walk["overflow"]
+    if not items and not ueberlauf:
+        return ["- Nothing open and nothing dated. Greet in one sentence and ask what they want to "
+                "do; do not invent a list."]
+
+    lines = [
+        "The greet list, already selected, sorted and capped. Render exactly these lines, in this "
+        "order, one numbered line each, with the numbers as printed. Translate the group headings "
+        "and the wording into the user's writing language, keep the item's own words, and add "
+        "nothing: no extra item, no sub-bullet, no path, no id. `greeting.md` covers the tone, the "
+        "address and the closing sentence.",
+        "",
+    ]
+    heute = (now or datetime.now()).date()
+    letzte_gruppe = None
+    nummer = 0
+    for eintrag in items:
+        if eintrag["group"] != letzte_gruppe:
+            letzte_gruppe = eintrag["group"]
+            titel = _GREET_HEADINGS[letzte_gruppe]
+            # The date on the heading is what turns "today" from a word into a fact the user can
+            # check against their own calendar.
+            if letzte_gruppe == "today":
+                titel += f" ({heute.isoformat()})"
+            elif letzte_gruppe == "tomorrow":
+                titel += f" ({(heute + timedelta(days=1)).isoformat()})"
+            lines.append(f"GROUP {titel}")
+        nummer += 1
+        lines.append(f"{nummer}. {eintrag['text']}")
+    if ueberlauf:
+        nummer += 1
+        lines.append("GROUP The rest")
+        lines.append(f"{nummer}. + {ueberlauf['text']}. Offer: say \"show the open points\".")
+    return lines
+
+
 def _render_briefing(vault: Path) -> str:
     """Build the briefing.md content from current vault state. Synthesises across
     Daily/Weekly Notes, Focus-Bundles, Operation-Reports and Close-Session-Logs -
@@ -5595,10 +5878,19 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
     which Claude Code shell-expands to the project root at hook run time, so this
     file is portable: it ships with the folder and works wherever the vault is
     copied, no absolute machine path baked in. vault_root is kept in the signature
-    for the callers that pass it; the rendered command no longer needs it."""
+    for the callers that pass it; the rendered command no longer needs it.
+
+    `defaultMode: auto` is set here rather than left to the user. Zanmai routes nearly
+    every filing, index and check through its own engine, so the strictest mode turns a
+    session into a queue of prompts, and the person who has just finished setup is the
+    least equipped to know that a mode switch is what they need. The value is written
+    into the vault's own settings, never into the user's global config, so it applies
+    where Zanmai runs and nowhere else. Zanmai's own guards do not depend on it: they
+    are checks on every write, not questions put to the user."""
     zb = f"$CLAUDE_PROJECT_DIR/{SYSTEM_MATERIAL_DIR}/scripts/zanmai.py"
     config = {
         "autoMemoryEnabled": False,
+        "permissions": {"defaultMode": "auto"},
         "hooks": {
             "SessionStart": [
                 {
@@ -9423,12 +9715,18 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
         return 0
     if any(hint in command for hint in _DELETE_ALLOWED_HINTS):
         return 0
+    # Two different situations reach this point and they need two different answers. Answering both
+    # with the vault's trash sent a run that only wanted to clear its own unpacked archive off to
+    # `file trash`, which is for the user's material and wrong for a scratch directory. It then went
+    # looking for a way around instead of moving its work to where clearing up is allowed.
     print(
         f"delete-guard: refusing this command, it removes things and nothing in Zanmai removes "
-        f"things. Use `zanmai.py file trash --path <path>`, which keeps the file and its original "
-        f"path so `zanmai.py file restore` can bring it back. What is genuinely finished with is "
-        f"cleared by the retention sweep after {RETENTION_DAYS} days, and that is the only thing "
-        f"that deletes. Found: {treffer!r}.",
+        f"things. If this is the user's material, use `zanmai.py file trash --path <path>`, which "
+        f"keeps the file and its original path so `zanmai.py file restore` can bring it back. If it "
+        f"is your own working material, it does not belong outside the vault: put intermediates in "
+        f"`{SCRATCH_DIR}/<task>/`, where clearing up is permitted and the retention sweep clears "
+        f"what is left after {RETENTION_DAYS} days. That sweep is the only thing that really "
+        f"deletes. Found: {treffer!r}.",
         file=sys.stderr,
     )
     return 2
@@ -9990,6 +10288,19 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     else:
         lines.append("- `zanmai/memory/briefing.md` does not exist yet. Run `zanmai.py memory briefing` once to build the first version.")
 
+    # The greet list itself, after the briefing and before the greet shape, because it is the answer
+    # the shape is about. Built fresh here rather than read out of the briefing: the briefing is as
+    # old as the last close-session, and "today" computed against a stale build is simply wrong.
+    if not first_session:
+        try:
+            greet_lines = _greet_block(vault)
+        except Exception as fehler:  # a broken greet list must not cost the session its start
+            greet_lines = [f"- Greet list unavailable ({fehler.__class__.__name__}). "
+                           f"Compose the greet from the briefing above and say so in one line."]
+        lines.append("")
+        lines.append("---")
+        lines.extend(greet_lines)
+
     lines.append("")
     greeting_path = vault / SYSTEM_MATERIAL_DIR / "experts" / "steve" / "greeting.md"
     try:
@@ -10005,7 +10316,9 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # this hook already detects separately, and including them here every single
     # day just made every hook payload big enough to get cut to a preview, which is
     # the one thing "so the greet needs zero further tool calls" was for.
-    match = re.search(r"(?ms)^## Regular session: the walk\n.*?(?=^## Empty vault)", greeting_full)
+    # Matched on the stable prefix, not the full heading: the heading has been reworded once
+    # already, and a miss here silently ships the whole file instead of the one section.
+    match = re.search(r"(?ms)^## Regular session:.*?(?=^## Empty vault)", greeting_full)
     greeting_text = match.group(0).strip() if match else greeting_full
     if greeting_text.strip():
         lines.append("---")
@@ -11760,6 +12073,12 @@ def main(argv: list[str]) -> int:
     pv_ar.add_argument("--file", required=True)
     pv_ar.add_argument("--agent")
     pv_ar.set_defaults(func=cmd_voice_archive)
+
+    pv_ja = sub_voice.add_parser("journal-append", help="Append text to the daily note of the day the recording was made, not the day it is read.")
+    pv_ja.add_argument("vault", nargs="?", default=".")
+    pv_ja.add_argument("--file", required=True)
+    pv_ja.add_argument("--text", required=True)
+    pv_ja.set_defaults(func=cmd_voice_journal_append)
 
     p_work = sub.add_parser("work", help="Work objects: one row plus one page per piece of work, on the machine's own side.")
     sub_work = p_work.add_subparsers(dest="work_cmd", required=True)

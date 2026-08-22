@@ -22,9 +22,9 @@ Version 3.10 or newer is required. Some systems have several Pythons installed, 
 
 ## Too many approval prompts
 
-Zanmai runs its own engine for almost everything it files, indexes and checks, so in the strictest permission mode a session interrupts you a lot.
+Zanmai runs its own engine for almost everything it files, indexes and checks, so in the strictest permission mode a session interrupts you a lot. Setup therefore writes `defaultMode: auto` into this vault's `.claude/settings.json`, which lets Claude Code judge commands itself instead of asking you each time. It applies to this folder only and leaves your global Claude Code settings untouched. The status line shows which mode is active, for example `⏵⏵ auto mode on`.
 
-Press `Shift+Tab` to cycle the mode and choose auto mode, which lets Claude Code judge commands itself instead of asking you each time. If your plan does not offer it, accept edits is the next best step. The status line shows which mode is active, for example `⏵⏵ auto mode on`. To have a mode from the start, set `defaultMode` in your Claude Code settings.
+If you still get a prompt at every step, the setting has not taken effect yet. A mode is read when a session starts, so the setup session itself still runs in whatever mode you opened it with, and not every plan offers auto mode. Press `Shift+Tab` to cycle the mode by hand and pick accept edits if auto is not in the list. The same key is also the way back if you would rather approve each step yourself.
 
 Two things are worth knowing. Zanmai's own protections do not depend on the mode, because they are checks that run on every write rather than questions put to you: a note without its required fields is still refused, the system folder still cannot be overwritten, and a snapshot is still taken before anything risky. And bypass mode is a different matter, it switches off far more than the prompts, so leave it alone unless you are working in a throwaway environment.
 

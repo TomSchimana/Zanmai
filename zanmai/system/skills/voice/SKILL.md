@@ -62,6 +62,8 @@ This is the only step that can hear the audio again, which is why it is the one 
 
 Read all of them first, then decide, then file. What a note is comes from what it says and from the vault it landed in, not from a list of types: how the day went belongs in the periodic note as spoken, an instruction is carried out as if it had been typed, four sets of squats belong wherever this person's training already lives, an errand belongs where their errands are, and an idea belongs to the theme it is about. None of that is recognisable from the wording, all of it from the context, which is why there is no table here.
 
+**The day it belongs to is the day it was spoken, not the day this step runs.** A recording read three days after it was made still speaks from that day: "heute war kein guter Tag" said on Monday and read on Thursday belongs in Monday's entry, not Thursday's. `zanmai.py voice journal-append --file <recording> --text "…"` writes it there directly, it derives the date from the recording itself (Step 1's dating) the same way `voice archive` already does for the audio file, so this is never worked out by hand and never defaults to today. Everything else the note becomes (an instruction, an idea, material to file) is unaffected, only the journal placement follows the recording's own date.
+
 Two things follow. A note can hold more than one thing: split it and treat each part on its own merits rather than filing the whole under the loudest sentence. And a run of notes is usually one thing, not several, because a set is spoken one recording at a time; where an entry for it already exists, this goes into that one rather than beside it.
 
 Say in the report where each part went and why. That sentence is what makes "move it to X" cheap, and it is the reason a decision taken without the user is safe to take.
@@ -102,7 +104,7 @@ Everything up to the report happens without asking: transcribing, correcting, fi
 
 ## Files
 
-- `zanmai.py voice scan | lexicon | transcribe | archive`
+- `zanmai.py voice scan | lexicon | transcribe | archive | journal-append`
 - `zanmai.py work open | log | ask | done`, the run's own object
 - `zanmai/system/skills/journal/SKILL.md`, where a spoken journal entry goes
 - `zanmai/system/tool-register.json`, entries `ffmpeg`, `whisper`, `whisper-model`

@@ -52,35 +52,32 @@ What is actually on your mind right now? Tell me what you are trying to get
 done, and I will walk you through how we would tackle it together.
 ```
 
-## Regular session: the walk
+## Regular session: the greet list
 
 Detection: `.last-session-end` exists, or the activity-log shows more than the setup line.
 
-**The greet is what is really going on, not a data dump.** Steve looks in these four places and names what he finds there. Not five mechanical sources walked in a fixed order regardless of content: what actually matters to the user leads, and a distant, stale backlog does not get to crowd it out just because it is first in some list.
+**The list is handed to Steve, not composed by him.** The session-start hook prints it under "The greet list, already selected, sorted and capped": what waits on the user first, then the time groups (Overdue, Today, Tomorrow, Coming up, Open no date), numbered, six lines at most, with the leftover as the final numbered line. Which items get a slot is decided by urgency, how they are laid out by group. The choosing, the ordering, the cap and the overflow already happened in `zanmai.py`. That is deliberate: those four rules stood in this file in plain words, with their reasons, and each of them still broke in a live session.
 
-1. **Focus.** The active focus bundles (`kind: focus`): what the user is actively pursuing right now. If one exists, it is close to always worth a line.
-2. **Habits.** What a recurring habit bundle (`kind: habit`) has coming up or just produced: a meeting prepared, a protocol from one, a habit-bundle item due soon. Read from the same due-items and recent-activity data as the rest, filtered to `habits/`.
-3. **Active work.** Whatever bundle has real, recent activity that is not focus or habit, where a lot has genuinely just happened (an import, a migration, several files touched today). This is not a weak fallback, it is one of the four things the user asked to see.
-4. **Open and near.** Every task the user actually has to act on: dated items due today, tomorrow, this week, or only just overdue, and undated open tasks from a recent journal entry or focus bundle (the briefing's "Daily, Weekly and Monthly Notes" and "focus bundles" open-todo lists) that have not gone through `zanmai.py task done`. A task written in today's journal belongs here whether it carries a date or not, and outranks a meeting note from three months ago that nobody has touched since: sort by nearness/recency, not by how long the debt has existed. A pile of old, unaddressed backlog is one summary line ("+ N older overdue, say 'show overdue'"), never a wall of individual lines pushing today's item out of the six.
+**What Steve does with it.** Render the printed lines in the order given, keeping the printed numbers. Translate the group headings and the wording into the user's writing language, keep the item's own words, and turn each line into a readable sentence: the human label plus what is actually open about it. Add nothing. Not an extra item, not a sub-bullet under a line, not a path, not an id, not a category the list does not contain. Where the list is empty, the hook says so and the greet is one sentence plus a question.
 
-**These four are the whole list.** Not "what the last close-session log said is next": that log is read for continuity when the user asks about it, but its own next-steps paragraph is not a walk source, because it is exactly what buried a same-day task behind two months of meeting backlog on 2026-08-12. Not a target number to hit: an empty category is skipped, not padded. The owner-contact body describes the person and holds no open items; the count of files waiting in `import/` is a signal line the hook prints, not a topic.
-
-**Six lines, hard cap, never padded.** Fill the numbered list from the four categories above by actual relevance (what is nearest, most active, most genuinely the user's right now), not by mechanically exhausting category 1 before touching category 2. Six is a ceiling, not a target: two genuine items make a two-line list, none make no list, and a weak, distant item is never pulled in just to reach the number. Where a category holds more than fits, the overflow is its own numbered line, counted against the six, for example "5. + 4 more overdue, say 'show overdue' to see them." Never a sub-bullet nested under the item before it: that is two items rendered as one, the same failure as folding six lines into a paragraph.
-
-**No re-reading, no rebuild, no dispatch.** The walk composes directly from the `briefing.md` text already in context. It is not re-opened bundle by bundle before naming an item, `zanmai.py memory briefing` is never run to rebuild it fresh, and it is never handed to an Agent or Explore dispatch: all three turn a few-second greet into a vault-wide scan, for a staleness case a real run found zero times in fifteen checks. Where a named item turns out stale, that is a write-path defect, a checkbox that should have gone through `zanmai.py task done`, not something the greet re-derives at every start.
-
-**Numbered list, not prose.** Each item found is its own numbered line, never folded into a summary sentence ("13 overdue points from meetings" is not a line, it is what happens when six lines get merged into one). Where several overdue items share one meeting or one day, one numbered line per item still, unless the six-line cap is already reached, in which case they are the "+ N more" line, not a paragraph.
+**No re-reading, no rebuild, no dispatch.** The greet uses the list and the `briefing.md` text already in context. Bundles are not re-opened one by one before naming an item, `zanmai.py memory briefing` is never run to rebuild it fresh, and none of this goes to an Agent or Explore dispatch: all three turn a few-second greet into a vault-wide scan, for a staleness case a real run found zero times in fifteen checks. Where a named item turns out stale, that is a write-path defect, a checkbox that should have gone through `zanmai.py task done`, not something the greet re-derives at every start.
 
 Shape:
 
 ```
 Hello <preferred-address>.
 
-1. <what the walk found, one line, human label plus what is actually open about it>
+<group heading, translated>
+1. <the printed item, worded as a readable line>
 2. <the next one>
+
+<group heading, translated>
+3. <...>
 
 <one closing line inviting them to pick one or say what they have planned>
 ```
+
+**If the list is not there**, the hook did not run. Then compose from `briefing.md` in the same shape: the same time groups in the same order, six lines including the overflow, nearest first. Say in one line that the session started without its hook.
 
 No wikilinks and no ids in the greet: a bundle is its plain human label, nothing in `[[double brackets]]`, no slug, no work-object id (`53956b20` is Steve's own reference for `zanmai.py work`, never something the user reads). The click-target is not the greet's job. System-internal housekeeping is not an item: vault mechanics run silently, and anything the user genuinely has to know is handled before the greeting or named in one short line at the top.
 
