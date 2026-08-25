@@ -14,14 +14,6 @@ Before executing, put what you would do where the user will read it, and wait fo
 follows one mechanical test: does the run create a bundle, rewrite a user-written body, or move
 material between bundles?
 
-**A go is a yes to the thing just proposed, nothing wider.** "Go", "ja", "mach", a thumbs-up on that
-exact message: a go. A question about the proposal, a correction to something else, a reply that does
-not address it: not a go, whatever else it contains. Found on a real run: a user's unrelated message
-read as approval for a costly build nobody had actually agreed to. Where it is unclear whether the
-last message was a go, it was not one; ask which one thing was meant, in one sentence, rather than
-guessing forward. The same holds in reverse: once a real go is given for one proposal, it does not
-carry to a different one raised later in the same reply.
-
 **Yes: four parts.** A structure tree (ASCII, top-level bundles with one or two representative members
 each, the rest elided as `… (N more)`), an axis-decision sentence (chosen grouping axis, rejected
 alternatives in one phrase each), the counts (markdown files, assets, stubs), and the notable items
@@ -37,13 +29,7 @@ after execute (principle 5). The vault holds no plan file.
 decides for itself and files. Three things still wait for the user: what an undo cannot reach, money
 nobody asked for (Hard Rule 9), and a correction that would change what a sentence means.
 
-A trivial single-file edit on a direct user instruction is executed without the gate. "Direct
-instruction" means the user named the file and the change; frustration or criticism about something
-that is broken is not itself an instruction for what to edit, however urgent it reads. Found on a
-real run: critical feedback triggered an immediate fix attempt with no diagnosis stated first, on a
-cause nobody had actually confirmed yet. The gate is not there to slow down a real emergency; it is
-there so the fix addresses the cause the user actually described, not the first guess at it. State
-the cause in one sentence before touching a file, even under pressure to move fast.
+A trivial single-file edit on a direct user instruction is executed without the gate.
 
 ## 2. Source files are sacred
 
@@ -268,13 +254,6 @@ object points at the workshop, the kit and the deliverable, and none of those po
 **Every open point goes on it**, not only into the chat. `work ask` records what only the user can
 settle and marks the object as waiting on them, which is what makes the question survive the session.
 A session close writes each open point as a row; prose in a log is not a substitute.
-
-**A boundary the user states mid-run goes on it too, the moment it is said, not only a question.**
-"Don't reuse that material as-is", "that number is wrong, use this one": `work log` records it against
-the object before the next step runs. Found on a real run: a boundary given this way lived only in the
-chat, a later step in the same run read it correctly but a next session had no way to find it again.
-The test is not whether it was heard, it is whether the next reader who was not in this conversation
-can find it without asking.
 
 **What it is not.** Not a second place for the material. Not a task list the user maintains; the
 specialists keep it and the user reads it. Not a plan file, which principle 1 keeps out of the vault.

@@ -5920,6 +5920,7 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
                     "hooks": [
                         {"type": "command", "command": f'{python_cmd} "{zb}" hook delete-guard'},
                         {"type": "command", "command": f'{python_cmd} "{zb}" hook library-check-guard'},
+                        {"type": "command", "command": f'{python_cmd} "{zb}" hook prose-guard'},
                     ],
                 },
             ],
@@ -7648,7 +7649,12 @@ def cmd_hook_checkbox_guard(args: argparse.Namespace) -> int:
 # style check on its own implementation, and the fix for that is never to widen the check: it is to
 # keep the forbidden thing out of the guard.
 _HOOK_EM_DASH = "\u2014"
-_HOOK_EN_DASH_SENTENCE = re.compile("\\s\u2013\\s")
+# Whitespace or a boundary on both sides, not whitespace on both sides. A line that ends on the
+# dash is the same construction and was the one that got through: the text of a slide is split
+# across several strings, so "... schaffen –" ends one of them and the thought continues in the
+# next. Requiring a following space made the check blind to exactly that. A number range keeps its
+# dash because it carries no spaces at all ("2024–2026").
+_HOOK_EN_DASH_SENTENCE = re.compile("(?:^|\\s)–(?:\\s|$)")
 # A dash inside a matched pair of quote marks is someone else's wording, reproduced, not the AI's own
 # sentence punctuation. The signal is the quote marks actually being there, not a guess at intent, so
 # this only exempts a dash strictly between them, in the styles this project actually writes: straight
@@ -7740,6 +7746,57 @@ def _hook_dash_hits(text: str) -> list[str]:
     return treffer
 
 
+_HOOK_PROSE_SUFFIXES = (".md", ".markdown", ".json", ".txt", ".yaml", ".yml", ".html", ".htm")
+
+
+def _hook_prose_text(text: str, suffix: str) -> str:
+    """The prose inside a written file, as lines the dash and realism scans can read.
+
+    A JSON content file carries its prose inside quoted string values, and the quote-span
+    blank-out that keeps a verbatim quote in markdown from being refused would blank every one
+    of them, so such a file would always read as clean. Found on a real run 2026-08-25: a
+    dash-as-punctuation sentence reached a finished slide through exactly such a file, and the
+    guard never saw it. The string values are pulled out and scanned as their own lines instead.
+    """
+    if suffix != ".json":
+        return text
+    try:
+        daten = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text
+    werte: list[str] = []
+
+    def sammeln(knoten: object) -> None:
+        if isinstance(knoten, str):
+            werte.append(knoten)
+        elif isinstance(knoten, dict):
+            for wert in knoten.values():
+                sammeln(wert)
+        elif isinstance(knoten, list):
+            for wert in knoten:
+                sammeln(wert)
+
+    sammeln(daten)
+    return "\n".join(werte)
+
+
+def _hook_prose_binds(file_path: str, text: str) -> bool:
+    """Whether prose-guard binds on this write.
+
+    A markdown file is bound by its `source:` frontmatter, which is what keeps the guard off an
+    import of the user's own writing. A content file that cannot carry frontmatter at all (JSON,
+    plain text, a template) has no such marker, and requiring one there meant the guard bound on
+    nothing: every deliverable is built from files of exactly that kind. Those bind on being
+    written, with `import/` exempt because that is where the user's own material arrives.
+    """
+    datei = Path(file_path)
+    if datei.suffix.lower() in (".md", ".markdown"):
+        return _hook_authored_by_ai(text, datei)
+    if f"/{IMPORT_DIR}/" in f"/{file_path}":
+        return False
+    return True
+
+
 def _hook_authored_by_ai(text: str, datei: Path) -> bool:
     """Whether this file's frontmatter says the AI wrote the content.
 
@@ -7791,13 +7848,22 @@ def cmd_prose_check(args: argparse.Namespace) -> int:
 
 
 def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
-    """PreToolUse Write|Edit: refuse a dash-as-punctuation, a generic AI-marketing phrase, or a
+    """PreToolUse Write|Edit|Bash: refuse a dash-as-punctuation, a generic AI-marketing phrase, or a
     leftover placeholder the AI is adding to its own prose.
 
     Mechanic: compare the dash and realism lines before and after, exactly as `checkbox-guard`
     compares task lines. Only a line that was not there before is refused, so moving, importing or
-    re-indenting the user's material passes untouched. Binds only where the frontmatter says the AI
-    wrote the content.
+    re-indenting the user's material passes untouched.
+
+    It binds at every point the prose can reach a deliverable, not only at the one the AI usually
+    takes. Until 2026-08-25 it took a markdown file, written by Write or Edit, carrying frontmatter
+    that said the AI wrote it, and all three had to hold. A finished slide with a dash-sentence on it
+    proved how little that covers: the text came out of a JSON content file (not markdown, no
+    frontmatter possible) and reached the deck through a Python build script (Bash, not Write). Each
+    of the three conditions on its own was enough to make the guard silent, which is the same failure
+    `library-check-guard` had before 0.3.5, a guard bound to a tool rather than to the moment the
+    decision is made. So: every content file type, frontmatter required only where a file can carry
+    it, and a Python build resolving into a `doing/<slug>/` bundle read as what it is, a write.
 
     The refusal names the line and what to do instead, because a refusal with no route named produces
     a report about the refusal rather than the work.
@@ -7806,11 +7872,32 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
     if not payload:
         return 0
     tool = payload.get("tool_name", "")
-    if tool not in ("Write", "Edit", "MultiEdit"):
+    if tool not in ("Write", "Edit", "MultiEdit", "Bash"):
         return 0
     tool_input = payload.get("tool_input") or {}
+
+    if tool == "Bash":
+        command = tool_input.get("command", "") or ""
+        if not _PYTHON_RUN_RE.search(command):
+            return 0
+        if _library_guard_slug(command) is None:
+            return 0
+        # No quote blank-out here: in a build command the prose sits inside the quoted string
+        # literals, so blanking them would hide exactly what this is looking for.
+        dazu = [z for z in command.splitlines()
+                if _HOOK_EM_DASH in z or _HOOK_EN_DASH_SENTENCE.search(z)]
+        if not dazu:
+            return 0
+        print(f"prose-guard: refusing this build, {len(dazu)} line(s) of the text it writes use a "
+              f"dash as sentence punctuation. First: {' '.join(dazu[0].split())[:140]}",
+              file=sys.stderr)
+        print("  Finish the thought, or split it into two sentences. A hyphen inside a compound word "
+              "and a number range keep their dash.", file=sys.stderr)
+        return 2
+
     file_path = tool_input.get("file_path", "")
-    if not file_path.endswith((".md", ".markdown")):
+    suffix = Path(file_path).suffix.lower()
+    if suffix not in _HOOK_PROSE_SUFFIXES:
         return 0
 
     paare: list[tuple[str, str]] = []
@@ -7820,15 +7907,15 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
             vorher = Path(file_path).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             vorher = ""
-        if not _hook_authored_by_ai(neu_text, Path(file_path)):
+        if not _hook_prose_binds(file_path, neu_text):
             return 0
-        paare.append((vorher, neu_text))
+        paare.append((_hook_prose_text(vorher, suffix), _hook_prose_text(neu_text, suffix)))
     elif tool == "Edit":
-        if not _hook_authored_by_ai("", Path(file_path)):
+        if not _hook_prose_binds(file_path, ""):
             return 0
         paare.append((tool_input.get("old_string") or "", tool_input.get("new_string") or ""))
     else:
-        if not _hook_authored_by_ai("", Path(file_path)):
+        if not _hook_prose_binds(file_path, ""):
             return 0
         for edit in tool_input.get("edits") or []:
             paare.append((edit.get("old_string") or "", edit.get("new_string") or ""))
@@ -9854,6 +9941,34 @@ _PYTHON_RUN_RE = re.compile(r"(?:^|[\s;&|])python3?\b")
 _DOING_SLUG_RE = re.compile(r"(?:^|[/'\"\s])" + re.escape(DOING_DIR) + r"/([^/'\"\s]+)")
 
 
+# A word that shows up in a bundle name but names nothing on its own. Requiring a link on these
+# would fire on every second line. Kept deliberately short: only words that are structural in a
+# vault name, never topic words, because a topic word is exactly what should be linked.
+def _library_guard_slug(command: str, vault: Path | None = None) -> str | None:
+    """The `doing/<slug>` bundle a Bash command produces into, or None.
+
+    Two ways to know. The command names the path, which is the case a `cd` or an absolute
+    argument covers. Or the command says nothing because the working directory is already
+    inside the bundle and every path in it is relative: found on a real run 2026-08-25, where
+    dropping the `cd` was used as the way past the guard. Reading the working directory closes
+    that, and it is the same fact either way.
+    """
+    match = _DOING_SLUG_RE.search(command)
+    if match:
+        return match.group(1)
+    wurzel = vault if vault is not None else _session_find_vault_root()
+    if wurzel is None:
+        return None
+    try:
+        rel = Path.cwd().resolve().relative_to(wurzel.resolve())
+    except (ValueError, OSError):
+        return None
+    teile = rel.parts
+    if len(teile) >= 2 and teile[0] == DOING_DIR:
+        return teile[1]
+    return None
+
+
 def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
     """PreToolUse Bash hook: refuse to save a `.pptx` into a `doing/<slug>/` bundle until
     `slide-library.py check <library> --task <slug>` has run at least once for that slug.
@@ -9884,11 +9999,15 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
     command = (payload.get("tool_input", {}) or {}).get("command", "") or ""
     if not _PPTX_SAVE_RE.search(command) and not _PYTHON_RUN_RE.search(command):
         return 0
-    slug_match = _DOING_SLUG_RE.search(command)
-    if not slug_match:
+    vault = _session_find_vault_root()
+    slug = _library_guard_slug(command, vault)
+    if slug is None:
         return 0
-    slug = slug_match.group(1)
-    checked = Path.cwd() / SCRATCH_DIR / slug / "library-checked.json"
+    # Against the vault root, never against the working directory. Found on a real run
+    # 2026-08-25: with the shell sitting in the bundle, `Path.cwd()` looked for the marker at
+    # `doing/<slug>/zanmai/temp/<slug>/`, which cannot exist, so a run that had done the check
+    # was refused anyway and went looking for a way around a guard that was right in principle.
+    checked = (vault or Path.cwd()) / SCRATCH_DIR / slug / "library-checked.json"
     if checked.is_file():
         return 0
     print(
@@ -9902,6 +10021,12 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return 2
+
+
+# The label that marks a handover as briefed. Matching on the user's own block rather than on a
+# keyword nobody would write by accident is deliberate: the thing being checked for is that the
+# user's words were carried over at all, so the check and the content are the same fact.
+_BRIEF_MARKER = "What the user said:"
 
 
 def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
@@ -9928,14 +10053,39 @@ def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
     if payload.get("agent_id"):
         return 0
     tool_input = payload.get("tool_input") or {}
-    if tool_input.get("run_in_background") is not False:
-        return 0
     subagent = str(tool_input.get("subagent_type") or "agent")
+    prompt = str(tool_input.get("prompt") or "")
+    hintergrund_falsch = tool_input.get("run_in_background") is False
+    brief_fehlt = _BRIEF_MARKER.lower() not in prompt.lower()
+    if not hintergrund_falsch and not brief_fehlt:
+        return 0
     # Corrected, not refused. Refusing worked, and the user watched it work: a red error on their
     # screen at nearly every dispatch, followed by a retry that spent a turn saying the same thing
     # twice. A guard that fires as routine is a rule sitting in the wrong place. The host lets a
     # PreToolUse hook hand back an amended input, so the flag is simply put right on the way
     # through, and neither the user nor the run ever sees the wrong version.
+    if brief_fehlt:
+        # Refused, not corrected, and this is the one place in this hook where that is right. The
+        # background flag is a fact about the call and can simply be put right on the way through.
+        # A brief is content: the two blocks cannot be written by a hook, because only the turn that
+        # just read the user's words knows what they said. Handing the dispatch back is what puts
+        # the interview where it belongs, in front of the send-off, with the user still there. The
+        # expert cannot hold it: it runs in the background and has nobody to ask.
+        print(
+            f"dispatch-guard: refusing this {subagent} dispatch, its handover carries no brief. "
+            f"The expert never met the user, and it runs in the background where it cannot ask, so "
+            f"whatever is missing here gets invented and comes back looking like the expert's "
+            f"fault. Put two labelled blocks at the top of the prompt. '{_BRIEF_MARKER}': their "
+            f"words, quoted or close to it, nothing added; a file or link is named as what came "
+            f"with the ask, not transcribed as content. 'What I concluded:' where it lands, which "
+            f"format, how big the job is, form and destination only, never new subject matter. "
+            f"Then read this expert's own contract for what it needs, and fill the gaps: a fact "
+            f"that sits in the vault or on disk you go and find, that is your job. What is "
+            f"load-bearing, missing, and only the user can know, you ask now, in one numbered "
+            f"round with a recommended answer each so they can wave it through, and you wait. See "
+            f"`{SYSTEM_MATERIAL_DIR}/skills/brief/SKILL.md`.",
+            file=sys.stderr)
+        return 2
     korrigiert = dict(tool_input)
     korrigiert["run_in_background"] = True
     print(json.dumps({"hookSpecificOutput": {

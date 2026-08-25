@@ -4,6 +4,65 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.3.6] - 2026-08-25
+
+**Guards were bound to the tool the AI usually reaches for rather than to the moment the decision is
+made, so they were silent exactly where they mattered, and the one procedure that asks the user
+anything before expensive work had never run at all. Both now hang at the decision. Two guards
+written the same day were measured against a live vault, failed, and were removed rather than
+shipped: the count goes down, not up.**
+
+### Fixed
+
+- **`prose-guard` could not see a dash sentence on its way into a finished piece.** It required a
+  markdown file, written through Write or Edit, carrying frontmatter that said the AI wrote it, and
+  all three had to hold at once. A finished slide went out reading "Heute sinnvoll entscheiden –
+  ohne die Optionen von morgen zu verbauen": the text came from a JSON content file, which is not
+  markdown and cannot carry frontmatter, and reached the deck through a Python build script, which
+  is Bash and not Write. Any one of the three conditions was enough to make the check silent. It now
+  binds on every content file type, requires frontmatter only where a file can carry it, exempts
+  `import/` so the user's own material is still untouched, and reads a build command running against
+  a `doing/<slug>/` bundle as what it is, a write. A JSON file is scanned by its actual string values
+  rather than its raw lines, because the quoting around every value would otherwise hide the prose
+  inside it. The pattern itself was wrong too, and this only showed up against the real file: it
+  required whitespace on both sides of the dash, and a slide's text is split across several strings,
+  so the one that mattered ended on it. Whitespace or a line boundary counts now. A number range still
+  keeps its dash, because it carries no spaces at all.
+- **`library-check-guard` refused runs that had done the check.** It looked for the record at
+  `Path.cwd()`, the shell's working directory, while `slide-library.py check` writes it at the vault
+  root. Working from inside the bundle, which is the natural place to work from, meant the hook
+  looked under `doing/<slug>/zanmai/temp/<slug>/`, a path that cannot exist. The run was refused
+  although it had done everything right, and went looking for a way around a guard that was correct
+  in principle. The record is now resolved against the vault root. The same fix closes the gap on the
+  other side: with the shell inside the bundle and every path relative, the bundle's name never
+  appeared in the command and the guard did not fire at all. It now reads the working directory too.
+
+- **The brief now actually happens, because `dispatch-guard` asks for it.** A handover with no
+  `What the user said:` block is refused at the moment of dispatch, with the route named. The `brief`
+  skill has described that interview since it was written, two labelled blocks and one numbered round
+  of questions with a recommended answer each, plus the rule that a fact sitting in the vault is
+  fetched rather than asked about, because what belongs to the user is decisions and not retrieval.
+  Measured across two live vaults, 3123 and 744 lines of activity log: **it had never run, not once.**
+  It was reached by a sentence asking the reply to notice by itself that its inputs were incomplete,
+  and nothing that is never performed can visibly fail. Meanwhile the questions the user did get were
+  the ad-hoc ones, at the wrong moment, about things the vault could have answered. This is the only
+  change here that adds work to a run rather than removing it, and it is the front of the job, not
+  the back: the interview happens while the user is still in the chat, which is the one moment it can.
+  Unlike the background-flag correction in the same hook, it cannot be fixed up on the way through,
+  because the two blocks are content and only the turn that just read the user's words knows them.
+
+### Removed
+
+- **`link-guard` and `provenance-guard`, both shipped-never.** Written earlier the same day against
+  two real incidents, and both dropped before release after being measured against a real vault
+  rather than a scratch one. `link-guard` was to demand a `[[link]]` where a bundle was named as plain
+  text; it built its word index from folder names, and against the live vault the two words it existed
+  for were not in it. It found 44 words and none of the ones that mattered. `provenance-guard` was to
+  refuse a commitment field that did not record whether the user or the AI chose the value; it was a
+  wall with no door, demanding a declaration no command could write, which is the shape a run works
+  around rather than follows. The defects both were aimed at are real and stay open as tasks. Hook
+  count is back to 9 from 11.
+
 ## [0.3.5] - 2026-08-25
 
 **`library-check-guard` now actually sees a build script, not only an inline save call, and two
