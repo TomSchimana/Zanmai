@@ -15,6 +15,9 @@ their template and their approved decks, and it grows as they approve more.
     slide-library.py build <plan.json> <out.pptx> --library <library-dir>
     slide-library.py show <library-dir> [--slide <id>]
     slide-library.py check <library-dir> --task <slug>
+    slide-library.py nudge <deck.pptx> --shape <name> --dx <in> --dy <in> --into <out.pptx>
+    slide-library.py overlap-check <deck.pptx> [--slide <n>]
+    slide-library.py align-check <deck.pptx> [--slide <n>]
 
 `harvest` writes `index.json` and a readable `index.md` describing each slide:
 which master layout it uses, what its slots are, and how much text each slot
@@ -30,6 +33,22 @@ deliverable belongs to): `library-check-guard` (PreToolUse Bash, see
 `zanmai.py hook`) refuses to save a `.pptx` under that bundle until this has run
 at least once, so composing from scratch is a choice made after looking, not
 instead of it.
+
+`nudge` and `overlap-check` are for the other kind of change: a correction, not a build. Found
+2026-08-25 on a real Carol run: a text block sat over its card's background numeral, a fix any
+person makes by dragging the box in PowerPoint in ten seconds, and it cost fifteen minutes because
+the group-coordinate math, the "does the glyph paint past its box" check (`wrap="none"` at a large
+point size does exactly that) and the pairwise overlap check were re-derived from nothing, in a
+freshly written script that then needed its own debugging. `nudge` moves one shape by a delta and
+sets all four xfrm values explicitly, `overlap-check` finds text-over-text pairs the same way, ink
+rather than the box where `wrap="none"` makes the box lie. Both work on shapes nested in groups: a
+group's own frame is grown to keep containing what moved, the way `gruppe_nachziehen` did by hand.
+
+`align-check` is the same "box lies about the ink" pattern found a second time the same day, at the
+other edge: a title and a body text sitting on the identical box-left value can still read as
+mis-aligned, because a large bold face and a small regular face carry different left side bearings.
+Both checks measure the real ink where they can, loading the actual font file (matched by name in the
+standard font folders) and reading its own metrics, not a guess about where letters typically start.
 """
 
 from __future__ import annotations
@@ -44,6 +63,7 @@ from pathlib import Path
 
 try:
     from pptx import Presentation
+    from pptx.oxml.ns import qn
     from pptx.util import Emu
 except ImportError:
     sys.exit("slide-library: python-pptx is missing. Provision it first (tools ensure python_pptx).")
@@ -441,6 +461,319 @@ def check(library: Path, task: str, vault_root: Path) -> int:
     return result
 
 
+def _shape_paths(shapes, prefix="", parents=()):
+    """(path, shape, parents) for every shape in the tree, depth-first. `path` is the
+    slash-joined chain of names down to this shape, which is what `--shape` accepts when
+    a bare name repeats across sibling groups (a template's repeated cards do, verified on
+    a real deck where every card's text box was named "Rectangle 63"). `parents` is the
+    chain of enclosing group shapes, outermost first, which is what a caller needs to
+    convert a slide-space distance into this shape's own coordinate units."""
+    for sh in shapes:
+        path = f"{prefix}/{sh.name}"
+        yield path, sh, parents
+        if sh.shape_type == 6:
+            yield from _shape_paths(sh.shapes, path, parents + (sh,))
+
+
+def _find_shape(deck, wanted: str, slide_no: int | None):
+    """Every (slide_index, path, shape, parents) matching `wanted`, by full path first,
+    then by bare name. Ambiguous or missing is the caller's problem to report, not a guess
+    made here: picking the wrong one of several identically named cards is worse than an
+    error that names every candidate."""
+    slides = [(slide_no, deck.slides[slide_no - 1])] if slide_no else list(enumerate(deck.slides, start=1))
+    hits = []
+    for index, slide in slides:
+        candidates = list(_shape_paths(slide.shapes))
+        exact = [(index, p, sh, parents) for p, sh, parents in candidates if p in (wanted, "/" + wanted)]
+        hits += exact or [(index, p, sh, parents) for p, sh, parents in candidates if sh.name == wanted]
+    return hits
+
+
+def _group_scale(group) -> tuple[float, float]:
+    """(sx, sy): how one unit in this group's own child space maps to one unit in the
+    space its own xfrm is expressed in (its parent group's child space, or slide space for
+    a top-level group)."""
+    xfrm = group._element.grpSpPr.xfrm
+    ext, chExt = xfrm.find(qn("a:ext")), xfrm.find(qn("a:chExt"))
+    cx, cy = int(chExt.get("cx")), int(chExt.get("cy"))
+    return (int(ext.get("cx")) / cx if cx else 1.0,
+            int(ext.get("cy")) / cy if cy else 1.0)
+
+
+def _regroup(group) -> None:
+    """After a descendant moved, keep this group's frame exactly containing its direct
+    children: recompute chOff/chExt as their union in this group's own child space, and
+    grow off/ext by the same amount so the scale to its own parent stays fixed. Without
+    this a child that moved outside the old frame is silently clipped or rescaled by
+    PowerPoint, which trusts chOff/chExt rather than re-measuring its children."""
+    kids = [k for k in group.shapes if k.left is not None]
+    if not kids:
+        return
+    new_x = min(k.left for k in kids)
+    new_y = min(k.top for k in kids)
+    new_w = max(k.left + k.width for k in kids) - new_x
+    new_h = max(k.top + k.height for k in kids) - new_y
+
+    xfrm = group._element.grpSpPr.xfrm
+    off, ext = xfrm.find(qn("a:off")), xfrm.find(qn("a:ext"))
+    chOff, chExt = xfrm.find(qn("a:chOff")), xfrm.find(qn("a:chExt"))
+    sx, sy = _group_scale(group)
+
+    off.set("x", str(int(off.get("x")) + round((new_x - int(chOff.get("x"))) * sx)))
+    off.set("y", str(int(off.get("y")) + round((new_y - int(chOff.get("y"))) * sy)))
+    ext.set("cx", str(round(new_w * sx)))
+    ext.set("cy", str(round(new_h * sy)))
+    chOff.set("x", str(new_x))
+    chOff.set("y", str(new_y))
+    chExt.set("cx", str(new_w))
+    chExt.set("cy", str(new_h))
+
+
+def nudge(deck_path: Path, wanted: str, dx_in: float, dy_in: float, slide_no: int | None, out: Path) -> int:
+    deck = Presentation(str(deck_path))
+    hits = _find_shape(deck, wanted, slide_no)
+    if not hits:
+        print(f"slide-library: no shape '{wanted}' on {'slide ' + str(slide_no) if slide_no else 'any slide'}",
+              file=sys.stderr)
+        return 2
+    if len(hits) > 1:
+        print(f"slide-library: '{wanted}' is not unique, qualify with its full path:", file=sys.stderr)
+        for index, path, _, _ in hits:
+            print(f"  slide {index}: {path}", file=sys.stderr)
+        return 2
+
+    index, path, shape, parents = hits[0]
+    sx, sy = 1.0, 1.0
+    for group in parents:
+        gsx, gsy = _group_scale(group)
+        sx *= gsx
+        sy *= gsy
+    dx_emu = round(dx_in * EMU_PER_INCH / sx)
+    dy_emu = round(dy_in * EMU_PER_INCH / sy)
+
+    left, top, width, height = shape.left, shape.top, shape.width, shape.height
+    shape.left, shape.top, shape.width, shape.height = left + dx_emu, top + dy_emu, width, height
+    for group in reversed(parents):
+        _regroup(group)
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    deck.save(str(out))
+    print(f"slide {index}: moved {path} by {dx_in:+.3f}in / {dy_in:+.3f}in -> {out}")
+    return 0
+
+
+CHAR_WIDTH_EM = 0.52
+# Average glyph advance as a fraction of point size, calibrated against the reference
+# build's bold numerals, the case that actually painted past its own box. Coarse like
+# CHAR_DENSITY above, and for the same reason: it only has to tell "still fits" from
+# "paints past its box", not predict a layout engine exactly. Used only where the real
+# font file below cannot be found -- a fallback, not the primary measurement.
+
+
+def _painted_width(char_count: int, size_pt: float, bold: bool) -> int:
+    per_char = (size_pt / 72.0) * EMU_PER_INCH * (CHAR_WIDTH_EM + (0.05 if bold else 0.0))
+    return round(char_count * per_char)
+
+
+def _font_file(family: str, bold: bool) -> Path | None:
+    """A real font file for `family`, matched by filename in the standard font folders
+    (same list `installed_font_families()` in design-check.py scans, one level further:
+    a file, not just a name), closest weight to `bold` preferred. None means no match on
+    this machine; callers fall back to the calibrated estimate rather than fail."""
+    roots = [Path("/System/Library/Fonts"), Path("/Library/Fonts"), Path.home() / "Library/Fonts",
+             Path("/usr/share/fonts"), Path("/usr/local/share/fonts"), Path.home() / ".fonts"]
+    fam_key = re.sub(r"[^a-z0-9]", "", family.lower()) if family else ""
+    if not fam_key:
+        return None
+    candidates = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for file in root.rglob("*"):
+            if file.suffix.lower() not in (".ttf", ".otf", ".ttc"):
+                continue
+            if re.sub(r"[^a-z0-9]", "", file.stem.lower()).startswith(fam_key):
+                candidates.append(file)
+    if not candidates:
+        return None
+    variant_markers = ("italic", "narrow", "condensed", "rounded", "unicode", "oblique")
+    plain = [f for f in candidates if not any(m in f.stem.lower() for m in variant_markers)] or candidates
+    if bold:
+        # A literal "bold" not preceded by "extra"/"semi" is the correct match for a plain bold
+        # request. "Black" is not: on this machine "Arial Black" is a distinct shipped family,
+        # not a weight of "Arial", so treating a name match on "black" as "Arial, but bold" picked
+        # the wrong file entirely -- found while building this function, not assumed away.
+        exact = [f for f in plain if re.search(r"(?<!extra)(?<!semi)bold", f.stem.lower())]
+        if exact:
+            return min(exact, key=lambda f: len(f.stem))
+        for keyword in ("black", "heavy", "extrabold", "semibold"):
+            matches = [f for f in plain if keyword in f.stem.lower()]
+            if matches:
+                return min(matches, key=lambda f: len(f.stem))
+    weight_markers = ("bold", "black", "light", "thin", "medium", "semibold", "extrabold", "heavy")
+    unweighted = [f for f in plain if not any(m in f.stem.lower() for m in weight_markers)]
+    return min(unweighted or plain, key=lambda f: len(f.stem))
+
+
+def _real_ink_bbox(text: str, family: str | None, size_pt: float, bold: bool):
+    """(left_bearing_in, width_in) of `text` set in this exact font file at this exact
+    size, not an average -- the same "measured, not eyeballed" standard `capacity()`
+    already applies to a slot's character count, extended to where the ink itself sits.
+    None if Pillow is missing, the family cannot be resolved to a file, or the file
+    fails to parse: an unmeasured run is left to the calibrated fallback, never guessed
+    into a false positive or a false clean."""
+    if not family or not text:
+        return None
+    try:
+        from PIL import ImageFont
+    except ImportError:
+        return None
+    path = _font_file(family, bold)
+    if path is None:
+        return None
+    try:
+        font = ImageFont.truetype(str(path), size=max(1, round(size_pt)))
+        left, _top, right, _bottom = font.getbbox(text)
+    except Exception:  # noqa: BLE001 -- a font file that fails to parse falls back, it does not crash the check
+        return None
+    return left / 72.0, (right - left) / 72.0
+
+
+def _leaf_rects(shapes, tf=(1.0, 0.0, 1.0, 0.0)):
+    """(shape, (left, top, width, height) in slide EMU) for every text-bearing leaf, groups
+    resolved through their own scale and offset so a card's children compare against a
+    sibling card's in one shared coordinate space, not each in its own group's raw units."""
+    ax, bx, ay, by = tf
+    out = []
+    for sh in shapes:
+        if sh.shape_type == 6:
+            sx, sy = _group_scale(sh)
+            xfrm = sh._element.grpSpPr.xfrm
+            off, chOff = xfrm.find(qn("a:off")), xfrm.find(qn("a:chOff"))
+            nested = (ax * sx, ax * (int(off.get("x")) - int(chOff.get("x")) * sx) + bx,
+                      ay * sy, ay * (int(off.get("y")) - int(chOff.get("y")) * sy) + by)
+            out += _leaf_rects(sh.shapes, nested)
+            continue
+        if sh.left is None or not sh.has_text_frame or not text_of(sh):
+            continue
+        out.append((sh, (ax * sh.left + bx, ay * sh.top + by, ax * sh.width, ay * sh.height)))
+    return out
+
+
+def _painted_rect(shape, rect):
+    """Widen `rect` to the glyph's real ink where `wrap="none"` lets the run paint past its
+    own box. Verified on a real deck: an 80pt digit box sized for two characters still
+    painted a three-character run, and the saved bounding box said nothing overlapped."""
+    body_pr = shape.text_frame._txBody.find(qn("a:bodyPr"))
+    if body_pr is None or body_pr.get("wrap") != "none":
+        return rect
+    left, top, width, height = rect
+    widest = width
+    for paragraph in shape.text_frame.paragraphs:
+        length = sum(len(r.text) for r in paragraph.runs)
+        if not length:
+            continue
+        size = max((r.font.size.pt for r in paragraph.runs if r.font.size), default=12.0)
+        bold = any(r.font.bold for r in paragraph.runs)
+        family = next((r.font.name for r in paragraph.runs if r.font.name), None)
+        run_text = "".join(r.text for r in paragraph.runs)
+        real = _real_ink_bbox(run_text, family, size, bold)
+        if real is not None:
+            widest = max(widest, round(real[1] * EMU_PER_INCH))
+        else:
+            widest = max(widest, _painted_width(length, size, bold))
+    return (left, top, widest, height)
+
+
+def _ink_left_offset(shape) -> int | None:
+    """How far this shape's first line actually starts painting from its own box's
+    left edge, in EMU. None where that cannot be measured (no run, no named font, no
+    matching file on this machine) -- such a shape is left out of `align_check` rather
+    than assumed aligned or assumed not."""
+    for paragraph in shape.text_frame.paragraphs:
+        if not paragraph.runs:
+            continue
+        run = paragraph.runs[0]
+        if not run.text.strip() or not run.font.size:
+            return None
+        real = _real_ink_bbox(run.text, run.font.name, run.font.size.pt, bool(run.font.bold))
+        if real is None:
+            return None
+        return round(real[0] * EMU_PER_INCH)
+    return None
+
+
+def align_check(deck_path: Path, slide_no: int | None) -> int:
+    """Two text frames whose boxes sit on the same left edge can still read as
+    misaligned: a large bold face and a small regular face rarely share the same left
+    side bearing, so their ink starts at different points even though the boxes agree
+    exactly (found on a real deck, a title and its body text). Boxes within 0.02in are
+    treated as "meant to align"; among those, ink-left positions more than 0.02in apart
+    are reported. A shape whose ink cannot be measured is left out of its group, never
+    silently counted as aligned."""
+    deck = Presentation(str(deck_path))
+    slides = [(slide_no, deck.slides[slide_no - 1])] if slide_no else list(enumerate(deck.slides, start=1))
+    tolerance = round(0.02 * EMU_PER_INCH)
+    problems = []
+    groups_checked = 0
+    for index, slide in slides:
+        leaves = _leaf_rects(slide.shapes)
+        leaves = sorted(leaves, key=lambda pair: pair[1][0])
+        groups: list[list] = []
+        for sh, rect in leaves:
+            for group in groups:
+                if abs(group[0][1][0] - rect[0]) <= tolerance:
+                    group.append((sh, rect))
+                    break
+            else:
+                groups.append([(sh, rect)])
+        for group in groups:
+            if len(group) < 2:
+                continue
+            measured = [(sh, rect[0] + offset) for sh, rect in group
+                        if (offset := _ink_left_offset(sh)) is not None]
+            if len(measured) < 2:
+                continue
+            groups_checked += 1
+            for i in range(len(measured)):
+                sh_a, left_a = measured[i]
+                for j in range(i + 1, len(measured)):
+                    sh_b, left_b = measured[j]
+                    if abs(left_a - left_b) > tolerance:
+                        problems.append(
+                            "slide %d: '%s' and '%s' share a box-left edge but their ink starts "
+                            "%.3f inch apart"
+                            % (index, text_of(sh_a)[:20], text_of(sh_b)[:20], Emu(abs(left_a - left_b)).inches))
+    for problem in problems:
+        print(f"FAIL: {problem}")
+    print(f"{groups_checked} shared-edge group(s) checked, {len(problems)} misalignment(s)")
+    return 1 if problems else 0
+
+
+def overlap_check(deck_path: Path, slide_no: int | None) -> int:
+    deck = Presentation(str(deck_path))
+    slides = [(slide_no, deck.slides[slide_no - 1])] if slide_no else list(enumerate(deck.slides, start=1))
+    problems = []
+    pairs = 0
+    for index, slide in slides:
+        leaves = [(sh, _painted_rect(sh, rect)) for sh, rect in _leaf_rects(slide.shapes)]
+        for i in range(len(leaves)):
+            sh_a, (la, ta, wa, ha) = leaves[i]
+            for j in range(i + 1, len(leaves)):
+                sh_b, (lb, tb, wb, hb) = leaves[j]
+                pairs += 1
+                ox = min(la + wa, lb + wb) - max(la, lb)
+                oy = min(ta + ha, tb + hb) - max(ta, tb)
+                if ox > 0 and oy > 0:
+                    problems.append(
+                        "slide %d: '%s' over '%s', %.3f x %.3f inch"
+                        % (index, text_of(sh_a)[:24], text_of(sh_b)[:24], Emu(ox).inches, Emu(oy).inches))
+    for problem in problems:
+        print(f"FAIL: {problem}")
+    print(f"{pairs} pair(s) checked on {len(slides)} slide(s), {len(problems)} overlap(s)")
+    return 1 if problems else 0
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Harvest a brand's own slides, then fill copies of them.")
     sub = ap.add_subparsers(dest="command", required=True)
@@ -467,6 +800,22 @@ def main(argv: list[str]) -> int:
     pc.add_argument("--vault", type=Path, default=Path.cwd(),
                      help="vault root the task's zanmai/temp/ lives under (default: cwd)")
 
+    pn = sub.add_parser("nudge", help="move one shape by a delta, all four xfrm values set explicitly")
+    pn.add_argument("deck", type=Path)
+    pn.add_argument("--shape", required=True, help="shape name, or full slash path when the name repeats")
+    pn.add_argument("--dx", type=float, default=0.0, help="inches, positive is right")
+    pn.add_argument("--dy", type=float, default=0.0, help="inches, positive is down")
+    pn.add_argument("--slide", type=int, help="1-based; default searches every slide, errors if ambiguous")
+    pn.add_argument("--into", type=Path, required=True)
+
+    po = sub.add_parser("overlap-check", help="pairwise text-over-text check, ink-aware for wrap=none")
+    po.add_argument("deck", type=Path)
+    po.add_argument("--slide", type=int, help="1-based; default checks every slide")
+
+    pa = sub.add_parser("align-check", help="ink-left alignment between text frames sharing a box-left edge")
+    pa.add_argument("deck", type=Path)
+    pa.add_argument("--slide", type=int, help="1-based; default checks every slide")
+
     args = ap.parse_args(argv[1:])
     if args.command == "harvest":
         if not args.deck.is_file():
@@ -477,6 +826,15 @@ def main(argv: list[str]) -> int:
         return build(args.plan, args.out, args.library, strict=not args.loose)
     if args.command == "check":
         return check(args.library, args.task, args.vault)
+    if args.command in ("nudge", "overlap-check", "align-check") and not args.deck.is_file():
+        print(f"slide-library: no deck at {args.deck}", file=sys.stderr)
+        return 2
+    if args.command == "nudge":
+        return nudge(args.deck, args.shape, args.dx, args.dy, args.slide, args.into)
+    if args.command == "overlap-check":
+        return overlap_check(args.deck, args.slide)
+    if args.command == "align-check":
+        return align_check(args.deck, args.slide)
     return show(args.library, args.slide)
 
 

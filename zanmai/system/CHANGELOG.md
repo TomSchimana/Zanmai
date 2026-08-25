@@ -4,6 +4,25 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.3.4] - 2026-08-25
+
+**A geometry correction on a PowerPoint slide is now one command, not fifteen minutes of freshly
+written Python.**
+
+### Added
+
+- **`slide-library.py nudge`.** Moves one named shape by a distance and sets all four position values
+  explicitly, growing every enclosing group's frame to keep containing what moved. A correction that
+  used to mean re-deriving group coordinate math from scratch on every run is now one call.
+- **`slide-library.py overlap-check`.** Finds text sitting on top of other text, measured against the
+  ink actually painted rather than the saved box: a box with `wrap="none"` at a large point size paints
+  past its own edge, and the saved box alone misses that.
+- **`slide-library.py align-check`.** Two text frames sitting on the same left edge can still read as
+  mis-aligned, because a large bold face and a small regular face rarely share the same left side
+  bearing. Checks where the ink actually starts, not where the box says it does.
+- Both checks measure from the real font file on the machine, matched by name in the standard font
+  folders, where one can be found, and fall back to a calibrated estimate only where it cannot.
+
 ## [0.3.3] - 2026-08-25
 
 **"Library first" is now a hook, not a sentence.**
