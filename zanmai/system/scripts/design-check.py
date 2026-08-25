@@ -318,7 +318,11 @@ def check_pptx(deck: Path, tokens_css: str) -> tuple[list[str], list[str]]:
             for paragraph in shape.text_frame.paragraphs:
                 for run in paragraph.runs:
                     font = run.font
-                    if font.name:
+                    # `+mn-lt` / `+mj-lt` are theme references, not font names: a run that
+                    # explicitly asks for the theme's minor/major face rather than inheriting it
+                    # silently. Flagging one as a missing face is exactly backwards, since it is
+                    # the correct choice, not an override.
+                    if font.name and not font.name.startswith("+"):
                         faces_used.add(font.name)
                     if font.size is not None and inherits:
                         overrides.add(f"slide {number}: placeholder text '{run.text[:24]}' sets its own size")

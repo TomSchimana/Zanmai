@@ -39,6 +39,8 @@ Say what you have to say and stop. The target is not a polished text, it is the 
 
 Before writing, one line to the user naming what will be written, plus at most three bullets where a real choice was made. They answer go, or change a word. With nobody in the chat that line goes on the work object and the run proceeds.
 
+Where the file's `source` will be `ai-generated` or `collaborative`, run `zanmai.py prose check --text <draft>` on the draft before the Write call and fix whatever it names. It is the same dash-as-punctuation scan the `prose-guard` hook runs on the write itself; running it on the draft first means the hook has nothing left to refuse.
+
 ## 4. Know what gives it away
 
 Human editors catalogued these across thousands of machine-written texts. They are shapes rather than words, so they hold in any language. Read them as things to steer off, not as dials at zero.

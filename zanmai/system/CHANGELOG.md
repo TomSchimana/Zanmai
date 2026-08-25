@@ -4,6 +4,83 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.3.2] - 2026-08-24
+
+**PowerPoint builds from a real master now, not a redrawn copy, and a repair dialog has a way to be
+diagnosed instead of guessed at.**
+
+### Added
+
+- **A precheck for AI-written prose before it is written, not just after.** `zanmai.py prose check
+  --text <draft>` runs the same dash-as-punctuation scan the `prose-guard` hook runs on the write
+  itself, on the draft, first. The `write` skill now calls it on every AI-authored draft, so the write
+  is normally never refused in the first place.
+- **`slide-library.py` now sees a table's cells as slots.** A template whose rubrics are laid out as
+  a table rather than text boxes used to harvest as empty: `has_text_frame` is false for a table
+  cell. Cells are named `table1.r2c3`, measured for capacity from their own column width and row
+  height, and fillable the same way a text-box slot is.
+- **`prose-guard` (and `prose check`) exempt a dash reproduced inside quote marks.** A verbatim quote,
+  a source's own title or a claim quoted exactly, no longer has to be rewritten to pass; only a dash
+  outside any quoted span still counts as the AI's own sentence punctuation.
+
+### Changed
+
+- **`powerpoint/SKILL.md`'s "Create" section now states the master-derivation build as the only normal
+  path, not one of two roughly equal options.** Building a fresh, empty presentation and transplanting
+  the CI in by hand is named as a fallback for when no real deck exists at all. Its usual justification,
+  that unused media stay attached to a master-derived copy and bloat it, does not hold: `python-pptx`
+  only serialises reachable parts, so removing unused slides and layouts drops their exclusive media on
+  save (measured on a real deck: 486 parts down to 33, 10.4 MB down to 36 kB). Also added: a real theme
+  can itself be an unset stock design (an unrelated name, Office palette and faces) with the brand
+  living hard-coded in every run instead, in which case hard values are the correct read, not a theme
+  reference; `qlmanage` does not render a shape inherited from the slide's layout or an `outerShdw`
+  shadow, so a preview can look like it is missing an element that the file already has correct; a
+  passing renderer, XML diff and `design-check.py` do not prove PowerPoint will open the file without a
+  repair dialog, and the way to find what's actually wrong is to let PowerPoint repair, save, and diff
+  the repaired XML against the original rather than guess; and a spacing constant read off a slide
+  family should be the median of several same-layout slides, not one sample. All found on real decks
+  during a live build.
+- **Two more `powerpoint/SKILL.md` rules, from the same live build's actual repair-dialog root cause and
+  a layout-gap fix.** Repositioning an inherited placeholder by setting only some of `left`/`top`/
+  `width`/`height` leaves the rest implicit; python-pptx then writes an `xfrm` with a zeroed offset or
+  extent, which is what triggered PowerPoint's repair dialog on this deck: all four values plus
+  `vertical_anchor` are now set together, never partially. And a gap between two elements is closed by
+  stepping the variable dimension in small increments until the measured extent fills it, the same
+  "measured, not guessed" standard as a spacing constant.
+- **`powerpoint/SKILL.md`'s Match tier now names its fastest form: don't deep-copy the exemplar slide
+  into a new one, delete every other slide from the copy and keep the exemplar's own XML untouched,
+  swapping only its text.** Verified on a real deck, 7 minutes start to finished with no repair
+  dialog: geometry stayed byte-identical to the source, skipping all position work and font-size
+  search that a shape-copy would have needed. Two more confirmed repair-dialog causes and one more
+  overflow trap from the same run: a shape's hyperlink or relationship pointing at a `.rels` target
+  removed along with a deleted slide; and `spAutoFit` text frames that grow past their shape in real
+  PowerPoint without python-pptx ever noticing, now caught by measuring each line with Pillow before
+  writing it.
+- **`powerpoint/SKILL.md` documents a package-level way to combine several decks into one file.** When
+  the source decks genuinely share the same master, layouts and theme, copying each deck's own slide
+  XML and rels into the target's ZIP directly gives byte-identical slides with none of the shape-copy
+  failure modes. Verified on a real case, six slides from four separately-built files, 58 checks
+  passed, all five source files left untouched.
+
+### Fixed
+
+- **`slide-library.py fill` could silently drop the text it had just written.** `TextFrame.clear()`
+  keeps a paragraph's `a:endParaRPr` and only removes its runs; appending the new run put it after
+  `endParaRPr`, which breaks the schema's element order. PowerPoint drops such a run with no error, a
+  more tolerant renderer like `qlmanage` still shows it, so a clean preview did not catch it. Found on
+  a real deck. The new run now always goes in before `endParaRPr`.
+- **`index-consistency` false-alarmed on almost every write in a working session.** It took a written
+  file's immediate parent as the bundle directory, right only when the file sits straight in the
+  bundle root; a file nested under a working subfolder (`arbeit/recherche/…`) read as one level too
+  deep, so the bundle's real `INDEX.md` looked missing on every write under that subfolder. It also
+  matched a wikilink case-sensitively, so `STAND.md` linked as `[[stand]]` read as unreferenced. Both
+  fixed: the bundle directory is found by walking up to the slug level, and the wikilink match is
+  case-insensitive.
+- **`design-check.py` flagged a theme font reference as a missing font.** `+mn-lt` / `+mj-lt` mean a
+  run explicitly asks for the theme's minor/major face instead of inheriting it silently, which is
+  correct, not an override. The master-level check already excluded `+`-prefixed values; the
+  run-level check did not, so it reported the correct choice as a face to fix.
+
 ## [0.3.1] - 2026-08-22
 
 **Steve now does the small stuff himself, and the morning greeting stopped losing items.**

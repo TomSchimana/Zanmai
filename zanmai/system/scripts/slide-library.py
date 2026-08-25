@@ -79,6 +79,23 @@ def capacity(shape) -> int:
     return int(area * CHAR_DENSITY * (12.0 / size) ** 2)
 
 
+def cell_sizes(cell) -> list[float]:
+    sizes = []
+    for paragraph in cell.text_frame.paragraphs:
+        for run in paragraph.runs:
+            if run.font.size is not None:
+                sizes.append(run.font.size.pt)
+    return sizes
+
+
+def cell_capacity(cell, width_emu, height_emu) -> int:
+    """Same formula as `capacity()`, for a table cell rather than a shape: a cell has no
+    `.width`/`.height` of its own, those live on the table's column and row."""
+    size = max(cell_sizes(cell) or [12.0])
+    area = inches(width_emu) * inches(height_emu)
+    return int(area * CHAR_DENSITY * (12.0 / size) ** 2)
+
+
 def contains(outer, inner) -> bool:
     return (outer.left <= inner.left and outer.top <= inner.top
             and outer.left + outer.width >= inner.left + inner.width
@@ -140,6 +157,41 @@ def slot_names(slide) -> dict:
             members.sort(key=lambda s: -(max(sizes_in(s) or [0])))
             for position, member in enumerate(members):
                 add(f"{name}.title" if position == 0 else f"{name}.lines{position if position > 1 else ''}", member)
+
+    # A template's rubrics are often laid out as a table rather than free text boxes; a table's
+    # cells carry no `has_text_frame`, so they are invisible to everything above this point. Found
+    # 2026-08-24: a real Battlecard template was entirely tables, and harvest reported only a title
+    # and a bar, which read as "no placeholders here" and was wrong.
+    table_index = 0
+    for shape in slide.shapes:
+        if not getattr(shape, "has_table", False):
+            continue
+        table_index += 1
+        table = shape.table
+        row_tops = []
+        top = shape.top or 0
+        for row in table.rows:
+            row_tops.append(top)
+            top += row.height or 0
+        col_lefts = []
+        left = shape.left or 0
+        for column in table.columns:
+            col_lefts.append(left)
+            left += column.width or 0
+        for r in range(len(table.rows)):
+            for c in range(len(table.columns)):
+                cell = table.cell(r, c)
+                if cell.is_spanned or not cell.text_frame.text.strip():
+                    continue
+                width = table.columns[c].width or 0
+                height = table.rows[r].height or 0
+                slots[f"table{table_index}.r{r + 1}c{c + 1}"] = {
+                    "text": cell.text_frame.text.strip(),
+                    "capacity": cell_capacity(cell, width, height),
+                    "lines": len([p for p in cell.text_frame.paragraphs if p.text.strip()]),
+                    "size_pt": max(cell_sizes(cell) or [0]) or None,
+                    "box": [inches(col_lefts[c]), inches(row_tops[r]), inches(width), inches(height)],
+                }
     return slots
 
 
@@ -209,6 +261,69 @@ def clone(deck, source):
     return new
 
 
+_TABLE_SLOT = re.compile(r"^table(\d+)\.r(\d+)c(\d+)$")
+
+
+def _locate_slot_frame(slide, name: str, template_text: str):
+    """The text frame a slot name resolves to in this (cloned) slide: a table cell, addressed by
+    position since cell text need not be unique, or a shape, addressed by matching its current text
+    against what harvest recorded, exactly as before tables were slots too."""
+    table_match = _TABLE_SLOT.match(name)
+    if table_match:
+        wanted_table, row, col = (int(g) for g in table_match.groups())
+        seen = 0
+        for shape in slide.shapes:
+            if not getattr(shape, "has_table", False):
+                continue
+            seen += 1
+            if seen == wanted_table:
+                return shape.table.cell(row - 1, col - 1).text_frame
+        return None
+    for shape in slide.shapes:
+        if shape.has_text_frame and text_of(shape) == template_text:
+            return shape.text_frame
+    return None
+
+
+def _fill_text_frame(frame, lines: list) -> str | None:
+    """Replace a text frame's content with `lines`, one paragraph per line, keeping the template's
+    own run formatting. Returns an error string, or None on success."""
+    paragraphs = frame.paragraphs
+    template_run = None
+    for paragraph in paragraphs:
+        if paragraph.runs:
+            template_run = paragraph.runs[0]
+            break
+    if template_run is None:
+        return "carries no styled run to follow"
+    keep = copy.deepcopy(template_run._r)
+    keep_paragraph = copy.deepcopy(paragraphs[0]._p)
+    frame.clear()
+    for index, line in enumerate(lines):
+        if index == 0:
+            paragraph = frame.paragraphs[0]
+        else:
+            new_p = copy.deepcopy(keep_paragraph)
+            for run in new_p.findall(
+                    "{http://schemas.openxmlformats.org/drawingml/2006/main}r"):
+                new_p.remove(run)
+            frame._txBody.append(new_p)
+            paragraph = frame.paragraphs[-1]
+        run_element = copy.deepcopy(keep)
+        end_para_rpr = paragraph._p.find(
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}endParaRPr")
+        if end_para_rpr is not None:
+            # A run appended after endParaRPr breaks the schema's element order; PowerPoint
+            # then drops the run silently, no error, while a more tolerant renderer still
+            # shows it. TextFrame.clear() keeps endParaRPr on the first paragraph, so this
+            # is the common case, not the rare one.
+            end_para_rpr.addprevious(run_element)
+        else:
+            paragraph._p.append(run_element)
+        paragraph.runs[-1].text = str(line)
+    return None
+
+
 def fill_slots(slide, texts: dict, slots: dict, strict: bool) -> list[str]:
     """Put the new text in, addressed by slot name, and report what does not fit.
     Overflow is a refusal rather than a smaller type size: shrinking to fit is how
@@ -226,40 +341,13 @@ def fill_slots(slide, texts: dict, slots: dict, strict: bool) -> list[str]:
             problems.append(f"slot '{name}' holds {room} characters, the new text has {length}")
             if strict:
                 continue
-        target = None
-        for shape in slide.shapes:
-            if shape.has_text_frame and text_of(shape) == live[name]["text"]:
-                target = shape
-                break
-        if target is None:
+        frame = _locate_slot_frame(slide, name, live[name]["text"])
+        if frame is None:
             problems.append(f"slot '{name}' could not be located in the copy")
             continue
-        paragraphs = target.text_frame.paragraphs
-        template_run = None
-        for paragraph in paragraphs:
-            if paragraph.runs:
-                template_run = paragraph.runs[0]
-                break
-        if template_run is None:
-            problems.append(f"slot '{name}' carries no styled run to follow")
-            continue
-        keep = copy.deepcopy(template_run._r)
-        keep_paragraph = copy.deepcopy(paragraphs[0]._p)
-        frame = target.text_frame
-        frame.clear()
-        for index, line in enumerate(lines):
-            if index == 0:
-                paragraph = frame.paragraphs[0]
-            else:
-                new_p = copy.deepcopy(keep_paragraph)
-                for run in new_p.findall(
-                        "{http://schemas.openxmlformats.org/drawingml/2006/main}r"):
-                    new_p.remove(run)
-                frame._txBody.append(new_p)
-                paragraph = frame.paragraphs[-1]
-            run_element = copy.deepcopy(keep)
-            paragraph._p.append(run_element)
-            paragraph.runs[-1].text = str(line)
+        error = _fill_text_frame(frame, lines)
+        if error:
+            problems.append(f"slot '{name}' {error}")
     return problems
 
 

@@ -7648,6 +7648,20 @@ def cmd_hook_checkbox_guard(args: argparse.Namespace) -> int:
 # keep the forbidden thing out of the guard.
 _HOOK_EM_DASH = "\u2014"
 _HOOK_EN_DASH_SENTENCE = re.compile("\\s\u2013\\s")
+# A dash inside a matched pair of quote marks is someone else's wording, reproduced, not the AI's own
+# sentence punctuation. The signal is the quote marks actually being there, not a guess at intent, so
+# this only exempts a dash strictly between them, in the styles this project actually writes: straight
+# double quotes and the German „low-high" and guillemet pairs.
+_HOOK_QUOTE_SPAN = re.compile(
+    '"[^"\\n]*"'
+    '|\u201e[^\u201c\\n]*\u201c'
+    '|\u00ab[^\u00bb\\n]*\u00bb'
+    '|\u00bb[^\u00ab\\n]*\u00ab'
+)
+
+
+def _hook_strip_quotes(line: str) -> str:
+    return _HOOK_QUOTE_SPAN.sub(lambda m: " " * len(m.group(0)), line)
 
 
 def _hook_dash_hits(text: str) -> list[str]:
@@ -7655,11 +7669,13 @@ def _hook_dash_hits(text: str) -> list[str]:
 
     Normalised the same way as the checkbox lines, so that rewrapping a paragraph does not read as a
     new occurrence. The comparison is what keeps this off the user's own words: only a construction
-    that was not in the file before is refused.
+    that was not in the file before is refused. A dash inside quote marks is checked with the quoted
+    span blanked out first, so a verbatim quote does not need to be rewritten to pass.
     """
     treffer: list[str] = []
     for line in text.splitlines():
-        if _HOOK_EM_DASH in line or _HOOK_EN_DASH_SENTENCE.search(line):
+        checked = _hook_strip_quotes(line)
+        if _HOOK_EM_DASH in checked or _HOOK_EN_DASH_SENTENCE.search(checked):
             treffer.append(" ".join(line.split()))
     return treffer
 
@@ -7683,6 +7699,26 @@ def _hook_authored_by_ai(text: str, datei: Path) -> bool:
         if isinstance(fm, dict) and fm.get("source"):
             return str(fm["source"]).strip().lower() in ("ai-generated", "collaborative")
     return False
+
+
+def cmd_prose_check(args: argparse.Namespace) -> int:
+    """Non-blocking precheck: the same dash-as-punctuation scan the prose-guard hook runs, callable on
+    a draft before Write so the finding shows up as normal output instead of a refused write.
+
+    Always exits 0. A dash found is a finding to fix, not a crash; only `prose-guard` itself, bound to
+    the actual Write, has reason to block.
+    """
+    text = args.text if args.text is not None else sys.stdin.read()
+    treffer = _hook_dash_hits(text)
+    if not treffer:
+        print("clean: no dash used as sentence punctuation")
+        return 0
+    print(f"found: {len(treffer)} line(s) use a dash as sentence punctuation")
+    for zeile in treffer:
+        print(f"  {zeile[:140]}")
+    print("Finish the thought, or split it into two sentences. A hyphen inside a compound word and a "
+          "number range keep their dash.")
+    return 0
 
 
 def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
@@ -10383,7 +10419,12 @@ def cmd_hook_index_consistency(args: argparse.Namespace) -> int:
     # `<kind>/<slug>/<file>`: three segments now that the kind folder is a vault root.
     if len(parts) < 3:
         return 0
-    bundle_dir = Path(file_path).parent
+    # `parts` is `<kind>/<slug>/.../<file>`: for a file sitting directly in the bundle root that is
+    # three segments and the immediate parent is the bundle dir. A file nested under a working
+    # subfolder (`arbeit/recherche/…`) adds segments without adding a bundle, so the bundle dir is
+    # found by walking up to the slug level, not by taking the file's immediate parent: otherwise
+    # every subfolder without its own INDEX.md reports the bundle-level one as missing.
+    bundle_dir = Path(file_path).parents[len(parts) - 3]
     file_name = parts[-1]
     bundle_slug = parts[1]
     truth_file = f"{bundle_slug}.md"
@@ -10403,7 +10444,9 @@ def cmd_hook_index_consistency(args: argparse.Namespace) -> int:
         rf"\[\[{re.escape(file_name)}\]\]",
         rf"\[[^\]]+\]\([^)]*{re.escape(file_name)}\)",
     )
-    if any(re.search(p, index_text) for p in patterns):
+    # A wikilink is matched by basename regardless of case (Hard Rule 1); `STAND.md` linked as
+    # `[[stand]]` is the same reference, not a miss.
+    if any(re.search(p, index_text, re.IGNORECASE) for p in patterns):
         return 0
     print(f"index-consistency: '{file_name}' was written under {bundle_slug}/ but is not referenced in {bundle_slug}/INDEX.md. Append a wikilink to keep the bundle discoverable.", file=sys.stderr)
     return 2
@@ -12127,6 +12170,13 @@ def main(argv: list[str]) -> int:
     pw_list.add_argument("vault", nargs="?", default=".")
     pw_list.add_argument("--state", help="Filter: open, 'waiting on you', done.")
     pw_list.set_defaults(func=cmd_work_list)
+
+    p_prose = sub.add_parser("prose", help="Check draft prose before it is written, so the write is not later refused by the prose-guard hook.")
+    sub_prose = p_prose.add_subparsers(dest="prose_cmd", required=True)
+
+    pp_check = sub_prose.add_parser("check", help="Report lines using a dash as sentence punctuation. Exit 0 always; the finding is the output, never a failure.")
+    pp_check.add_argument("--text", help="Text to check. Omit to read from stdin.")
+    pp_check.set_defaults(func=cmd_prose_check)
 
     p_brand = sub.add_parser("brand", help="The brand a piece is built against: is there one, and what is still undecided in it.")
     sub_brand = p_brand.add_subparsers(dest="brand_cmd", required=True)
