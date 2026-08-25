@@ -14,6 +14,7 @@ their template and their approved decks, and it grows as they approve more.
     slide-library.py harvest <deck.pptx> --into <library-dir>
     slide-library.py build <plan.json> <out.pptx> --library <library-dir>
     slide-library.py show <library-dir> [--slide <id>]
+    slide-library.py check <library-dir> --task <slug>
 
 `harvest` writes `index.json` and a readable `index.md` describing each slide:
 which master layout it uses, what its slots are, and how much text each slot
@@ -23,7 +24,12 @@ that would overflow, instead of producing a slide nobody looks at twice.
 
 `build` takes a plan naming a source slide per target slide plus the text per
 slot, clones the source and swaps the text. `show` prints the library so an agent
-can choose.
+can choose. `check` does the same and additionally records that the library was
+looked at for a given piece of work (`--task`, the `doing/<slug>/` bundle this
+deliverable belongs to): `library-check-guard` (PreToolUse Bash, see
+`zanmai.py hook`) refuses to save a `.pptx` under that bundle until this has run
+at least once, so composing from scratch is a choice made after looking, not
+instead of it.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ import copy
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -413,6 +420,27 @@ def show(library: Path, slide_id: int | None) -> int:
     return 0
 
 
+def check(library: Path, task: str, vault_root: Path) -> int:
+    """Print the library, same as `show`, and record that it was looked at for `task`
+    (a `doing/<slug>/` bundle). `library-check-guard` reads this record back, so what it
+    proves is that a Compose build happened after a look at the library, not instead of
+    one, and it does not judge whether Compose was the right call, only that the cheap
+    tiers were on the table when it was made."""
+    result = show(library, None)
+    marker_dir = vault_root / "zanmai" / "temp" / task
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    index = json.loads((library / "index.json").read_text(encoding="utf-8"))
+    marker = {
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "library": str(library),
+        "slides_seen": len(index["slides"]),
+    }
+    (marker_dir / "library-checked.json").write_text(
+        json.dumps(marker, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"\nrecorded: {task} looked at {marker['slides_seen']} slide(s) in {library}")
+    return result
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Harvest a brand's own slides, then fill copies of them.")
     sub = ap.add_subparsers(dest="command", required=True)
@@ -432,6 +460,13 @@ def main(argv: list[str]) -> int:
     ps.add_argument("library", type=Path)
     ps.add_argument("--slide", type=int)
 
+    pc = sub.add_parser("check", help="print the library and record that it was looked at for a task")
+    pc.add_argument("library", type=Path)
+    pc.add_argument("--task", required=True,
+                     help="the doing/<slug>/ bundle this deliverable belongs to")
+    pc.add_argument("--vault", type=Path, default=Path.cwd(),
+                     help="vault root the task's zanmai/temp/ lives under (default: cwd)")
+
     args = ap.parse_args(argv[1:])
     if args.command == "harvest":
         if not args.deck.is_file():
@@ -440,6 +475,8 @@ def main(argv: list[str]) -> int:
         return harvest(args.deck, args.into)
     if args.command == "build":
         return build(args.plan, args.out, args.library, strict=not args.loose)
+    if args.command == "check":
+        return check(args.library, args.task, args.vault)
     return show(args.library, args.slide)
 
 

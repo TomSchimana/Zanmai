@@ -4,6 +4,20 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.3.3] - 2026-08-25
+
+**"Library first" is now a hook, not a sentence.**
+
+### Added
+
+- **`slide-library.py check <library> --task <slug>` and the `library-check-guard` hook.** The
+  `powerpoint` skill's order, match or adapt a slide from the brand's own material before composing
+  one from scratch, lived only as prose, and a live build skipped straight to the expensive tier
+  twice in one afternoon before anyone checked. `check` prints the library and records that it was
+  looked at for a `doing/<slug>/` bundle; the hook (PreToolUse Bash, wired alongside `delete-guard`)
+  refuses to save a `.pptx` into that bundle until the record exists. It never picks the tier, it
+  only proves the library was on the table when the choice was made.
+
 ## [0.3.2] - 2026-08-24
 
 **PowerPoint builds from a real master now, not a redrawn copy, and a repair dialog has a way to be

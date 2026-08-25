@@ -5919,6 +5919,7 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
                     "matcher": "Bash",
                     "hooks": [
                         {"type": "command", "command": f'{python_cmd} "{zb}" hook delete-guard'},
+                        {"type": "command", "command": f'{python_cmd} "{zb}" hook library-check-guard'},
                     ],
                 },
             ],
@@ -9768,6 +9769,52 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
     return 2
 
 
+_PPTX_SAVE_RE = re.compile(r'\.save\(\s*["\']([^"\']+\.pptx)["\']')
+_DOING_SLUG_RE = re.compile(r"(?:^|/)" + re.escape(DOING_DIR) + r"/([^/]+)/")
+
+
+def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
+    """PreToolUse Bash hook: refuse to save a `.pptx` into a `doing/<slug>/` bundle until
+    `slide-library.py check <library> --task <slug>` has run at least once for that slug.
+
+    The `powerpoint` skill's library-first order (Match, then Adapt, then Compose, only
+    when nothing in the library carries it) lived only as prose, and a live build on
+    2026-08-24 went straight to Compose twice without it, which is where that run's whole
+    cost went. A rule that has to be repeated in text is the signal that it needs a
+    mechanic instead (the lesson from 2026-08-09), and this is that mechanic. It does not
+    judge whether Compose was the right tier, only that the library was actually looked
+    at before the deliverable was written, which is the step that kept getting skipped.
+    """
+    payload = _hook_read_payload()
+    if not payload:
+        return 0
+    if payload.get("tool_name", "") != "Bash":
+        return 0
+    command = (payload.get("tool_input", {}) or {}).get("command", "") or ""
+    save_match = _PPTX_SAVE_RE.search(command)
+    if not save_match:
+        return 0
+    saved_path = save_match.group(1).replace("\\", "/")
+    slug_match = _DOING_SLUG_RE.search(saved_path)
+    if not slug_match:
+        return 0
+    slug = slug_match.group(1)
+    checked = Path.cwd() / SCRATCH_DIR / slug / "library-checked.json"
+    if checked.is_file():
+        return 0
+    print(
+        f"library-check-guard: refusing this save. {slug!r} has no record of "
+        f"`slide-library.py check <library> --task {slug}` having run. Run that first: it "
+        f"prints the brand's own slides, so a matching one can be cloned and filled in "
+        f"seconds, the cheap tier this save is skipping past. If nothing in the library "
+        f"carries this shape of content, composing from scratch is still the honest "
+        f"answer, run the check first anyway; its only job is proving the library was "
+        f"looked at before the deck was written.",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
     """PreToolUse Agent hook: refuse a main-thread expert dispatch that asks to
     run synchronously. An expert's job runs for minutes and
@@ -12576,6 +12623,9 @@ def main(argv: list[str]) -> int:
 
     ph_delete = sub_hook.add_parser("delete-guard", help="PreToolUse Bash. Refuses any command that removes something; discarding goes through `file trash`.")
     ph_delete.set_defaults(func=cmd_hook_delete_guard)
+
+    ph_libcheck = sub_hook.add_parser("library-check-guard", help="PreToolUse Bash. Refuses to save a .pptx into a doing/<slug>/ bundle until `slide-library.py check` has run for that slug.")
+    ph_libcheck.set_defaults(func=cmd_hook_library_check_guard)
 
     # launcher -----
     p_launcher = sub.add_parser("launcher", help="Double-clickable starter for this vault (an .app on macOS, a .lnk on Windows). Callable anytime, not only during setup.")
