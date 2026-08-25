@@ -5,8 +5,9 @@ A standalone tool, separate from zanmai.py: the CLI here is a pixel workbench,
 not vault mechanics. Two tiers of operation:
 
   Core (Pillow only)   convert, resize, rotate, crop, grayscale, composite,
-                       optimize, plus batch over a folder. Always available
-                       once Pillow is provisioned.
+                       optimize, palette (dominant colours plus WCAG contrast
+                       against a reference), plus batch over a folder. Always
+                       available once Pillow is provisioned.
 
   Detected (heavier)   grade (apply a .cube LUT or match a reference image's
                        colour), raw (develop a camera RAW). Each checks its own
@@ -115,6 +116,65 @@ def op_crop(img, x, y, w, h):
 
 def op_grayscale(img):
     return img.convert("L")
+
+
+def op_palette(img, n=6):
+    """The `n` dominant colours by pixel count, most common first. Pillow's own
+    median-cut quantiser does the clustering, no extra dependency; MAXCOVERAGE is
+    used over the faster FASTOCTREE because it keeps a small-but-large solid block
+    (a logo mark, a brand accent) rather than losing it to background noise, which
+    is exactly the case reading a reference mockup or screenshot needs."""
+    Image = _need_pillow()
+    rgb = img.convert("RGB")
+    n = max(1, min(n, 256))
+    quant = rgb.quantize(colors=n, method=Image.Quantize.MAXCOVERAGE)
+    counts = quant.getcolors(maxcolors=256) or []
+    counts.sort(key=lambda c: -c[0])
+    palette = quant.getpalette()
+    total = rgb.width * rgb.height
+    result = []
+    for count, index in counts[:n]:
+        r, g, b = palette[index * 3], palette[index * 3 + 1], palette[index * 3 + 2]
+        result.append({"hex": "#%02x%02x%02x" % (r, g, b), "rgb": (r, g, b),
+                        "count": count, "share": round(count / total, 4)})
+    return result
+
+
+def _hex_to_rgb(hex_str: str) -> tuple[int, int, int]:
+    h = hex_str.strip().lstrip("#")
+    if len(h) == 3:
+        h = "".join(ch * 2 for ch in h)
+    if len(h) != 6:
+        _fail(f"not a hex colour: {hex_str}")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _srgb_channel_to_linear(c: int) -> float:
+    v = c / 255.0
+    return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+
+def relative_luminance(rgb: tuple[int, int, int]) -> float:
+    r, g, b = rgb
+    return (0.2126 * _srgb_channel_to_linear(r) + 0.7152 * _srgb_channel_to_linear(g)
+            + 0.0722 * _srgb_channel_to_linear(b))
+
+
+def contrast_ratio(rgb_a: tuple[int, int, int], rgb_b: tuple[int, int, int]) -> float:
+    """WCAG 2 contrast ratio, 1:1 (identical) to 21:1 (black on white)."""
+    la, lb = relative_luminance(rgb_a), relative_luminance(rgb_b)
+    lighter, darker = max(la, lb), min(la, lb)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _wcag_verdict(ratio: float) -> str:
+    if ratio >= 7.0:
+        return "AAA"
+    if ratio >= 4.5:
+        return "AA"
+    if ratio >= 3.0:
+        return "AA-large-only"
+    return "fail"
 
 
 def op_composite(base, overlay_path, x, y, scale=None, opacity=1.0):
@@ -296,6 +356,19 @@ def cmd_optimize(a):
     _save(_open(a.input), a.output, quality=a.quality, optimize=True)
 
 
+def cmd_palette(a):
+    colours = op_palette(_open(a.input), a.colours)
+    print(f"{len(colours)} dominant colour(s) in {a.input}:")
+    for c in colours:
+        line = f"  {c['hex']}  {c['share'] * 100:5.1f}%  ({c['count']} px)"
+        if a.against:
+            ratio = contrast_ratio(c["rgb"], _hex_to_rgb(a.against))
+            line += f"   vs {a.against}: {ratio:.2f}:1 ({_wcag_verdict(ratio)})"
+        print(line)
+    if a.against:
+        print("WCAG 2: AA needs 4.5:1 (3:1 for large text), AAA needs 7:1.")
+
+
 def cmd_batch(a):
     src = Path(a.in_dir)
     if not src.is_dir():
@@ -375,6 +448,12 @@ def build_parser():
 
     sp = sub.add_parser("optimize", help="re-save smaller (optimize on, optional --quality)")
     sp.add_argument("input"); sp.add_argument("output"); q(sp); sp.set_defaults(func=cmd_optimize)
+
+    sp = sub.add_parser("palette", help="dominant colours in a reference image, measured not eyeballed")
+    sp.add_argument("input")
+    sp.add_argument("--colours", type=int, default=6, help="how many dominant colours to report (default 6)")
+    sp.add_argument("--against", help="hex colour to compute WCAG contrast against each dominant colour")
+    sp.set_defaults(func=cmd_palette)
 
     sp = sub.add_parser("batch", help="apply one core op to every image in a folder")
     sp.add_argument("op", choices=["convert", "resize", "rotate", "grayscale", "optimize"])

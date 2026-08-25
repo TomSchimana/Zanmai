@@ -4,6 +4,40 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.3.5] - 2026-08-25
+
+**`library-check-guard` now actually sees a build script, not only an inline save call, and two
+skills point at the tools that already existed instead of leaving them to be reinvented.**
+
+### Fixed
+
+- **`library-check-guard` missed any `.pptx` produced by a separate build script.** The hook only
+  matched a literal `.save("x.pptx")` written directly in the Bash command; a script file invocation
+  (`python3 build.py ...`) calls `.save()` inside that file, invisible to the check. A real build went
+  straight through with no library-first record at all. The hook now binds to any Python run that
+  resolves into a `doing/<slug>/` path, not only a visible save literal. Found and fixed alongside it:
+  the path-matching regex searched only the already-isolated save argument, not the full command, and
+  missed a path embedded in quotes or following `cd`.
+
+### Added
+
+- **`image-edit.py palette`.** Dominant colours of a reference image, measured by Pillow's own
+  quantiser, plus WCAG 2 contrast against a given colour. Where a brand's colours had to be read off a
+  raster mockup with no vector source, this replaces an eyeballed estimate with a real measurement.
+- **`prose check` / `prose-guard` catch generic AI-marketing phrasing and a leftover placeholder**
+  ("[Your Company]", "Musterfirma", "Lorem ipsum"), in prose the AI wrote itself, the same way the
+  hook already caught a dash used as sentence punctuation. Deliberately not extended to invented
+  numbers: a script cannot tell a real figure from a fabricated one without knowing the domain.
+
+### Changed
+
+- **`powerpoint/SKILL.md` now names `nudge`, `overlap-check` and `align-check`** as the way to move a
+  shape or find a text-over-text or misaligned pair, instead of leaving a correction to be worked out
+  from scratch each time.
+- **`designer/SKILL.md` now requires a hand-correction to the delivered file to be ported back into
+  whatever produced it** before the piece counts as done. A fix that lives only in the delivered copy
+  is not fixed: the next build from the same generator brings the old mistake back.
+
 ## [0.3.4] - 2026-08-25
 
 **A geometry correction on a PowerPoint slide is now one command, not fifteen minutes of freshly

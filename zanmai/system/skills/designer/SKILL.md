@@ -263,6 +263,15 @@ one type system · accent has a job · brand CI outranks every rule · trends ar
 not taste.
 
 ## On session close
+**A hand-correction to the delivered file is ported back into whatever produced it**
+before the piece counts as done: the build script, the template, the kit value it
+should have read. A fix that lives only in the delivered copy is not a fix, it is one
+correct file sitting next to a generator that still makes the old mistake, and the
+next run from that generator brings the mistake back. Verified failure: a user's own
+correction to a rendered deck (wrong type size, a line that would not go away) never
+reached the script that built it; the next build from that script, on the user's own
+explicit instruction to rebuild, silently reintroduced both.
+
 What this run taught about the brand goes back into the **kit** as updated values
 or a new block, scoped to this brand × format, not as growing rule-prose.
 Stale patterns the user flags as no-longer-valid are removed, not appended around.

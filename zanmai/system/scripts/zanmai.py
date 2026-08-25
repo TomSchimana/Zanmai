@@ -7665,6 +7665,65 @@ def _hook_strip_quotes(line: str) -> str:
     return _HOOK_QUOTE_SPAN.sub(lambda m: " " * len(m.group(0)), line)
 
 
+# Generic AI-marketing phrasing: the "buzzwords, filler" failure operating-principles section 7
+# already names for chat prose, never checked on a written file until now. Curated to phrases that
+# are near-universally a tell rather than legitimate technical vocabulary, so a real, specific claim
+# is never caught in passing. English and German, since the guard binds on AI-authored content in
+# either language.
+_HOOK_REALISM_PHRASES = (
+    "unlock the power of", "unlock your potential", "unleash the power of",
+    "in today's fast-paced world", "in today's digital age", "in the ever-evolving landscape",
+    "take it to the next level", "elevate your", "seamlessly integrate", "seamless integration",
+    "cutting-edge", "state-of-the-art solution", "game-changer", "game changer",
+    "revolutionize the way", "delve into", "navigate the complexities of",
+    "harness the power of", "robust solution", "streamline your workflow", "empower you to",
+    "holistic approach", "paradigm shift", "tapestry of", "at the forefront of",
+    "boost your productivity",
+    "in der heutigen schnelllebigen welt", "auf die nächste stufe heben",
+    "das volle potenzial ausschöpfen", "bahnbrechend", "nahtlos integrieren",
+    "ganzheitlicher ansatz", "zukunftsweisend",
+)
+# A placeholder left in place: a bracketed instruction to fill something in, or one of the stock
+# names a template ships with. Presented as fact rather than filled in, "[Your Company]" and
+# "Musterfirma" read as real the same way an invented number does; unlike a number, a script can
+# actually tell these apart from real content, because the marker is the placeholder syntax itself.
+_HOOK_PLACEHOLDER_MARK = re.compile(
+    r"\[[^\]]*\b(company|name|insert|logo|brand|platzhalter|firmenname)\b[^\]]*\]"
+    r"|\b(acme (corp|inc)|example company|musterfirma|musterunternehmen|lorem ipsum)\b"
+    r"|\b(example\.com|yourcompany\.[a-z]{2,}|musterfirma\.de)\b",
+    re.IGNORECASE,
+)
+
+
+def _hook_realism_hits(text: str) -> list[tuple[str, str]]:
+    """Every line carrying a generic AI-marketing phrase or a placeholder left unfilled, as
+    `(line, reason)`. A dash inside quote marks is exempt in `_hook_dash_hits` so a verbatim quote
+    is not refused; the same reasoning applies here, reusing the same span blank-out, so a
+    documented example of what not to write is not itself flagged.
+
+    Deliberately does not attempt to catch an invented number: a script cannot tell a real figure
+    from a fabricated one without knowing the domain, and a check that guesses at that would fail
+    the project's own "measured, not eyeballed" standard. What is caught here is narrower and
+    actually decidable: a phrase from a fixed, curated list, or a placeholder marker that is
+    syntactically a placeholder, not a judgement call.
+    """
+    treffer: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        checked = _hook_strip_quotes(line).lower()
+        found = False
+        for phrase in _HOOK_REALISM_PHRASES:
+            if phrase in checked:
+                treffer.append((" ".join(line.split()), f'generic phrase "{phrase}"'))
+                found = True
+                break
+        if found:
+            continue
+        match = _HOOK_PLACEHOLDER_MARK.search(checked)
+        if match:
+            treffer.append((" ".join(line.split()), f'placeholder left in place ("{match.group(0)}")'))
+    return treffer
+
+
 def _hook_dash_hits(text: str) -> list[str]:
     """Every line of `text` carrying a dash used as sentence punctuation, whitespace-normalised.
 
@@ -7703,31 +7762,42 @@ def _hook_authored_by_ai(text: str, datei: Path) -> bool:
 
 
 def cmd_prose_check(args: argparse.Namespace) -> int:
-    """Non-blocking precheck: the same dash-as-punctuation scan the prose-guard hook runs, callable on
-    a draft before Write so the finding shows up as normal output instead of a refused write.
+    """Non-blocking precheck: the same dash-as-punctuation and content-realism scans the prose-guard
+    hook runs, callable on a draft before Write so a finding shows up as normal output instead of a
+    refused write.
 
-    Always exits 0. A dash found is a finding to fix, not a crash; only `prose-guard` itself, bound to
+    Always exits 0. A finding is something to fix, not a crash; only `prose-guard` itself, bound to
     the actual Write, has reason to block.
     """
     text = args.text if args.text is not None else sys.stdin.read()
-    treffer = _hook_dash_hits(text)
-    if not treffer:
-        print("clean: no dash used as sentence punctuation")
+    dash_treffer = _hook_dash_hits(text)
+    realism_treffer = _hook_realism_hits(text)
+    if not dash_treffer and not realism_treffer:
+        print("clean: no dash used as sentence punctuation, no generic phrase or leftover placeholder")
         return 0
-    print(f"found: {len(treffer)} line(s) use a dash as sentence punctuation")
-    for zeile in treffer:
-        print(f"  {zeile[:140]}")
-    print("Finish the thought, or split it into two sentences. A hyphen inside a compound word and a "
-          "number range keep their dash.")
+    if dash_treffer:
+        print(f"found: {len(dash_treffer)} line(s) use a dash as sentence punctuation")
+        for zeile in dash_treffer:
+            print(f"  {zeile[:140]}")
+        print("Finish the thought, or split it into two sentences. A hyphen inside a compound word and a "
+              "number range keep their dash.")
+    if realism_treffer:
+        print(f"found: {len(realism_treffer)} line(s) read as generic AI phrasing or a leftover "
+              f"placeholder")
+        for zeile, grund in realism_treffer:
+            print(f"  {zeile[:140]}  [{grund}]")
+        print("Say the concrete thing instead, or fill in the real value.")
     return 0
 
 
 def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
-    """PreToolUse Write|Edit: refuse a dash-as-punctuation the AI is adding to its own prose.
+    """PreToolUse Write|Edit: refuse a dash-as-punctuation, a generic AI-marketing phrase, or a
+    leftover placeholder the AI is adding to its own prose.
 
-    Mechanic: compare the dash lines before and after, exactly as `checkbox-guard` compares task
-    lines. Only a line that was not there before is refused, so moving, importing or re-indenting the
-    user's material passes untouched. Binds only where the frontmatter says the AI wrote the content.
+    Mechanic: compare the dash and realism lines before and after, exactly as `checkbox-guard`
+    compares task lines. Only a line that was not there before is refused, so moving, importing or
+    re-indenting the user's material passes untouched. Binds only where the frontmatter says the AI
+    wrote the content.
 
     The refusal names the line and what to do instead, because a refusal with no route named produces
     a report about the refusal rather than the work.
@@ -7766,13 +7836,21 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
     for vorher, nachher in paare:
         alt, neu = _hook_dash_hits(vorher), _hook_dash_hits(nachher)
         dazu = [z for z in neu if z not in alt]
-        if not dazu:
+        alt_real, neu_real = _hook_realism_hits(vorher), _hook_realism_hits(nachher)
+        dazu_real = [t for t in neu_real if t not in alt_real]
+        if not dazu and not dazu_real:
             continue
         rel = Path(file_path).name
-        print(f"prose-guard: refusing {tool} on {rel}, {len(dazu)} line(s) use a dash as sentence "
-              f"punctuation. First: {dazu[0][:140]}", file=sys.stderr)
-        print("  Finish the thought, or split it into two sentences. A hyphen inside a compound word "
-              "and a number range keep their dash.", file=sys.stderr)
+        if dazu:
+            print(f"prose-guard: refusing {tool} on {rel}, {len(dazu)} line(s) use a dash as sentence "
+                  f"punctuation. First: {dazu[0][:140]}", file=sys.stderr)
+            print("  Finish the thought, or split it into two sentences. A hyphen inside a compound word "
+                  "and a number range keep their dash.", file=sys.stderr)
+        if dazu_real:
+            zeile, grund = dazu_real[0]
+            print(f"prose-guard: refusing {tool} on {rel}, {len(dazu_real)} line(s) read as generic AI "
+                  f"phrasing or a leftover placeholder. First: {zeile[:140]} [{grund}]", file=sys.stderr)
+            print("  Say the concrete thing instead, or fill in the real value.", file=sys.stderr)
         print("  Rewrite those lines and write the file again; the rest of the content is fine.",
               file=sys.stderr)
         return 2
@@ -9770,7 +9848,10 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
 
 
 _PPTX_SAVE_RE = re.compile(r'\.save\(\s*["\']([^"\']+\.pptx)["\']')
-_DOING_SLUG_RE = re.compile(r"(?:^|/)" + re.escape(DOING_DIR) + r"/([^/]+)/")
+_PYTHON_RUN_RE = re.compile(r"(?:^|[\s;&|])python3?\b")
+# Preceded by start, a slash, a quote or whitespace: a doing/<slug> path shows up embedded in a
+# quoted .save() argument, after a `cd`, or as a bare relative path, not only at a path boundary.
+_DOING_SLUG_RE = re.compile(r"(?:^|[/'\"\s])" + re.escape(DOING_DIR) + r"/([^/'\"\s]+)")
 
 
 def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
@@ -9784,6 +9865,16 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
     mechanic instead (the lesson from 2026-08-09), and this is that mechanic. It does not
     judge whether Compose was the right tier, only that the library was actually looked
     at before the deliverable was written, which is the step that kept getting skipped.
+
+    Two ways a command can produce a `.pptx`: a literal `.save("x.pptx")` inline in the
+    Bash command (a one-off `python3 -c ...`), or a call into a separate script file whose
+    own `.save(...)` is invisible here. Found on a real run: a `sales-play-bauen.py`
+    invocation slipped past the guard entirely, no `.pptx` literal for the old regex to
+    find, because the save lived inside the script, not the command line. Any Python run
+    that resolves into a `doing/<slug>/` bundle now binds the same way, whether or not the
+    filename is visible, because a script's own behaviour cannot be known without running
+    it; the check itself is cheap enough that gating a script that turns out not to touch
+    a deck costs one extra command, not a wasted build.
     """
     payload = _hook_read_payload()
     if not payload:
@@ -9791,11 +9882,9 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
     if payload.get("tool_name", "") != "Bash":
         return 0
     command = (payload.get("tool_input", {}) or {}).get("command", "") or ""
-    save_match = _PPTX_SAVE_RE.search(command)
-    if not save_match:
+    if not _PPTX_SAVE_RE.search(command) and not _PYTHON_RUN_RE.search(command):
         return 0
-    saved_path = save_match.group(1).replace("\\", "/")
-    slug_match = _DOING_SLUG_RE.search(saved_path)
+    slug_match = _DOING_SLUG_RE.search(command)
     if not slug_match:
         return 0
     slug = slug_match.group(1)
@@ -12606,7 +12695,7 @@ def main(argv: list[str]) -> int:
     ph_check = sub_hook.add_parser("checkbox-guard", help="PreToolUse Write|Edit. Refuses any write that adds, removes or ticks a markdown task. Checkboxes are the user's.")
     ph_check.set_defaults(func=cmd_hook_checkbox_guard)
 
-    ph_prose = sub_hook.add_parser("prose-guard", help="PreToolUse Write|Edit. Refuses a dash used as sentence punctuation in prose the AI wrote (source: ai-generated or collaborative).")
+    ph_prose = sub_hook.add_parser("prose-guard", help="PreToolUse Write|Edit. Refuses a dash used as sentence punctuation, a generic AI-marketing phrase, or a leftover placeholder in prose the AI wrote (source: ai-generated or collaborative).")
     ph_prose.set_defaults(func=cmd_hook_prose_guard)
 
     ph_kind = sub_hook.add_parser("kind-required", help="PreToolUse Write|Edit. Refuses writes into a bundle root without valid kind frontmatter.")
