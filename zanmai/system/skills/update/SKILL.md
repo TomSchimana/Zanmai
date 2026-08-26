@@ -28,9 +28,19 @@ The slash-command form is the strongest possible trigger. Steve dispatches Peppe
    first real `/zanmai-update` after the guard existed: the handover was the version pair alone, the
    guard turned it back, and the turn was spent twice.
 
-   Pepper then reads the CHANGELOG for what changed, snapshots, applies, verifies, and rolls back
-   on failure. Steve relays her preview verbatim and asks for the go; the apply happens after the
-   user's yes.
+   Pepper reads the CHANGELOG and returns the preview. **She changes nothing in this run.** Steve
+   relays the preview verbatim and asks for the go.
+
+4. **On the user's yes: dispatch Pepper a second time**, same two blocks, and the second one carries
+   `mode: apply` plus the version pair. Only now does she snapshot, apply, verify, roll back on
+   failure and write the history line.
+
+   **Two dispatches, not one, and this is the whole point of the step.** A subagent runs start to
+   finish and cannot wait mid-run for an answer that is not in its context, so "apply after the user
+   says yes" inside one dispatch is an instruction nobody can carry out. On 2026-08-26 that is exactly
+   what happened in a live vault: the preview came back reading "ready to apply on your yes", and the
+   vault was already on the new version when it was read. The gate belongs to Steve, in the chat,
+   between two dispatches. Nowhere else can hold it.
 
 ## When to use
 

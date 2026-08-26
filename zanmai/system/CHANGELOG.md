@@ -4,6 +4,33 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.4.3] - 2026-08-26
+
+**An update installed itself without the user's yes, half an hour after 0.4.2 went out. The approval
+gate was written as a condition in the middle of an eight-step list a subagent works through: step 3
+produced the preview, step 4 began "on user yes", step 5 applied. A subagent has one pass. It starts,
+runs to the end and returns; it cannot stop in the middle and wait for an answer that does not exist
+in its context. So the preview was produced as text, the run carried on through snapshot, merge and
+apply, and the report handed back still read "ready to apply on your yes" after it had been applied.**
+
+### Fixed
+
+- **The update runs as two dispatches with the user in between.** The first reads the changelog and
+  returns the preview, changing nothing. Only after the yes does the second one run, carrying
+  `mode: apply`, and only it snapshots, applies, verifies and writes the history line. The gate now
+  sits where the decision is actually taken, in the conversation, which is the only place that can
+  hold it.
+- **Both files say so where the work happens**, in the update skill and in the house-keeper's own
+  contract, rather than in one of them alone.
+
+### Changed
+
+- **Expert descriptions were the third channel nobody had measured** and are now capped like the
+  others. They cost 4,580 characters at every session start, are shown at dispatch time exactly like
+  a skill's, and went through the whole of 0.4.2 unnoticed while two other channels were being fixed.
+  Rewritten as triggers they cost 1,983, and `contract-budget.py` fails the build over that total or
+  any single entry.
+
 ## [0.4.2] - 2026-08-26
 
 **The session start had never once been read in full. The host caps what a hook may put into context
