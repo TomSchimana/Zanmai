@@ -4348,6 +4348,25 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
         aufnehmen(_greet_group(tage), eintrag["text"], eintrag["path"], abs(tage),
                   faellig=eintrag["due"])
 
+    # Waiting on the user, with no date on it. This comes first and on its own pass, because
+    # `_work_due_soon` filters by date before anything else sees the row, so an undated one never
+    # arrived at all. Found in the field on 2026-08-26, on the first greet after the greet itself was
+    # fixed: the most active piece of work in the vault, three days old and explicitly waiting on the
+    # user, was missing from the list, and the three work objects in that state all had no due date.
+    # A due date is a plan; `waiting on you` is a recorded fact about who holds the thing. Dropping
+    # the fact because the plan is absent is backwards, and the comment below already said so while
+    # the line above threw the row away.
+    try:
+        alle_rows, _h = _work_read(vault)
+    except Exception:
+        alle_rows = []
+    for row in alle_rows:
+        if (row.get("state") or "").strip() != "waiting on you":
+            continue
+        if _task_date_ok((row.get("due") or "").strip()):
+            continue  # dated ones come through the pass below, with their real distance
+        aufnehmen("waiting", row.get("work", ""), "work object", _GREET_WEEK_DAYS, rang=0)
+
     for row in _work_due_soon(vault, _GREET_WEEK_DAYS):
         faellig = (row.get("due") or "").strip()
         if not _task_date_ok(faellig):

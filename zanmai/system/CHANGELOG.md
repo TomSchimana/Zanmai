@@ -4,6 +4,25 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.4.4] - 2026-08-26
+
+**The first greet after the greet was fixed still left out the most important thing in the vault.
+Shape, grouping and numbering were right this time, and the piece of work the user had been on for
+three days was not in the list. Every work object marked as waiting on the user is filtered out
+before the rule that puts it first is ever reached: the selection asks for a due date first, and all
+three of them had none. A due date is a plan the machine made. `waiting on you` is a recorded fact
+about who is holding the thing, and dropping the fact because the plan is absent is backwards. The
+comment in the code said as much, three lines below the line that threw the row away.**
+
+### Fixed
+
+- **A work object waiting on the user is named whether or not it carries a date.** On the live
+  vault's own data the list now opens with the three that were missing. Where that costs an overdue
+  item its slot in the six, that is the rule working: the regression case says so in as many words,
+  so a later change that quietly reverses the priority has to edit that line and give a reason.
+- **The regression case only ever set a dated one**, which is why it passed through every run while
+  the defect was live. It now sets both.
+
 ## [0.4.3] - 2026-08-26
 
 **An update installed itself without the user's yes, half an hour after 0.4.2 went out. The approval
