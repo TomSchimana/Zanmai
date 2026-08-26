@@ -2063,6 +2063,25 @@ def _detect_sync_host(vault: Path) -> str:
     return ""
 
 
+def _work_vault(args: argparse.Namespace) -> Path:
+    """The vault a work command acts on: the root, never the folder someone happens to stand in.
+
+    Found 2026-08-26 on the live vault: a `work` call made from inside `doing/<slug>/` created a
+    second, empty `zanmai/open.base` there, because the default was the literal `.`. A work object
+    written into it would have been invisible to every later `work list`, which is the one thing
+    this database exists to prevent.
+    """
+    start = Path(args.vault) if getattr(args, "vault", None) else Path.cwd()
+    wurzel = _find_vault_root(start)
+    return wurzel if wurzel is not None else start.resolve()
+
+
+def _work_wanted_id(args: argparse.Namespace) -> str:
+    """The id, given either as `--id` or as the first positional. Both, because the flag is what
+    the skills write and the bare id is what a person types."""
+    return (getattr(args, "id", None) or getattr(args, "id_pos", None) or "").strip()
+
+
 def _work_base(vault: Path) -> Path:
     return vault / OPEN_DIR
 
@@ -2202,15 +2221,20 @@ def _work_register_page(vault: Path, row_id: str) -> None:
 
 def cmd_work_open(args: argparse.Namespace) -> int:
     """Open a work object. Returns its id, which every later call uses."""
-    vault = Path(args.vault).resolve()
+    vault = _work_vault(args)
+    titel = (args.title or args.title_pos or "").strip()
+    if not titel:
+        print("fail: no title. Give it as `work open \"the title\"` or as `--title \"the title\"`.",
+              file=sys.stderr)
+        return 1
     if args.due and not _task_date_ok(args.due):
         print("fail: --due expects YYYY-MM-DD", file=sys.stderr)
         return 1
     rows, headers = _work_read(vault)
-    row_id = _work_uuid(f"{_timestamp_log()}:{args.title}")
+    row_id = _work_uuid(f"{_timestamp_log()}:{titel}")
     row = {h: "" for h in headers}
     row.update({
-        "id": row_id, "work": args.title, "state": "open", "owner": args.owner or "",
+        "id": row_id, "work": titel, "state": "open", "owner": args.owner or "",
         "deliverable": args.deliverable or "", "workshop": args.workshop or "",
         "updated": _today(), "due": args.due or "",
     })
@@ -2219,7 +2243,7 @@ def cmd_work_open(args: argparse.Namespace) -> int:
     page = _work_page(vault, row_id)
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text(
-        f"# {args.title}\n\n"
+        f"# {titel}\n\n"
         f"Opened {_today()}"
         + (f" for {args.owner}" if args.owner else "") + ".\n\n"
         "## What finished looks like\n\n"
@@ -2230,7 +2254,7 @@ def cmd_work_open(args: argparse.Namespace) -> int:
         f"- {_timestamp_log()} opened\n",
         encoding="utf-8")
     _work_register_page(vault, row_id)
-    _append_activity_log(vault, args.owner or "zanmai.py", f"opened work '{args.title}' ({row_id[:8]})")
+    _append_activity_log(vault, args.owner or "zanmai.py", f"opened work '{titel}' ({row_id[:8]})")
     print(f"ok: work opened, id {row_id}")
     print(f"    short id usable everywhere: {row_id[:8]}")
     return 0
@@ -2264,11 +2288,15 @@ def _work_append_section(page: Path, heading: str, text: str) -> None:
 
 def cmd_work_ask(args: argparse.Namespace) -> int:
     """Record something only the user can settle, and mark the object as waiting."""
-    vault = Path(args.vault).resolve()
+    vault = _work_vault(args)
     rows, headers = _work_read(vault)
-    row = _work_find(rows, args.id)
+    wanted = _work_wanted_id(args)
+    if not wanted:
+        print("fail: no id. Give it as `work <cmd> <id>` or as `--id <id>`.", file=sys.stderr)
+        return 1
+    row = _work_find(rows, wanted)
     if row is None:
-        print(f"fail: no single work object matching id '{args.id}'", file=sys.stderr)
+        print(f"fail: no single work object matching id '{wanted}'", file=sys.stderr)
         return 1
     row["state"] = "waiting on you"
     row["waiting for"] = args.question.split("\n")[0][:160]
@@ -2283,11 +2311,15 @@ def cmd_work_ask(args: argparse.Namespace) -> int:
 
 def cmd_work_answer(args: argparse.Namespace) -> int:
     """Record the user's answer and put the object back to work."""
-    vault = Path(args.vault).resolve()
+    vault = _work_vault(args)
     rows, headers = _work_read(vault)
-    row = _work_find(rows, args.id)
+    wanted = _work_wanted_id(args)
+    if not wanted:
+        print("fail: no id. Give it as `work <cmd> <id>` or as `--id <id>`.", file=sys.stderr)
+        return 1
+    row = _work_find(rows, wanted)
     if row is None:
-        print(f"fail: no single work object matching id '{args.id}'", file=sys.stderr)
+        print(f"fail: no single work object matching id '{wanted}'", file=sys.stderr)
         return 1
     row["state"] = "open"
     row["waiting for"] = ""
@@ -2302,11 +2334,15 @@ def cmd_work_answer(args: argparse.Namespace) -> int:
 
 def cmd_work_log(args: argparse.Namespace) -> int:
     """Append one line to the object's log, and add up what the work has cost."""
-    vault = Path(args.vault).resolve()
+    vault = _work_vault(args)
     rows, headers = _work_read(vault)
-    row = _work_find(rows, args.id)
+    wanted = _work_wanted_id(args)
+    if not wanted:
+        print("fail: no id. Give it as `work <cmd> <id>` or as `--id <id>`.", file=sys.stderr)
+        return 1
+    row = _work_find(rows, wanted)
     if row is None:
-        print(f"fail: no single work object matching id '{args.id}'", file=sys.stderr)
+        print(f"fail: no single work object matching id '{wanted}'", file=sys.stderr)
         return 1
     for field, given in (("tokens", args.tokens), ("minutes", args.minutes)):
         if given:
@@ -2332,11 +2368,15 @@ def cmd_work_log(args: argparse.Namespace) -> int:
 
 
 def cmd_work_done(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
+    vault = _work_vault(args)
     rows, headers = _work_read(vault)
-    row = _work_find(rows, args.id)
+    wanted = _work_wanted_id(args)
+    if not wanted:
+        print("fail: no id. Give it as `work <cmd> <id>` or as `--id <id>`.", file=sys.stderr)
+        return 1
+    row = _work_find(rows, wanted)
     if row is None:
-        print(f"fail: no single work object matching id '{args.id}'", file=sys.stderr)
+        print(f"fail: no single work object matching id '{wanted}'", file=sys.stderr)
         return 1
     row["state"] = "done"
     row["waiting for"] = ""
@@ -2348,9 +2388,41 @@ def cmd_work_done(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_work_show(args: argparse.Namespace) -> int:
+    """One work object, whole: the row and the page under it.
+
+    `list` prints a short id and every other command takes one, so the one thing missing was a way
+    to read what that id stands for. Without it the only route to the content was the page folder
+    and its full uuid, which is the machine's own filing and not something anyone should have to
+    know. Found 2026-08-26, when a live session went looking for it and had to `ls` the folder.
+    """
+    vault = _work_vault(args)
+    rows, _headers = _work_read(vault)
+    wanted = _work_wanted_id(args)
+    if not wanted:
+        print("fail: no id. Give it as `work show <id>` or as `--id <id>`.", file=sys.stderr)
+        return 1
+    row = _work_find(rows, wanted)
+    if row is None:
+        print(f"fail: no single work object matching id '{wanted}'", file=sys.stderr)
+        return 1
+    print(f"{row.get('work','')}")
+    print(f"  id        {row.get('id','')}")
+    for feld in ("state", "owner", "due", "updated", "deliverable", "workshop", "waiting for"):
+        if row.get(feld):
+            print(f"  {feld:9} {row[feld]}")
+    page = _work_page(vault, row["id"])
+    if page.is_file():
+        print()
+        print(page.read_text(encoding="utf-8").rstrip())
+    else:
+        print("\n(no page on disk for this object)")
+    return 0
+
+
 def cmd_work_list(args: argparse.Namespace) -> int:
     """What is open, and what is waiting on the user. Prints the denominator."""
-    vault = Path(args.vault).resolve()
+    vault = _work_vault(args)
     rows, _headers = _work_read(vault)
     wanted = (args.state or "").strip().lower()
     shown = 0
@@ -3585,6 +3657,58 @@ def _recent_operations(vault: Path, limit: int = 3) -> list[dict]:
     return result
 
 
+def _last_session_end(vault: Path) -> str:
+    """The timestamp of the last clean session close, or an empty string."""
+    marker = vault / MEMORY_DIR / ".last-session-end"
+    try:
+        return marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+_ACTIVITY_HEAD_RE = re.compile(r"^## \[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\] - ([^-]+) - (.*)$")
+
+
+def _marker_as_local_minute(marker: str) -> str:
+    """`.last-session-end` is written in UTC; the activity log carries local time. This is the one
+    place the two meet, so the conversion lives here rather than at each caller."""
+    text = (marker or "").strip()
+    if not text:
+        return ""
+    try:
+        stamp = datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return text.replace("T", " ").replace("Z", "")[:16]
+    return stamp.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _activity_since(vault: Path, since: str, limit: int = 25) -> list[dict]:
+    """Activity-log entries written after `since`, newest last.
+
+    The activity log is the only record of a session that is written while the work happens
+    rather than at the end, so it is the one that survives a session nobody closed. Found
+    2026-08-26 on a live vault: `briefing.md` stood at 15:13 while the log carried entries up
+    to 16:24 and the whole afternoon, an escalation included, was invisible at the next start.
+    """
+    log = vault / MEMORY_DIR / "activity-log.md"
+    if not log.is_file():
+        return []
+    # The marker is UTC, the activity log is local time. Comparing them as text put the line two
+    # hours in the wrong place, which on a live vault means either replaying entries that were
+    # already handed over or dropping ones that were not. Found by the check for this function.
+    grenze = _marker_as_local_minute(since)
+    treffer: list[dict] = []
+    for zeile in log.read_text(encoding="utf-8", errors="ignore").splitlines():
+        match = _ACTIVITY_HEAD_RE.match(zeile)
+        if not match:
+            continue
+        wann, wer, was = match.group(1), match.group(2).strip(), match.group(3).strip()
+        if grenze and wann <= grenze:
+            continue
+        treffer.append({"when": wann, "who": wer, "what": was})
+    return treffer[-limit:]
+
+
 def _close_session_next_items(vault: Path, limit: int = 3) -> list[dict]:
     """Pull 'Next' items from the last N close-session logs. Returns list of
     {date, items}. Items is the raw text of the Next section so the briefing
@@ -4411,6 +4535,27 @@ def _render_briefing(vault: Path) -> str:
         lines.append("")
 
     # 1) Current state
+    # What happened after the last clean close. This is the section that answers "where were we"
+    # when no close-session log exists, which on a live vault is the normal case rather than the
+    # exception: the close is a skill someone has to invoke, and nobody invokes it when they simply
+    # shut the window. The activity log is written during the work, so it is there either way.
+    seit = _last_session_end(vault)
+    nachgetragen = _activity_since(vault, seit)
+    if nachgetragen:
+        lines.append("## Since the last clean close")
+        lines.append("")
+        if seit:
+            lines.append(f"_The last session closed at {seit}. "
+                         f"{len(nachgetragen)} thing(s) happened after that and were never "
+                         f"handed over. Read this before answering anything about where we stand._")
+        else:
+            lines.append("_No session has ever been closed cleanly in this vault. "
+                         "This is what the activity log carries._")
+        lines.append("")
+        for eintrag in nachgetragen:
+            lines.append(f"- **{eintrag['when']}** ({eintrag['who']}) {eintrag['what']}")
+        lines.append("")
+
     lines.append("## Current state")
     lines.append("")
     if focus_bundles:
@@ -4540,6 +4685,55 @@ def cmd_briefing(args: argparse.Namespace) -> int:
         print("warning: briefing is missing section(s): " + ", ".join(fehlt), file=sys.stderr)
         return 1
     return 0
+
+
+def cmd_hook_session_end(args: argparse.Namespace) -> int:
+    """SessionEnd hook: rebuild the briefing, and mark the close only if one really happened.
+
+    Until 2026-08-26 the handover between sessions ran entirely through the `close-session` skill,
+    which someone has to invoke. On a live vault after four weeks, no session log had ever been
+    written: shutting the window is what actually ends a session, and nothing was bound to that.
+    The next morning then opened on a briefing that stood at the previous afternoon, with the whole
+    day after it invisible, which reads from the outside exactly like a system with no memory.
+
+    So the briefing is rebuilt here, mechanically, at the one moment that always arrives. It is
+    deliberately not a substitute for the skill: this hook has no model, so it can record what
+    happened but not what it meant. The marker file is therefore only advanced when a real close
+    log exists for today; otherwise it stays put and the briefing's own catch-up section carries
+    the day forward, which is the honest state rather than a clean-looking one.
+    """
+    payload = _hook_read_payload()
+    start = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
+    vault = _find_vault_root(Path(start))
+    if vault is None:
+        return 0
+    ziel = vault / MEMORY_DIR / "briefing.md"
+    if not ziel.parent.is_dir():
+        return 0
+    try:
+        ziel.write_text(_render_briefing(vault), encoding="utf-8")
+    except OSError as exc:
+        print(f"session-end: briefing not rebuilt ({exc})", file=sys.stderr)
+        return 0
+    if _close_log_today(vault):
+        # Same format the close-session skill writes: UTC, ISO 8601, seconds.
+        (vault / MEMORY_DIR / ".last-session-end").write_text(
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), encoding="utf-8")
+    return 0
+
+
+def _close_log_today(vault: Path) -> bool:
+    """Whether a close-session log was written today. The condition for calling a session closed."""
+    heute = datetime.now().strftime("%Y-%m-%d")
+    for log in _recent_log_files(vault, limit=10):
+        text = log.read_text(encoding="utf-8", errors="ignore")
+        fm, _, _body = _split_frontmatter(text)
+        if not isinstance(fm, dict):
+            continue
+        if str(fm.get("session_type", "")).lower() in ("close-session", "close", "unattended"):
+            if str(fm.get("date", ""))[:10] == heute or log.name.startswith(heute):
+                return True
+    return False
 
 
 def cmd_write_report(args: argparse.Namespace) -> int:
@@ -5929,6 +6123,13 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
                     "matcher": "Write|Edit",
                     "hooks": [
                         {"type": "command", "command": f'{python_cmd} "{zb}" hook index-consistency'}
+                    ],
+                }
+            ],
+            "SessionEnd": [
+                {
+                    "hooks": [
+                        {"type": "command", "command": f'{python_cmd} "{zb}" hook session-end'}
                     ],
                 }
             ],
@@ -7659,6 +7860,9 @@ _HOOK_EN_DASH_SENTENCE = re.compile("(?:^|\\s)–(?:\\s|$)")
 # sentence punctuation. The signal is the quote marks actually being there, not a guess at intent, so
 # this only exempts a dash strictly between them, in the styles this project actually writes: straight
 # double quotes and the German „low-high" and guillemet pairs.
+# Just the quote marks, not a matched pair: used where a mark has to become a word boundary so a
+# dash sitting against it is still seen. Separate from _HOOK_QUOTE_SPAN, which blanks whole spans.
+_HOOK_QUOTE_MARKS = re.compile('["\'\u201e\u201c\u201d\u00ab\u00bb]')
 _HOOK_QUOTE_SPAN = re.compile(
     '"[^"\\n]*"'
     '|\u201e[^\u201c\\n]*\u201c'
@@ -7880,12 +8084,16 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
         command = tool_input.get("command", "") or ""
         if not _PYTHON_RUN_RE.search(command):
             return 0
-        if _library_guard_slug(command) is None:
+        if _library_guard_slug(command, cwd=payload.get("cwd")) is None:
             return 0
-        # No quote blank-out here: in a build command the prose sits inside the quoted string
-        # literals, so blanking them would hide exactly what this is looking for.
-        dazu = [z for z in command.splitlines()
-                if _HOOK_EM_DASH in z or _HOOK_EN_DASH_SENTENCE.search(z)]
+        # The quote marks themselves are blanked, never what stands between them: in a build
+        # command the prose sits inside the string literals, so blanking the content would hide
+        # exactly what this is looking for. Blanking only the marks makes them a word boundary,
+        # which is what the dash pattern needs. Found 2026-08-26: `--text "Wir schaffen -"` was
+        # silent because the dash was followed by a quote mark, so neither a space nor a line end
+        # closed it, and that is the same end-of-string construction the 0.3.6 fix was built for.
+        dazu = [z for z, gescannt in ((z, _HOOK_QUOTE_MARKS.sub(" ", z)) for z in command.splitlines())
+                if _HOOK_EM_DASH in gescannt or _HOOK_EN_DASH_SENTENCE.search(gescannt)]
         if not dazu:
             return 0
         print(f"prose-guard: refusing this build, {len(dazu)} line(s) of the text it writes use a "
@@ -9944,7 +10152,8 @@ _DOING_SLUG_RE = re.compile(r"(?:^|[/'\"\s])" + re.escape(DOING_DIR) + r"/([^/'\
 # A word that shows up in a bundle name but names nothing on its own. Requiring a link on these
 # would fire on every second line. Kept deliberately short: only words that are structural in a
 # vault name, never topic words, because a topic word is exactly what should be linked.
-def _library_guard_slug(command: str, vault: Path | None = None) -> str | None:
+def _library_guard_slug(command: str, vault: Path | None = None,
+                        cwd: str | None = None) -> str | None:
     """The `doing/<slug>` bundle a Bash command produces into, or None.
 
     Two ways to know. The command names the path, which is the case a `cd` or an absolute
@@ -9956,11 +10165,19 @@ def _library_guard_slug(command: str, vault: Path | None = None) -> str | None:
     match = _DOING_SLUG_RE.search(command)
     if match:
         return match.group(1)
-    wurzel = vault if vault is not None else _session_find_vault_root()
+    # The working directory of the shell that runs the command, which the hook payload carries,
+    # never the hook process's own. Found 2026-08-26: a hook runs from the project root, so
+    # `Path.cwd()` here is always the vault root and the whole branch was dead code. That made the
+    # 0.3.5 fix for a dropped `cd` ineffective, and it never showed because nothing tested it from
+    # inside a bundle.
+    hier = Path(cwd) if cwd else Path.cwd()
+    # The root is searched from there too. Searching from the hook process's own directory found
+    # the wrong vault, or none, whenever the shell stood somewhere else.
+    wurzel = vault if vault is not None else _find_vault_root(hier)
     if wurzel is None:
         return None
     try:
-        rel = Path.cwd().resolve().relative_to(wurzel.resolve())
+        rel = hier.resolve().relative_to(wurzel.resolve())
     except (ValueError, OSError):
         return None
     teile = rel.parts
@@ -10000,7 +10217,7 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
     if not _PPTX_SAVE_RE.search(command) and not _PYTHON_RUN_RE.search(command):
         return 0
     vault = _session_find_vault_root()
-    slug = _library_guard_slug(command, vault)
+    slug = _library_guard_slug(command, vault, cwd=payload.get("cwd"))
     if slug is None:
         return 0
     # Against the vault root, never against the working directory. Found on a real run
@@ -12412,10 +12629,17 @@ def main(argv: list[str]) -> int:
     p_work = sub.add_parser("work", help="Work objects: one row plus one page per piece of work, on the machine's own side.")
     sub_work = p_work.add_subparsers(dest="work_cmd", required=True)
 
+    # Every one of these takes its subject as a bare positional as well as a flag. The flag is
+    # what the skills write; the bare form is what a person types, and until 2026-08-26 the bare
+    # form was silently eaten by an optional `vault` positional that nothing in the product ever
+    # passed: `work open "a title"` failed with "the following arguments are required: --title",
+    # naming the flag the user had not used instead of the argument they had. The vault is a flag
+    # now, and it is resolved to the vault root either way.
     pw_open = sub_work.add_parser("open", help="Open a work object and print its id.")
-    pw_open.add_argument("vault", nargs="?", default=".")
-    pw_open.add_argument("--title", required=True)
-    pw_open.add_argument("--owner", help="Which specialist is on it.")
+    pw_open.add_argument("title_pos", nargs="?", metavar="TITLE", help="The title. Same as --title.")
+    pw_open.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+    pw_open.add_argument("--title")
+    pw_open.add_argument("--owner", "--agent", dest="owner", help="Which specialist is on it.")
     pw_open.add_argument("--goal", help="What finished looks like.")
     pw_open.add_argument("--deliverable", help="Where the result will land.")
     pw_open.add_argument("--workshop", help="Where the working files live.")
@@ -12423,20 +12647,23 @@ def main(argv: list[str]) -> int:
     pw_open.set_defaults(func=cmd_work_open)
 
     pw_ask = sub_work.add_parser("ask", help="Record a question only the user can answer; marks the object as waiting.")
-    pw_ask.add_argument("vault", nargs="?", default=".")
-    pw_ask.add_argument("--id", required=True, help="Full id or its first characters.")
+    pw_ask.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
+    pw_ask.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+    pw_ask.add_argument("--id", help="Full id or its first characters.")
     pw_ask.add_argument("--question", required=True)
     pw_ask.set_defaults(func=cmd_work_ask)
 
     pw_answer = sub_work.add_parser("answer", help="Record the user's answer and put the object back to open.")
-    pw_answer.add_argument("vault", nargs="?", default=".")
-    pw_answer.add_argument("--id", required=True)
+    pw_answer.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
+    pw_answer.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+    pw_answer.add_argument("--id")
     pw_answer.add_argument("--answer", required=True)
     pw_answer.set_defaults(func=cmd_work_answer)
 
     pw_log = sub_work.add_parser("log", help="Append one line to the object's log and add up its cost.")
-    pw_log.add_argument("vault", nargs="?", default=".")
-    pw_log.add_argument("--id", required=True)
+    pw_log.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
+    pw_log.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+    pw_log.add_argument("--id")
     pw_log.add_argument("--note", required=True)
     pw_log.add_argument("--agent")
     pw_log.add_argument("--tokens", type=int)
@@ -12447,15 +12674,22 @@ def main(argv: list[str]) -> int:
     pw_log.set_defaults(func=cmd_work_log)
 
     pw_done = sub_work.add_parser("done", help="Close a work object.")
-    pw_done.add_argument("vault", nargs="?", default=".")
-    pw_done.add_argument("--id", required=True)
+    pw_done.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
+    pw_done.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+    pw_done.add_argument("--id")
     pw_done.add_argument("--agent")
     pw_done.set_defaults(func=cmd_work_done)
 
     pw_list = sub_work.add_parser("list", help="What is open and what is waiting on the user.")
-    pw_list.add_argument("vault", nargs="?", default=".")
+    pw_list.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
     pw_list.add_argument("--state", help="Filter: open, 'waiting on you', done.")
     pw_list.set_defaults(func=cmd_work_list)
+
+    pw_show = sub_work.add_parser("show", help="Print one work object: its row and its page.")
+    pw_show.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
+    pw_show.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+    pw_show.add_argument("--id")
+    pw_show.set_defaults(func=cmd_work_show)
 
     p_prose = sub.add_parser("prose", help="Check draft prose before it is written, so the write is not later refused by the prose-guard hook.")
     sub_prose = p_prose.add_subparsers(dest="prose_cmd", required=True)
@@ -12841,6 +13075,9 @@ def main(argv: list[str]) -> int:
 
     ph_session = sub_hook.add_parser("session-start", help="SessionStart hook. Reads user.md and the vault state, prints the briefing on stdout.")
     ph_session.set_defaults(func=cmd_hook_session_start)
+
+    ph_send = sub_hook.add_parser("session-end", help="SessionEnd hook. Rebuilds the briefing so the next session opens on today, not on the last time someone ran close-session.")
+    ph_send.set_defaults(func=cmd_hook_session_end)
 
     ph_check = sub_hook.add_parser("checkbox-guard", help="PreToolUse Write|Edit. Refuses any write that adds, removes or ticks a markdown task. Checkboxes are the user's.")
     ph_check.set_defaults(func=cmd_hook_checkbox_guard)

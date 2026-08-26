@@ -243,7 +243,7 @@ makes both calls itself, in the conversation already running, with no agent boun
 **Anything dispatched to an expert gets an object**, in `zanmai/open.base/`: one row plus one page. So
 does everything a run produced with nobody in the chat, because there the object is the only place a
 result or a question can land. `zanmai.py work open` creates it and returns an id; `work log`,
-`work ask`, `work answer`, `work done` and `work list` are the whole vocabulary. The trigger is the
+`work ask`, `work answer`, `work done`, `work show` and `work list` are the whole vocabulary. The trigger is the
 dispatch itself, not a judgement about how long the work will last.
 
 The object carries what the next step needs: what it is and what finished looks like, who is on it,

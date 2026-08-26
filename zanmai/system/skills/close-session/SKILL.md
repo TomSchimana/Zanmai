@@ -102,6 +102,8 @@ One sentence in the user's writing language confirming the close and naming the 
 
 ### Step 5: mark session end
 
+A `SessionEnd` hook rebuilds the briefing whenever a session ends, so a session nobody closed still hands the day over: the briefing then opens with `Since the last clean close`, listing what the activity log carries. That is the net, not a substitute. The hook has no model, so it records what happened and not what it meant, and it deliberately does not advance the marker below. Only a real close does that.
+
 Write the current timestamp to `zanmai/memory/.last-session-end` so Steve's next session knows where to draw the "what happened since I was last here" line. Single line, ISO 8601 with seconds:
 
 ```

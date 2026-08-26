@@ -4,6 +4,50 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.3.7] - 2026-08-26
+
+**A vault that cannot tell you what happened yesterday is a vault with no memory, whatever else it
+does. The handover between sessions ran through a skill someone had to invoke, and on a live vault
+after four weeks not one session had ever been closed that way: every morning opened on the state of
+whichever afternoon someone last remembered to run it. That now happens on its own. Six further
+defects came out of one morning of real use, all of them in code that seven green check runs and 391
+passing checks had never walked.**
+
+### Fixed
+
+- **The next session no longer opens on a stale day.** A `SessionEnd` hook rebuilds the briefing
+  whenever a session ends, and the briefing now opens with what happened after the last clean close,
+  read from the activity log, which is written while the work happens rather than at the end. Found
+  on a live vault: `briefing.md` stood at 15:13 while the log carried entries up to 16:24, and an
+  escalation, a correction and the reasoning behind both were invisible the next morning. The hook
+  does not mark a session closed. It has no model, so it can record what happened but not what it
+  meant, and only a real close advances that marker.
+- **`work show` exists.** `list` prints a short id and every other command takes one, and there was
+  no way to read what one stood for. The only route to the content was the page folder and its full
+  uuid, which is the machine's own filing.
+- **Every `work` command takes its subject the way a person types it.** `work open "a title"` used to
+  fail with "the following arguments are required: --title", naming a flag the user had not used,
+  because an optional `vault` positional that nothing in the product ever passed ate the argument
+  first. The same happened to `work log <id>`. The vault is a flag now, the subject is a positional
+  or a flag, and `--agent` is accepted where `--owner` was the only spelling.
+- **`work` writes to the vault root from wherever it is called.** Called from inside a bundle it used
+  to create a second database there, and an object written into it would never have appeared in any
+  later `work list`.
+- **A dash against a quote mark is a dash.** In a build command the text sits inside string literals,
+  so the dash that carries the sentence ends one of them and stands against the closing quote, where
+  neither a space nor a line end closes it. That is the same construction 0.3.6 fixed at a line end
+  and missed here.
+- **`prose-guard` and `library-check-guard` read the shell's working directory, not their own.** A
+  hook process runs from the project root, so the branch meant to catch a dropped `cd` could never
+  match. It was dead code from the day it was written, which is why working inside a bundle got past
+  both guards.
+
+### Changed
+
+- The check run grew by 20 checks, one per defect above and one per case that has to keep passing.
+  Each was verified to fail with the fix removed and pass with it in place, because a check that was
+  never seen red is a check nobody has tested.
+
 ## [0.3.6] - 2026-08-25
 
 **Guards were bound to the tool the AI usually reaches for rather than to the moment the decision is
