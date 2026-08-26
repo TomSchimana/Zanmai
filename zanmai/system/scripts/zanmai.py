@@ -7823,18 +7823,35 @@ def _hook_read_payload() -> dict:
     The payload is kept because stdin can only be read once, and the refusal note written after the
     guard returns needs the working directory in it to find the vault."""
     global _LAST_PAYLOAD
-    # A hook is always given its payload on a pipe. Run by hand from a terminal there is no payload
-    # and no end of file either, and a blocking read there would hang the thing that runs before
-    # every session start. So an interactive stdin is treated as "no payload" rather than waited on.
+    # A hook is given its payload on a pipe that closes. Anywhere else stdin may be open with
+    # nothing on it and no end of file coming, and a plain `.read()` there waits for ever: the hook
+    # runs before every session start, so that is a session that never begins. `isatty()` alone does
+    # not cover it, because an inherited pipe is not a terminal and still never closes. Caught by the
+    # test suite on 2026-08-26, which hung on exactly this the first time the payload was read
+    # unconditionally. So: wait a moment for data to appear, and treat silence as "no payload".
+    _LAST_PAYLOAD = {}
     try:
-        if sys.stdin is None or sys.stdin.isatty():
-            _LAST_PAYLOAD = {}
+        import select
+        strom = sys.stdin
+        if strom is None:
             return _LAST_PAYLOAD
-    except (AttributeError, ValueError, OSError):
-        pass
-    try:
-        _LAST_PAYLOAD = json.loads(sys.stdin.read())
-    except (json.JSONDecodeError, OSError, ValueError):
+        # An in-memory stand-in (`io.StringIO`, which the tests substitute) is an `io.IOBase` like
+        # any other but has no descriptor to wait on, and asking for one raises. Ask, and where the
+        # answer is no, just read: such a stream ends the moment it is empty and cannot block.
+        try:
+            fd = strom.fileno()
+        except Exception:
+            fd = None
+        if fd is not None:
+            try:
+                bereit, _, _ = select.select([strom], [], [], 2.0)
+            except (OSError, ValueError):
+                return _LAST_PAYLOAD
+            if not bereit:
+                return _LAST_PAYLOAD
+        roh = strom.read()
+        _LAST_PAYLOAD = json.loads(roh) if roh.strip() else {}
+    except (json.JSONDecodeError, OSError, ValueError, AttributeError, TypeError):
         _LAST_PAYLOAD = {}
     return _LAST_PAYLOAD
 
@@ -10743,12 +10760,30 @@ def _session_index_stale(vault: Path, index: dict | None) -> bool:
     return current != indexed
 
 
-def _session_refresh_index(vault: Path) -> None:
-    """Rebuild the vault index and patterns in place. Called at session start when
-    the index is stale, so every session opens on a current index without waiting
-    for the first query. Sub-second on thousands of files; stdout is captured and
-    failures swallowed so a refresh problem never pollutes or blocks the greet."""
+def _session_refresh_index(vault: Path, *, detached: bool = True) -> None:
+    """Rebuild the vault index and patterns. At session start this is handed to a detached
+    process and the hook does not wait for it.
+
+    It used to run inline, on a docstring that claimed sub-second on thousands of files. Measured
+    on 2026-08-26 in a vault in daily use: median 248 ms, worst case 8,452 ms, against the host's
+    10-second SessionStart timeout. A hook that times out delivers nothing at all, so the greet
+    would have opened blind, which is worse than the truncation this same day was spent fixing.
+    Nothing in the greet needs the index, so waiting for it buys nothing and risks everything.
+
+    `detached=False` runs it inline and is for callers that need the result, and for tests.
+    """
     import io, contextlib
+    if detached:
+        import subprocess
+        try:
+            subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "index", "rebuild",
+                 str(vault), "--quiet"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                start_new_session=True)
+        except Exception:
+            pass  # a refresh that cannot start is a stale index, never a failed session start
+        return
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             cmd_reindex(argparse.Namespace(vault=str(vault), scope=None, quiet=True))
@@ -10970,8 +11005,10 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     index = _session_load_index(vault)
     stale_marker = vault / MEMORY_DIR / ".index-stale"
     if stale_marker.exists() or _session_index_stale(vault, index):
+        # Handed off, not waited for: the greet reads none of this, and the rebuild's worst case
+        # sits within one second of the host's timeout for the whole hook. The session works from
+        # the index as it stands; the refreshed one is there for the first query that needs it.
         _session_refresh_index(vault)
-        index = _session_load_index(vault)
     if index is None:
         lines.append("- Pattern index not built yet. Run `zanmai.py index rebuild` plus `zanmai.py index patterns` before theme queries.")
     else:

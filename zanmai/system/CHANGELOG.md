@@ -4,6 +4,32 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.4.6] - 2026-08-26
+
+**Two ways the session start could fail to happen at all, both found within an hour of shipping the
+version that introduced the first one. A hook that hangs or times out delivers nothing, not even the
+two-kilobyte preview this day was otherwise spent on, and the session opens blind.**
+
+### Fixed
+
+- **Reading the payload could wait for ever.** 0.4.5 started reading stdin so the greet could name
+  the model, guarded against a terminal but not against an open pipe that nobody writes to and
+  nobody closes. In practice the host sends its JSON and closes, so it would probably never have
+  bitten; "probably" is the wrong kind of safe for the one script that runs before every session.
+  There is now a two-second window instead of an unbounded read. The test suite found it by hanging
+  on it, and a case that runs the hook against a pipe that never closes now holds it.
+- **The index rebuild no longer runs inside the hook.** Measured in a vault in daily use: the
+  session-start hook has a median of 248 ms and a worst case of 8,452 ms, against a host timeout of
+  10 seconds. The rebuild was the expensive part, sitting under a comment claiming it was sub-second
+  on thousands of files. It is handed to a detached process now, and the hook does not wait: nothing
+  in the greet reads the index, so waiting bought nothing and risked the whole session start.
+
+### Changed
+
+- **The greet names the model by its display name, never its id.** "Opus 5 (1M context)", not
+  "claude-opus-5[1m]". Both are visible at runtime, and a greet expecting one while the hook sends
+  the other reads plausibly and stays wrong.
+
 ## [0.4.5] - 2026-08-26
 
 ### Added

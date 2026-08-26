@@ -62,6 +62,11 @@ no recommendation. Where the hook does not name it, the line is left out; it is 
 never read out of a settings file, which holds the default rather than what a `/model` switch left
 running.
 
+**The display name, never the model id.** "Opus 5 (1M context)", not "claude-opus-5[1m]". The hook
+takes `display_name` first and falls back only where it is absent. The two are visible separately at
+runtime, so a greet that expects one while the hook sends the other reads plausibly and stays wrong
+until somebody notices.
+
 **If the greet list is not in the hook output at all**, the hook did not run. Compose from
 `zanmai/memory/briefing.md` in the same shape: the same time groups in the same order, six lines
 including the overflow, nearest first. Say in one line that the session started without its hook.
