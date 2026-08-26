@@ -32,6 +32,20 @@ answer pick:
 - Anything paged, from a birthday card to a manual, is set with `typst`. Real flow
   across pages, a block that does not fit deferred instead of leaving a hole,
   hyphenation, folios, colour to the edge.
+- **A single set surface goes to `powerpoint`, whatever its page size.** A one-page
+  flyer, a one-pager, a poster, a card: A4 is a slide size like any other, and the PDF
+  comes out of the same export. **The first reason belongs to the user: the file stays
+  editable.** A PDF out of `typst` is finished, and a change means coming back here; a
+  `.pptx` opens on their own machine and they change the word themselves. `affinity`
+  would keep that property but cannot yet be driven to build a piece like this. The
+  second reason is the measuring: `slide-library.py` checks overflow, overlap, alignment,
+  broken references, type size and margins on the finished file, and no other medium here
+  has any of that.
+  **The line is not "flyer versus document", it is whether the layout is set or the text
+  flows.** Set means every element has its place and the text is written to fit: that is
+  this route. Flowing means the text decides where the breaks fall, which starts at about
+  two pages and is `typst`'s job. Built as a one-page flyer in PowerPoint 2026-08-25 and
+  delivered as a PDF, which is what raised the question.
 - A piece a person will keep editing by hand, or a real press run with an exact
   colour profile and crop marks, goes to `affinity`; an editable presentation to
   `powerpoint`.
@@ -82,6 +96,22 @@ deliverable on the desk is not a kit, it is a file that gets carried off with th
 piece, and the next document starts from nothing again. So the kit is written under
 `trusted/brands/<brand>/` before the piece is built, and the build reads it from
 there.
+
+**Between the brand's own pieces and composing from nothing there is a third source: the
+neutral wireframe library** (`zanmai/system/templates/wireframes/`, 58 patterns). Greyscale
+slides that use theme roles and theme fonts only, never a literal value, so taking one into a
+brand is a theme swap rather than a rebuild: `slide-library.py migrate <deck> --slide N --into
+<brand.pptx> --out <new.pptx>` puts the arrangement into a copy of the brand's own file, where
+master, layouts, logo and theme come from. Each pattern carries what it is for in plain words
+(`content_fit`), what may vary and within which bounds (`flex`), and a preview picture, so a
+pattern is chosen by what the content is, not by what a name suggests.
+
+**What `migrate` reports rather than silently fixing, all three measured 2026-08-26 on a real
+brand:** literal colours that came across (only a person can say which role a `#2E86AB` stood
+for); a change of body face, because a wider face means every slot holds less (Montserrat runs
+16% wider than Arial, so a slot holds 13% less and text that fitted before does not); and two
+theme roles carrying the same value, which silently removes a distinction the wireframe made.
+After every migrate, run `overflow-check` and `layout-check` on the result.
 
 **Where the brand already has finished pieces, they are part of the kit.** A template or an
 approved deck is harvested into `trusted/brands/<brand>/slides/` (`slide-library.py harvest`),

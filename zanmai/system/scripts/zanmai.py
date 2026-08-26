@@ -4544,16 +4544,29 @@ def _render_briefing(vault: Path) -> str:
     if nachgetragen:
         lines.append("## Since the last clean close")
         lines.append("")
+        # Two things this heading has to settle, both found on a live vault the morning after it
+        # first shipped. It is the newest thing in the file, so where it contradicts a status table
+        # or a bundle's own STAND.md, it wins; without that said, the older source won and a session
+        # opened by proposing the very plan the user had struck out an hour earlier. And every line
+        # under it was written by a different session, so the "I" in it is not the reader's: one
+        # session reported "I deliberately left those alone" about work it had never done.
         if seit:
             lines.append(f"_The last session closed at {seit}. "
                          f"{len(nachgetragen)} thing(s) happened after that and were never "
-                         f"handed over. Read this before answering anything about where we stand._")
+                         f"handed over._")
         else:
             lines.append("_No session has ever been closed cleanly in this vault. "
                          "This is what the activity log carries._")
         lines.append("")
+        lines.append("**This is the newest thing in this briefing.** Where it contradicts anything "
+                     "below, or a status table in a bundle, this wins and the other is stale. "
+                     "**Every line here was written by an earlier session, not by you.** Their "
+                     "\"I\" is that session's, so report them as what happened, never as what you "
+                     "did or decided.")
+        lines.append("")
         for eintrag in nachgetragen:
-            lines.append(f"- **{eintrag['when']}** ({eintrag['who']}) {eintrag['what']}")
+            lines.append(f"- **{eintrag['when']}** (earlier session, {eintrag['who']}) "
+                         f"{eintrag['what']}")
         lines.append("")
 
     lines.append("## Current state")
@@ -6107,6 +6120,12 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
                     "matcher": "Agent",
                     "hooks": [
                         {"type": "command", "command": f'{python_cmd} "{zb}" hook dispatch-guard'},
+                    ],
+                },
+                {
+                    "matcher": "mcp__.*",
+                    "hooks": [
+                        {"type": "command", "command": f'{python_cmd} "{zb}" hook outward-guard'},
                     ],
                 },
                 {
@@ -7712,13 +7731,43 @@ _HOOK_ALLOWED_KINDS = set(KIND_FIELDS)
 
 
 
+def _guard_refused(payload: dict, guard: str, grund: str) -> None:
+    """Write down that a guard turned something away.
+
+    Until 2026-08-26 no guard left a trace of any kind. The user's own words: "ich habe das Gefuehl,
+    dass die Live-Umgebung nicht alles meldet, dass sie so beschaeftigt ist, dass es untergeht." That
+    could not be answered, because nothing was written down: a refusal existed only in the session
+    that saw it, and reporting it depended on a busy session remembering to. So it goes in the
+    activity log, which is the one file written while the work happens, and from there it reaches the
+    next briefing on its own.
+
+    Never fails loudly. A guard that cannot write its note still has to make its decision.
+    """
+    try:
+        start = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
+        vault = _find_vault_root(Path(start))
+        if vault is None:
+            return
+        _append_activity_log(vault, guard, f"refused: {' '.join(str(grund).split())[:300]}")
+    except Exception:  # noqa: BLE001 -- a note that cannot be written never blocks the decision
+        return
+
+
+_LAST_PAYLOAD: dict = {}
+
+
 def _hook_read_payload() -> dict:
     """Read the tool-call payload Claude Code passes on stdin. Returns empty
-    dict on parse error so the hook never blocks because of a malformed pipe."""
+    dict on parse error so the hook never blocks because of a malformed pipe.
+
+    The payload is kept because stdin can only be read once, and the refusal note written after the
+    guard returns needs the working directory in it to find the vault."""
+    global _LAST_PAYLOAD
     try:
-        return json.loads(sys.stdin.read())
+        _LAST_PAYLOAD = json.loads(sys.stdin.read())
     except (json.JSONDecodeError, OSError):
-        return {}
+        _LAST_PAYLOAD = {}
+    return _LAST_PAYLOAD
 
 
 def _hook_relative_under_prefix(path: str, prefixes: tuple[str, ...]) -> tuple[str, str] | None:
@@ -8051,6 +8100,29 @@ def cmd_prose_check(args: argparse.Namespace) -> int:
     return 0
 
 
+# A single character in quotes is a character literal, not a sentence: `'-'` in a list of dashes to
+# search for is the shape a cleanup script has, and refusing it stops exactly the work that fixes the
+# problem. Found within the hour of shipping the quote-blanking below, on a script written to hunt
+# dashes down. Removed before the marks are blanked, because blanking would turn the list into
+# something that reads like prose with spaces around a dash.
+_HOOK_CHAR_LITERAL = re.compile(r"""(['"])(.)\1""")
+# The same thing one level up: a bracketed set that carries no letters is a character class, so
+# `['-','-']` or a regex `[--]` is a list of things to find, never a sentence. Letters inside mean
+# it is prose in brackets and stays.
+_HOOK_CHAR_CLASS = re.compile(r"\[[^\[\]A-Za-z\u00c0-\u024f]*\]")
+
+
+def _hook_command_prose(zeile: str) -> str:
+    """A build command reduced to the prose inside it, ready for the dash scan.
+
+    Quote marks become word boundaries so a dash sitting against one is still seen; what stands
+    between them is kept, because in a build command that is the text being written. Character
+    literals go first, as they are code and never a sentence.
+    """
+    ohne_code = _HOOK_CHAR_CLASS.sub(" ", _HOOK_CHAR_LITERAL.sub(" ", zeile))
+    return _HOOK_QUOTE_MARKS.sub(" ", ohne_code)
+
+
 def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
     """PreToolUse Write|Edit|Bash: refuse a dash-as-punctuation, a generic AI-marketing phrase, or a
     leftover placeholder the AI is adding to its own prose.
@@ -8092,7 +8164,7 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
         # which is what the dash pattern needs. Found 2026-08-26: `--text "Wir schaffen -"` was
         # silent because the dash was followed by a quote mark, so neither a space nor a line end
         # closed it, and that is the same end-of-string construction the 0.3.6 fix was built for.
-        dazu = [z for z, gescannt in ((z, _HOOK_QUOTE_MARKS.sub(" ", z)) for z in command.splitlines())
+        dazu = [z for z, gescannt in ((z, _hook_command_prose(z)) for z in command.splitlines())
                 if _HOOK_EM_DASH in gescannt or _HOOK_EN_DASH_SENTENCE.search(gescannt)]
         if not dazu:
             return 0
@@ -10246,6 +10318,61 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
 _BRIEF_MARKER = "What the user said:"
 
 
+# A tool name that writes into somebody else's system. Matched on the verb, because every MCP server
+# names its own operations and no list of servers stays current. Read-only verbs are deliberately not
+# here: fetching a page, searching, listing are how questions get answered and must stay free.
+# What a name starts with when it only looks. Checked before the write verbs, never after.
+_READ_VERBS = ("get", "list", "search", "read", "fetch", "view", "download", "find", "query",
+               "describe", "show", "check", "count", "resolve")
+_OUTWARD_VERBS = ("create", "update", "delete", "publish", "post", "send", "add", "upload", "write",
+                  "edit", "append", "move", "archive", "comment", "attach", "remove", "set", "copy",
+                  "restrict", "label", "assign", "transition", "merge", "push")
+
+
+def cmd_hook_outward_guard(args: argparse.Namespace) -> int:
+    """PreToolUse on MCP tools: make a write into somebody else's system a decision the user takes.
+
+    Writing into the vault is reversible and private. Writing into Confluence, a mailbox, a ticket
+    system or a repository is neither: colleagues see it, and an undo does not reach them. Hard Rule 3
+    says such a write waits for an explicit yes in the same message. That was prose, and prose at this
+    point does not hold: on 2026-08-26 a session was asked in the chat where information was missing,
+    built the answer as an XHTML file, published it to Confluence, and then offered to delete it again
+    if that was not wanted. The offer came after the page existed.
+
+    So the decision is handed to the host, which asks the user. Nothing is refused: a publish the user
+    wants is one confirmation away, and a publish nobody asked for cannot happen silently. Read-only
+    calls pass untouched, because a question that cannot be looked up is a question that cannot be
+    answered.
+    """
+    payload = _hook_read_payload()
+    if not payload:
+        return 0
+    name = str(payload.get("tool_name") or "")
+    if not name.startswith("mcp__"):
+        return 0
+    teile = name.lower().replace("-", "_").split("__")
+    operation = teile[-1] if teile else ""
+    # A reading verb decides first. `get_comments` carries "comment" and is a read; matching the
+    # write verbs anywhere in the name turned it into a write, which would have put a confirmation
+    # in front of every lookup and taught everyone to click it away.
+    wort = operation.split("_")
+    if wort and wort[0] in _READ_VERBS:
+        return 0
+    if not any(verb in wort for verb in _OUTWARD_VERBS):
+        return 0
+    dienst = teile[1] if len(teile) > 2 else "an external system"
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": (
+            f"outward-guard: this writes into {dienst}, outside the vault. Other people see it and an "
+            f"undo does not reach them, so it waits for the user rather than happening on the way "
+            f"past (Hard Rule 3). If they asked for it, this is one confirmation. If they asked a "
+            f"question, answer it in the chat instead."),
+    }}, ensure_ascii=False))
+    return 0
+
+
 def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
     """PreToolUse Agent hook: refuse a main-thread expert dispatch that asks to
     run synchronously. An expert's job runs for minutes and
@@ -10289,7 +10416,10 @@ def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
         # the interview where it belongs, in front of the send-off, with the user still there. The
         # expert cannot hold it: it runs in the background and has nobody to ask.
         print(
-            f"dispatch-guard: refusing this {subagent} dispatch, its handover carries no brief. "
+            f"dispatch-guard: refusing this {subagent} dispatch, its handover is missing the two "
+            f"labelled blocks. What this checks is formal, and only that: the words "
+            f"'{_BRIEF_MARKER}' have to appear. A handover can be rich in detail and still be "
+            f"refused here, which is what happened the first time this fired in the field. "
             f"The expert never met the user, and it runs in the background where it cannot ask, so "
             f"whatever is missing here gets invented and comes back looking like the expert's "
             f"fault. Put two labelled blocks at the top of the prompt. '{_BRIEF_MARKER}': their "
@@ -12242,6 +12372,34 @@ def _activate_runtime_venv_site(vault: Path) -> None:
             sys.path.insert(0, sp)
 
 
+def _run_hook_and_record(args: argparse.Namespace) -> int:
+    """Run a hook and write down every refusal, in one place rather than in each guard.
+
+    Central on purpose. Putting the note in each guard means the next guard someone writes is the
+    one that stays silent, which is the failure this whole family keeps having. Here it holds for
+    every hook there is and every hook there will be.
+
+    The refusal text is the guard's own words on stderr, so nothing has to be restated and the log
+    carries what the session actually saw. stderr is passed through unchanged: the host reads it,
+    and a guard whose message went missing would be worse than one that logs nothing.
+    """
+    import contextlib
+    import io
+
+    puffer = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(puffer):
+            rc = args.func(args)
+    finally:
+        text = puffer.getvalue()
+        if text:
+            sys.stderr.write(text)
+    if rc == 2:
+        name = getattr(args, "hook_cmd", None) or getattr(args, "subcmd", None) or "hook"
+        _guard_refused(_LAST_PAYLOAD, str(name), text or f"exit 2 from {name}")
+    return rc
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="zanmai", description="Zanmai CLI: setup, snapshots, bundles, attachments, contacts, notes, plans, reviews, files, updates, index, memory, media, hooks.")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -13079,6 +13237,9 @@ def main(argv: list[str]) -> int:
     ph_send = sub_hook.add_parser("session-end", help="SessionEnd hook. Rebuilds the briefing so the next session opens on today, not on the last time someone ran close-session.")
     ph_send.set_defaults(func=cmd_hook_session_end)
 
+    ph_outward = sub_hook.add_parser("outward-guard", help="PreToolUse on MCP tools. A write into somebody else's system is put to the user rather than done on the way past.")
+    ph_outward.set_defaults(func=cmd_hook_outward_guard)
+
     ph_check = sub_hook.add_parser("checkbox-guard", help="PreToolUse Write|Edit. Refuses any write that adds, removes or ticks a markdown task. Checkboxes are the user's.")
     ph_check.set_defaults(func=cmd_hook_checkbox_guard)
 
@@ -13117,6 +13278,8 @@ def main(argv: list[str]) -> int:
     pl_create.set_defaults(func=cmd_launcher_create)
 
     args = parser.parse_args(argv[1:])
+    if getattr(args, "cmd", None) == "hook":
+        return _run_hook_and_record(args)
     return args.func(args)
 
 

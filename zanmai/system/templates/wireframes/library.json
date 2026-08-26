@@ -1,0 +1,2385 @@
+{
+  "deck": "wireframes.pptx",
+  "patterns": [
+    {
+      "id": "cards-row",
+      "name": "Row of cards",
+      "structure": "One row of equal cards, each with a numbered marker, a heading and a paragraph.",
+      "content_fit": [
+        "a set of items of the same kind, listed side by side",
+        "features, services, arguments, options - anything that reads as a list",
+        "not for items that follow one another in time, use a process pattern"
+      ],
+      "flex": {
+        "cards": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ],
+          "note": "at 14pt a fourth card drops the line to about 26 characters"
+        }
+      },
+      "variants": [
+        "drop the number marker",
+        "two rows for up to 6 items",
+        "cards without a heading -> plain text columns"
+      ],
+      "viewing": "screen",
+      "slide": 1,
+      "preview": "previews/cards-row.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 3
+      }
+    },
+    {
+      "id": "cards-row-kicker",
+      "name": "Row of cards with a kicker line",
+      "structure": "Same as the card row, with an optional short line above the title and everything left-aligned.",
+      "content_fit": [
+        "the kicker names the context the slide belongs to - a section, a topic, a client",
+        "use it when a deck has several slides on the same subject",
+        "it is a slot, not decoration: without it the title moves up"
+      ],
+      "flex": {
+        "cards": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        },
+        "kicker": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "centred instead of left-aligned",
+        "kicker removed -> the plain card row"
+      ],
+      "viewing": "screen",
+      "slide": 2,
+      "preview": "previews/cards-row-kicker.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "cards-row-room",
+      "name": "Row of cards, room size",
+      "structure": "Three cards at presentation size: 40pt title, 24pt headings, 20pt body.",
+      "content_fit": [
+        "the card row for a slide shown on a wall rather than a screen",
+        "three points is the most that stays readable at this size",
+        "the text per card is roughly half of the screen version"
+      ],
+      "flex": {
+        "cards": {
+          "default": 3,
+          "range": [
+            2,
+            3
+          ],
+          "note": "a fourth card does not stay readable at 20pt"
+        }
+      },
+      "variants": [
+        "two cards for a comparison"
+      ],
+      "viewing": "room",
+      "slide": 3,
+      "preview": "previews/cards-row-room.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 3
+      }
+    },
+    {
+      "id": "path-milestones",
+      "name": "Path with milestones",
+      "structure": "A horizontal line with numbered stations; each label sits above or below, alternating.",
+      "content_fit": [
+        "steps that follow one another in time",
+        "a roadmap, a procedure, a history",
+        "the alternating labels are what let a step carry a real sentence"
+      ],
+      "flex": {
+        "stations": {
+          "default": 4,
+          "range": [
+            3,
+            6
+          ],
+          "note": "at 14pt six stations leave about 22 characters a line"
+        }
+      },
+      "variants": [
+        "all labels above -> a plain timeline",
+        "square markers instead of round",
+        "a date line under each station"
+      ],
+      "viewing": "screen",
+      "slide": 4,
+      "preview": "previews/path-milestones.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "chevron-stages",
+      "name": "Chevron stages",
+      "structure": "Interlocking chevrons carrying a stage number, with the caption alternating above and below.",
+      "content_fit": [
+        "a sequence where each stage hands over to the next",
+        "a pipeline, an approval chain, a customer journey",
+        "reads as strictly ordered - not for a set of equal items"
+      ],
+      "flex": {
+        "stages": {
+          "default": 4,
+          "range": [
+            3,
+            6
+          ]
+        }
+      },
+      "variants": [
+        "captions all below -> more room per caption",
+        "the last chevron as a plain arrow head -> emphasises the outcome"
+      ],
+      "viewing": "screen",
+      "slide": 5,
+      "preview": "previews/chevron-stages.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 3
+      }
+    },
+    {
+      "id": "snake-cards",
+      "name": "Cards in two rows, read back and forth",
+      "structure": "Two rows of cards; numbering runs left to right on top and right to left below, so the two rows read as one chain.",
+      "content_fit": [
+        "six steps that do not fit in one row",
+        "a process with two halves - preparation and execution, before and after",
+        "the numbering carries the order, so the cards themselves stay equal"
+      ],
+      "flex": {
+        "per_row": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        },
+        "rows": {
+          "default": 2,
+          "range": [
+            2,
+            2
+          ]
+        }
+      },
+      "variants": [
+        "numbering left to right in both rows -> two groups instead of one chain",
+        "numbering left to right in both rows -> two groups"
+      ],
+      "viewing": "screen",
+      "slide": 6,
+      "preview": "previews/snake-cards.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 9
+      }
+    },
+    {
+      "id": "staircase",
+      "name": "Staircase of steps",
+      "structure": "Overlapping blocks climbing from bottom left to top right, each with a marker above it and a darkening tone.",
+      "content_fit": [
+        "stages that build on each other and get bigger, later or more advanced",
+        "years, maturity levels, a growth path",
+        "the climb says progress - not for equal options"
+      ],
+      "flex": {
+        "steps": {
+          "default": 4,
+          "range": [
+            3,
+            5
+          ],
+          "note": "at 14pt five is the limit before the blocks swallow each other"
+        }
+      },
+      "variants": [
+        "descending instead -> a decline",
+        "even tones -> the climb alone carries it"
+      ],
+      "viewing": "screen",
+      "slide": 7,
+      "preview": "previews/staircase.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 6
+      }
+    },
+    {
+      "id": "hub-satellites",
+      "name": "Hub with satellites",
+      "structure": "A centre shape with three labels to its left and three to its right, each joined by a line.",
+      "content_fit": [
+        "one thing and the parts that feed into it",
+        "a platform and its channels, a role and its duties, a product and its benefits",
+        "everything points at the centre - not for a sequence"
+      ],
+      "flex": {
+        "satellites": {
+          "default": 6,
+          "range": [
+            4,
+            6
+          ],
+          "note": "always even, three a side at six"
+        }
+      },
+      "variants": [
+        "all satellites on one side -> a legend layout",
+        "drop the lines"
+      ],
+      "viewing": "screen",
+      "slide": 8,
+      "preview": "previews/hub-satellites.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "pyramid-levels",
+      "name": "Pyramid of levels",
+      "structure": "Stacked bars widening downward, each level named inside and explained in a column to the left.",
+      "content_fit": [
+        "levels that build on one another - a maturity model, a hierarchy of needs",
+        "the width says how much of something a level holds",
+        "not for equal parts of a whole, that is a bar or a pie"
+      ],
+      "flex": {
+        "levels": {
+          "default": 4,
+          "range": [
+            3,
+            5
+          ]
+        }
+      },
+      "variants": [
+        "upside down -> a funnel",
+        "labels on both sides",
+        "equal widths -> a plain stack"
+      ],
+      "viewing": "screen",
+      "slide": 9,
+      "preview": "previews/pyramid-levels.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "funnel-stages",
+      "name": "Funnel with a list on each side",
+      "structure": "Stages narrowing downward, with a column of notes to the left and to the right, each line aligned to its stage.",
+      "content_fit": [
+        "something that loses volume at every step",
+        "two readings of the same steps - what happens, and what it means",
+        "one column alone works too, then the stages sit off-centre"
+      ],
+      "flex": {
+        "stages": {
+          "default": 4,
+          "range": [
+            3,
+            5
+          ]
+        },
+        "side_lists": {
+          "default": 2,
+          "range": [
+            0,
+            2
+          ]
+        }
+      },
+      "variants": [
+        "no side lists -> a plain funnel",
+        "turned over -> a pyramid"
+      ],
+      "viewing": "screen",
+      "slide": 10,
+      "preview": "previews/funnel-stages.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "matrix-axes",
+      "name": "Matrix with named axes",
+      "structure": "A grid of cells with a heading over each column and a label block beside each row.",
+      "content_fit": [
+        "two dimensions crossed - effort against value, performance against potential",
+        "each cell carries a name and a line saying what it means",
+        "the cell tone is a third reading and can be dropped"
+      ],
+      "flex": {
+        "columns": {
+          "default": 3,
+          "range": [
+            2,
+            3
+          ]
+        },
+        "rows": {
+          "default": 2,
+          "range": [
+            2,
+            3
+          ]
+        }
+      },
+      "variants": [
+        "2x2 -> the classic four-quadrant picture",
+        "one tone for all cells"
+      ],
+      "viewing": "screen",
+      "slide": 11,
+      "preview": "previews/matrix-axes.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "quad-matrix",
+      "name": "Four quadrants",
+      "structure": "Two axes and four quadrants, each a card with a name and a line saying what belongs there.",
+      "content_fit": [
+        "two yes/no dimensions crossed - urgent against important, effort against value",
+        "each quadrant needs a name, otherwise it is four boxes",
+        "the tone can say which quadrant you want to be in"
+      ],
+      "flex": {
+        "quadrants": {
+          "default": 4,
+          "range": [
+            4,
+            4
+          ]
+        },
+        "axis_labels": {
+          "default": 2,
+          "range": [
+            0,
+            2
+          ]
+        }
+      },
+      "variants": [
+        "no tones -> position alone carries it",
+        "markers plotted inside a quadrant"
+      ],
+      "viewing": "screen",
+      "slide": 12,
+      "preview": "previews/quad-matrix.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "big-numbers",
+      "name": "Wall of key figures",
+      "structure": "Equal panels, each with one large figure, a short label and a line of context.",
+      "content_fit": [
+        "measured results - counts, shares, durations, money",
+        "one figure per panel, never two",
+        "the context line is what stops a number from standing unexplained"
+      ],
+      "flex": {
+        "figures": {
+          "default": 4,
+          "range": [
+            2,
+            5
+          ]
+        }
+      },
+      "variants": [
+        "drop the context line -> a tighter band above other content",
+        "one panel in a darker tone -> the figure that matters most"
+      ],
+      "viewing": "room",
+      "slide": 13,
+      "preview": "previews/big-numbers.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "comparison-columns",
+      "name": "Two columns compared row by row",
+      "structure": "Two headed columns with a row label to the left; every row states the same question for both sides.",
+      "content_fit": [
+        "two options weighed against each other on the same criteria",
+        "before and after, us and them, plan and result",
+        "the row label is the criterion, so it stays short"
+      ],
+      "flex": {
+        "rows": {
+          "default": 4,
+          "range": [
+            3,
+            6
+          ]
+        },
+        "columns": {
+          "default": 2,
+          "range": [
+            2,
+            3
+          ]
+        }
+      },
+      "variants": [
+        "three columns -> narrower cells",
+        "one column in a darker tone -> which side wins"
+      ],
+      "viewing": "screen",
+      "slide": 14,
+      "preview": "previews/comparison-columns.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "split-media-text",
+      "name": "Media on one side, text on the other",
+      "structure": "A picture area filling about half the width, with a heading, a paragraph and three bullet lines beside it.",
+      "content_fit": [
+        "anything that has a picture - a product, a place, a person, a screenshot",
+        "the bullets carry the three things worth saying about it",
+        "the picture area stays a grey block until a real image is dropped in"
+      ],
+      "flex": {
+        "bullets": {
+          "default": 3,
+          "range": [
+            0,
+            4
+          ]
+        },
+        "media_share": {
+          "default": 0.48,
+          "range": [
+            0.35,
+            0.6
+          ]
+        }
+      },
+      "variants": [
+        "picture on the right -> mirrored",
+        "no bullets -> one long paragraph",
+        "two stacked picture areas -> before and after"
+      ],
+      "viewing": "screen",
+      "slide": 15,
+      "preview": "previews/split-media-text.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "statement",
+      "name": "One statement",
+      "structure": "A single large sentence in the middle of the slide with one line of attribution or context under it.",
+      "content_fit": [
+        "the one thing the audience should remember",
+        "a quotation, a claim, a decision, a result",
+        "it works because nothing else is on the slide - do not add a second point"
+      ],
+      "flex": {
+        "statement_chars": {
+          "default": 175,
+          "range": [
+            60,
+            240
+          ]
+        }
+      },
+      "variants": [
+        "drop the context line",
+        "a figure above the sentence"
+      ],
+      "viewing": "room",
+      "slide": 16,
+      "preview": "previews/statement.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "timeline-agenda",
+      "name": "Agenda with a key column",
+      "structure": "A time or number block on the left, a vertical spine with a marker per entry, and a wide block per entry on the right.",
+      "content_fit": [
+        "an agenda, a schedule, a plan with times",
+        "any list where each item has a short key and a description",
+        "the left block need not be a time - a phase, a number, a name all work"
+      ],
+      "flex": {
+        "entries": {
+          "default": 3,
+          "range": [
+            3,
+            4
+          ],
+          "note": "at 14pt a fourth entry leaves the block too short for a heading and a line"
+        }
+      },
+      "variants": [
+        "two blocks per row -> morning and afternoon side by side",
+        "drop the spine -> a plain two-column list"
+      ],
+      "viewing": "screen",
+      "slide": 17,
+      "preview": "previews/timeline-agenda.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "text-two-columns",
+      "name": "Text in two columns",
+      "structure": "A lead paragraph across the full width, then two columns of running text, each with a small heading.",
+      "content_fit": [
+        "a slide that has to carry real prose - a position, an explanation, a summary",
+        "the lead is the claim, the columns are the argument",
+        "for a handout or a shared screen, never for a wall"
+      ],
+      "flex": {
+        "columns": {
+          "default": 2,
+          "range": [
+            2,
+            3
+          ]
+        },
+        "lead": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "three columns -> shorter lines",
+        "drop the lead"
+      ],
+      "viewing": "screen",
+      "slide": 18,
+      "preview": "previews/text-two-columns.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "status-table-timeline",
+      "name": "Status table with timeline bars",
+      "structure": "Header chips over a table body; one narrow column carries a state marker, the right block is a time grid with one bar per row; legend below.",
+      "content_fit": [
+        "a list of items each with an owner, a state and a duration",
+        "projects, measures, packages of work - anything tracked over a period",
+        "not for a plain list without a second dimension, use a card row"
+      ],
+      "flex": {
+        "body_rows": {
+          "default": 4,
+          "range": [
+            3,
+            6
+          ],
+          "note": "at 14pt six rows is the limit before the table fills the slide"
+        },
+        "text_columns": {
+          "default": 4,
+          "range": [
+            3,
+            4
+          ]
+        },
+        "time_columns": {
+          "default": 4,
+          "range": [
+            0,
+            6
+          ],
+          "note": "0 turns it into a plain status table"
+        },
+        "legend_items": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        }
+      },
+      "variants": [
+        "drop the time block -> comparison table",
+        "drop the state column -> plain data table",
+        "bars all full width -> presence matrix instead of durations"
+      ],
+      "viewing": "screen",
+      "slide": 19,
+      "preview": "previews/status-table-timeline.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "pie-callouts",
+      "name": "Chart with callout cards",
+      "structure": "A real chart object in the middle with a card each side, joined by a short rule.",
+      "content_fit": [
+        "a split of one whole into parts, where each part needs a sentence",
+        "shares of revenue, of effort, of an audience",
+        "the chart is a live chart object with its own data, not a picture"
+      ],
+      "flex": {
+        "segments": {
+          "default": 4,
+          "range": [
+            3,
+            4
+          ],
+          "note": "beyond four use a legend instead of cards"
+        },
+        "chart_type": {
+          "default": "doughnut",
+          "range": [
+            "doughnut",
+            "pie",
+            "bar"
+          ]
+        }
+      },
+      "variants": [
+        "bar chart -> more segments possible",
+        "legend below instead of cards"
+      ],
+      "viewing": "screen",
+      "slide": 20,
+      "preview": "previews/pie-callouts.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "bars-compare",
+      "name": "Bar chart with readings",
+      "structure": "A live clustered-column chart filling two thirds of the slide, with cards beside it saying what to read out of it.",
+      "content_fit": [
+        "measured values across categories, two series compared",
+        "the cards are the point - a chart without a reading is decoration",
+        "works for one series too, then the legend goes"
+      ],
+      "flex": {
+        "series": {
+          "default": 2,
+          "range": [
+            1,
+            3
+          ]
+        },
+        "categories": {
+          "default": 4,
+          "range": [
+            3,
+            6
+          ]
+        },
+        "readings": {
+          "default": 3,
+          "range": [
+            1,
+            3
+          ]
+        }
+      },
+      "variants": [
+        "line chart -> a trend rather than a comparison",
+        "horizontal bars -> long category names fit",
+        "cards below instead of beside -> a wider chart"
+      ],
+      "viewing": "screen",
+      "slide": 21,
+      "preview": "previews/bars-compare.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "zones-chain",
+      "name": "Chain across two zones",
+      "structure": "Two bounded zones side by side, each holding a short chain of steps, with a marked boundary between them, a row of chips below and one full-width closing bar.",
+      "content_fit": [
+        "a process that crosses a border - two companies, two systems, two countries",
+        "the point is that it is one chain, not two separate ones",
+        "the chips below are what holds true across both zones"
+      ],
+      "flex": {
+        "steps_per_zone": {
+          "default": 3,
+          "range": [
+            2,
+            3
+          ]
+        },
+        "chips": {
+          "default": 3,
+          "range": [
+            0,
+            4
+          ]
+        },
+        "closing_bar": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "drop the closing bar",
+        "three zones -> narrower chains",
+        "no chips row"
+      ],
+      "viewing": "screen",
+      "slide": 22,
+      "preview": "previews/zones-chain.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 1
+      }
+    },
+    {
+      "id": "cards-bullets",
+      "name": "Cards carrying a list",
+      "structure": "Equal cards, each with a heading and four bullet lines, alternating light and dark.",
+      "content_fit": [
+        "a set of areas, each with the things it contains",
+        "a portfolio, a service catalogue, four teams and their duties",
+        "the bullets are labels, not sentences - one line each"
+      ],
+      "flex": {
+        "cards": {
+          "default": 4,
+          "range": [
+            2,
+            4
+          ]
+        },
+        "bullets_per_card": {
+          "default": 4,
+          "range": [
+            2,
+            5
+          ]
+        }
+      },
+      "variants": [
+        "all cards the same tone -> nothing is emphasised",
+        "one card highlighted -> the area being talked about"
+      ],
+      "viewing": "screen",
+      "slide": 23,
+      "preview": "previews/cards-bullets.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "capability-matrix",
+      "name": "Bands of tiles with a side label",
+      "structure": "Horizontal bands, each named in a narrow block at the left, each holding a row of tiles; the last band is one full-width statement.",
+      "content_fit": [
+        "a portfolio read on two axes at once - areas across, layers down",
+        "what a company offers, in what shapes, on what basis",
+        "the closing band is the sentence that ties the whole picture together"
+      ],
+      "flex": {
+        "bands": {
+          "default": 3,
+          "range": [
+            3,
+            4
+          ],
+          "note": "at 14pt four bands leave the tiles too short to hold a line"
+        },
+        "tiles_per_band": {
+          "default": 4,
+          "range": [
+            2,
+            5
+          ],
+          "note": "may differ per band"
+        },
+        "closing_band": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "no sub-tiles -> a plainer grid",
+        "drop the side labels -> stacked rows"
+      ],
+      "viewing": "screen",
+      "slide": 24,
+      "preview": "previews/capability-matrix.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 5
+      }
+    },
+    {
+      "id": "statement-kpi-media",
+      "name": "Claim, figures and a picture area",
+      "structure": "A three-line claim top left, a row of figure blocks under it, and a picture area filling the right half.",
+      "content_fit": [
+        "who we are and the numbers that prove it",
+        "the picture area takes a map, a photo or a diagram - whatever the claim needs",
+        "three figures is the point: more and none of them registers"
+      ],
+      "flex": {
+        "figures": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        },
+        "claim_lines": {
+          "default": 3,
+          "range": [
+            1,
+            3
+          ]
+        },
+        "media_share": {
+          "default": 0.5,
+          "range": [
+            0.4,
+            0.6
+          ]
+        }
+      },
+      "variants": [
+        "picture on the left -> mirrored",
+        "no picture -> the claim and figures fill the slide"
+      ],
+      "viewing": "room",
+      "slide": 25,
+      "preview": "previews/statement-kpi-media.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "quad-loop",
+      "name": "Four blocks in a loop",
+      "structure": "Four offset blocks, each with a large figure behind its heading and a short list; the offset carries the loop.",
+      "content_fit": [
+        "four areas that belong to one cycle rather than a straight sequence",
+        "the loop says it comes back round - use a chevron row when it does not",
+        "each block takes a heading and about three lines"
+      ],
+      "flex": {
+        "blocks": {
+          "default": 4,
+          "range": [
+            3,
+            4
+          ]
+        },
+        "lines_per_block": {
+          "default": 3,
+          "range": [
+            2,
+            5
+          ]
+        }
+      },
+      "variants": [
+        "straight row instead of offset -> a plainer read",
+        "a connecting line around them -> emphasises the cycle, but that is a brand call"
+      ],
+      "viewing": "screen",
+      "slide": 26,
+      "preview": "previews/quad-loop.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 4
+      }
+    },
+    {
+      "id": "case-study-facts",
+      "name": "Case study with a fact card",
+      "structure": "A heading, a lead paragraph and running text on the left; a card on the right holding four labelled facts separated by rules.",
+      "content_fit": [
+        "one customer, one project, one story - with the hard facts beside it",
+        "the facts are what a reader scans first: who, what field, where, how big",
+        "works for a profile of a person or a place just as well"
+      ],
+      "flex": {
+        "facts": {
+          "default": 4,
+          "range": [
+            3,
+            6
+          ]
+        },
+        "card_side": {
+          "default": "right",
+          "range": [
+            "left",
+            "right"
+          ]
+        }
+      },
+      "variants": [
+        "facts as a row under the text -> a wider story column",
+        "add a picture area above the fact card"
+      ],
+      "viewing": "screen",
+      "slide": 27,
+      "preview": "previews/case-study-facts.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "quote-wall",
+      "name": "Wall of quotes",
+      "structure": "Three offset cards, each with a quote mark, the quotation, and a round avatar area with a name and a role.",
+      "content_fit": [
+        "what other people say - customers, staff, partners",
+        "the avatar area stays a grey circle until a real picture goes in",
+        "three is the number that reads as a wall without becoming a list"
+      ],
+      "flex": {
+        "quotes": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        },
+        "offset": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "no offset -> a plain row",
+        "one wide quote -> a single testimonial"
+      ],
+      "viewing": "screen",
+      "slide": 28,
+      "preview": "previews/quote-wall.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "media-legend",
+      "name": "Picture area with a numbered legend",
+      "structure": "A large picture area on one side and a numbered list beside it, one line per entry.",
+      "content_fit": [
+        "anything where a picture carries markers that need naming",
+        "a map with locations, a diagram with parts, a screenshot with callouts",
+        "the numbers tie the list to what is in the picture"
+      ],
+      "flex": {
+        "entries": {
+          "default": 5,
+          "range": [
+            3,
+            6
+          ]
+        },
+        "media_share": {
+          "default": 0.6,
+          "range": [
+            0.45,
+            0.7
+          ]
+        }
+      },
+      "variants": [
+        "legend on the left -> mirrored",
+        "legend under the picture -> a wider picture area"
+      ],
+      "viewing": "screen",
+      "slide": 29,
+      "preview": "previews/media-legend.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "feature-columns",
+      "name": "Options as columns, criteria as rows",
+      "structure": "A column per option with a head and a foot band, a criterion label per row, and one cell per crossing.",
+      "content_fit": [
+        "several options measured on the same criteria",
+        "packages, tiers, vendors, variants - the head names them, the foot closes them",
+        "cells hold a mark, a number or two words, never a sentence"
+      ],
+      "flex": {
+        "options": {
+          "default": 4,
+          "range": [
+            2,
+            5
+          ]
+        },
+        "criteria": {
+          "default": 4,
+          "range": [
+            3,
+            7
+          ]
+        },
+        "foot_band": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "drop the foot band -> a plain matrix",
+        "one column in a darker tone -> the recommended option"
+      ],
+      "viewing": "screen",
+      "slide": 30,
+      "preview": "previews/feature-columns.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "butterfly-bars",
+      "name": "Bars growing away from a shared centre",
+      "structure": "A centre column of labels with bars running left and right from it, one pair per row, and a head band over each side.",
+      "content_fit": [
+        "two things measured on the same scale, row by row",
+        "two years, two products, two regions - the mirror makes the difference visible",
+        "the centre column holds the category, never a value"
+      ],
+      "flex": {
+        "rows": {
+          "default": 5,
+          "range": [
+            3,
+            7
+          ]
+        },
+        "sides": {
+          "default": 2,
+          "range": [
+            2,
+            2
+          ]
+        }
+      },
+      "variants": [
+        "values printed at the bar ends",
+        "one side shaded lighter -> the reference"
+      ],
+      "viewing": "screen",
+      "slide": 31,
+      "preview": "previews/butterfly-bars.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "two-tables-total",
+      "name": "Two blocks of figures and a total",
+      "structure": "Two headed blocks of label-and-value rows side by side, with a full-width block under them carrying the result.",
+      "content_fit": [
+        "a calculation shown as its parts and its outcome",
+        "inputs and steps above, the answer below - a cost model, a budget, a forecast",
+        "the value column stays narrow: figures, never sentences"
+      ],
+      "flex": {
+        "blocks": {
+          "default": 2,
+          "range": [
+            1,
+            2
+          ]
+        },
+        "rows_per_block": {
+          "default": 4,
+          "range": [
+            3,
+            6
+          ]
+        },
+        "total_rows": {
+          "default": 2,
+          "range": [
+            1,
+            3
+          ]
+        }
+      },
+      "variants": [
+        "one block only -> a wider table",
+        "the total block in a lighter tone -> less emphasis on the outcome"
+      ],
+      "viewing": "screen",
+      "slide": 32,
+      "preview": "previews/two-tables-total.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "tile-grid",
+      "name": "Grid of tiles with a picture area",
+      "structure": "A grid of equal tiles, each holding a picture area and a caption under it.",
+      "content_fit": [
+        "a portfolio, a product range, a set of services - things that are equal in rank",
+        "the picture area takes an icon, a photo or a screenshot",
+        "the caption is a name, not a sentence"
+      ],
+      "flex": {
+        "columns": {
+          "default": 4,
+          "range": [
+            3,
+            5
+          ]
+        },
+        "rows": {
+          "default": 2,
+          "range": [
+            1,
+            3
+          ]
+        }
+      },
+      "variants": [
+        "one tone for all tiles -> nothing is emphasised",
+        "no picture area -> a grid of named blocks"
+      ],
+      "viewing": "screen",
+      "slide": 33,
+      "preview": "previews/tile-grid.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "logo-grid",
+      "name": "Wall of logo areas",
+      "structure": "An even grid of equal areas, each holding one logo.",
+      "content_fit": [
+        "partners, customers, tools, certifications - a wall that says how many",
+        "the areas stay equal so no logo outranks another, whatever its shape",
+        "nothing but logos: a caption per logo turns this into a tile grid"
+      ],
+      "flex": {
+        "columns": {
+          "default": 6,
+          "range": [
+            4,
+            8
+          ]
+        },
+        "rows": {
+          "default": 4,
+          "range": [
+            2,
+            5
+          ]
+        }
+      },
+      "variants": [
+        "fewer, larger areas -> a handful of key partners",
+        "one row only -> a strip under other content"
+      ],
+      "viewing": "screen",
+      "slide": 34,
+      "preview": "previews/logo-grid.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "list-detail",
+      "name": "List on the left, one thing spelled out on the right",
+      "structure": "A list of points with a rule beside each on the left, and a bordered panel on the right holding a stack of graded levels.",
+      "content_fit": [
+        "the points of an offer, with one of them broken open beside it",
+        "the panel takes anything ordered - levels, tiers, steps, sizes",
+        "the left list is prose, the right panel is labels"
+      ],
+      "flex": {
+        "points": {
+          "default": 4,
+          "range": [
+            3,
+            5
+          ]
+        },
+        "levels": {
+          "default": 4,
+          "range": [
+            2,
+            5
+          ]
+        },
+        "panel_share": {
+          "default": 0.42,
+          "range": [
+            0.3,
+            0.5
+          ]
+        }
+      },
+      "variants": [
+        "panel on the left -> mirrored",
+        "levels as equal tones -> nothing is ranked"
+      ],
+      "viewing": "screen",
+      "slide": 35,
+      "preview": "previews/list-detail.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "title-slide",
+      "name": "Title slide",
+      "structure": "A kicker, a two-line title, a subtitle and a footer line on the left; a full-height picture area on the right.",
+      "content_fit": [
+        "the first slide of a deck",
+        "the footer line takes the date, the occasion or the audience",
+        "the picture area is where a brand puts its shape, photo or gradient"
+      ],
+      "flex": {
+        "title_lines": {
+          "default": 2,
+          "range": [
+            1,
+            3
+          ]
+        },
+        "kicker": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        },
+        "media_share": {
+          "default": 0.44,
+          "range": [
+            0,
+            0.6
+          ],
+          "note": "0 means a text-only title slide"
+        }
+      },
+      "variants": [
+        "no picture area -> the title fills the width",
+        "picture on the left -> mirrored"
+      ],
+      "viewing": "room",
+      "slide": 36,
+      "preview": "previews/title-slide.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 1
+      }
+    },
+    {
+      "id": "agenda-numbered",
+      "name": "Agenda with numbers",
+      "structure": "A heading and a line of context on the left; a numbered list of chapters on the right, separated by rules.",
+      "content_fit": [
+        "the agenda of a deck, or a summary of what was covered",
+        "chapter names, never sentences",
+        "the same shape works as a table of contents for a document"
+      ],
+      "flex": {
+        "chapters": {
+          "default": 5,
+          "range": [
+            3,
+            7
+          ]
+        },
+        "context_line": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "numbers as filled circles instead of plain figures",
+        "one chapter marked -> shows where in the deck you are"
+      ],
+      "viewing": "room",
+      "slide": 37,
+      "preview": "previews/agenda-numbered.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 2
+      }
+    },
+    {
+      "id": "section-divider",
+      "name": "Section divider",
+      "structure": "A large chapter number, the chapter name and one line of what is coming; a picture area beside it.",
+      "content_fit": [
+        "the break between two parts of a deck",
+        "the line under the rule says what the section covers, in one sentence",
+        "the number ties it back to the agenda"
+      ],
+      "flex": {
+        "number": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        },
+        "summary_line": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        },
+        "media_share": {
+          "default": 0.4,
+          "range": [
+            0,
+            0.55
+          ]
+        }
+      },
+      "variants": [
+        "no picture area -> a quiet text divider",
+        "the whole slide in a dark tone -> a harder break"
+      ],
+      "viewing": "room",
+      "slide": 38,
+      "preview": "previews/section-divider.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "closing-contact",
+      "name": "Closing slide with contact details",
+      "structure": "A two-line closing statement, a code area, and labelled contact lines beside it; a picture area on the right.",
+      "content_fit": [
+        "the last slide of a deck",
+        "the code area takes a QR code, a link block or nothing",
+        "three contact lines is enough: who, how, where"
+      ],
+      "flex": {
+        "contact_lines": {
+          "default": 3,
+          "range": [
+            2,
+            5
+          ]
+        },
+        "code_area": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        },
+        "media_share": {
+          "default": 0.44,
+          "range": [
+            0,
+            0.6
+          ]
+        }
+      },
+      "variants": [
+        "no code area -> more room for contact lines",
+        "centred on the whole slide -> a plain thank-you"
+      ],
+      "viewing": "room",
+      "slide": 39,
+      "preview": "previews/closing-contact.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "person-profile",
+      "name": "Person profile",
+      "structure": "A portrait area on the left; a name, a role and four labelled facts on the right.",
+      "content_fit": [
+        "one person: a speaker, an expert, a contact, a new colleague",
+        "the four facts are what matters about them here - experience, field, focus, proof",
+        "works for a place or an organisation just as well"
+      ],
+      "flex": {
+        "facts": {
+          "default": 4,
+          "range": [
+            2,
+            6
+          ]
+        },
+        "portrait_share": {
+          "default": 0.35,
+          "range": [
+            0.25,
+            0.45
+          ]
+        }
+      },
+      "variants": [
+        "portrait as a circle -> softer, but that is a brand call",
+        "two people side by side -> half the facts each"
+      ],
+      "viewing": "screen",
+      "slide": 40,
+      "preview": "previews/person-profile.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "team-row",
+      "name": "Row of people",
+      "structure": "Equal columns, each a portrait area with a name, a role and a line under it.",
+      "content_fit": [
+        "the people on a project, a team, a panel, a board",
+        "four is the most that keeps the portraits large enough to recognise",
+        "the line under the role is one sentence, not a biography"
+      ],
+      "flex": {
+        "people": {
+          "default": 4,
+          "range": [
+            2,
+            5
+          ]
+        },
+        "description_line": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "portraits as circles -> a brand call",
+        "no description -> a tighter row of six"
+      ],
+      "viewing": "screen",
+      "slide": 41,
+      "preview": "previews/team-row.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "table-findings",
+      "name": "Table, findings, and the sentence underneath",
+      "structure": "A data table on the left with one row marked, a panel of short findings on the right, and a full-width band under both.",
+      "content_fit": [
+        "a comparison where one row is us, or one row is the point",
+        "the findings are the reading, the band is the conclusion",
+        "the band is what stops a table from being handed over uninterpreted"
+      ],
+      "flex": {
+        "rows": {
+          "default": 6,
+          "range": [
+            4,
+            8
+          ]
+        },
+        "columns": {
+          "default": 4,
+          "range": [
+            3,
+            5
+          ]
+        },
+        "findings": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        },
+        "footer_band": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "no marked row -> a neutral comparison",
+        "findings under the table -> a wider table"
+      ],
+      "viewing": "screen",
+      "slide": 42,
+      "preview": "previews/table-findings.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "chart-findings",
+      "name": "Chart, findings, and the sentence underneath",
+      "structure": "A live chart on the left, two finding panels on the right, and a full-width band under both.",
+      "content_fit": [
+        "a development over time with what it means beside it",
+        "the panels name the two things worth taking away, the band the conclusion",
+        "a line chart for a trend, a column chart for a comparison"
+      ],
+      "flex": {
+        "findings": {
+          "default": 2,
+          "range": [
+            1,
+            3
+          ]
+        },
+        "footer_band": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        },
+        "chart_type": {
+          "default": "line",
+          "range": [
+            "line",
+            "column",
+            "area"
+          ]
+        }
+      },
+      "variants": [
+        "findings under the chart -> a wider chart",
+        "no band -> the chart has to speak for itself"
+      ],
+      "viewing": "screen",
+      "slide": 43,
+      "preview": "previews/chart-findings.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "label-value-blocks",
+      "name": "Label and value blocks",
+      "structure": "A grid of blocks, each split into a dark label part and a lighter value part.",
+      "content_fit": [
+        "a fact sheet: project, owner, budget, deadline, scope, risk",
+        "the label is one or two words, the value a short line",
+        "reads faster than a table because each pair stands on its own"
+      ],
+      "flex": {
+        "blocks": {
+          "default": 6,
+          "range": [
+            2,
+            8
+          ]
+        },
+        "columns": {
+          "default": 2,
+          "range": [
+            1,
+            3
+          ]
+        },
+        "label_share": {
+          "default": 0.32,
+          "range": [
+            0.2,
+            0.4
+          ]
+        }
+      },
+      "variants": [
+        "one column -> a list of facts",
+        "all blocks one tone -> nothing is grouped"
+      ],
+      "viewing": "screen",
+      "slide": 44,
+      "preview": "previews/label-value-blocks.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "statement-tiles",
+      "name": "Claim beside a group of tiles",
+      "structure": "A claim in a panel on the left, a bordered group of icon tiles on the right, and a tab over the group naming it.",
+      "content_fit": [
+        "one sentence that holds for everything in the group",
+        "a range of services, all of which share a property",
+        "the tab is the group's name, the panel is why it matters"
+      ],
+      "flex": {
+        "tiles": {
+          "default": 5,
+          "range": [
+            3,
+            6
+          ]
+        },
+        "claim_share": {
+          "default": 0.27,
+          "range": [
+            0.2,
+            0.35
+          ]
+        },
+        "tab": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "claim on the right -> mirrored",
+        "no tab -> a plainer group"
+      ],
+      "viewing": "screen",
+      "slide": 45,
+      "preview": "previews/statement-tiles.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "cycle-segments",
+      "name": "Cycle with numbered stages",
+      "structure": "A ring around a named centre, with numbered markers on it and a label to the left and right of each.",
+      "content_fit": [
+        "stages that come back round - a customer journey, a review cycle, a season",
+        "the centre names what the cycle is about",
+        "not for a sequence with an end: that is a path or a chevron row"
+      ],
+      "flex": {
+        "stages": {
+          "default": 6,
+          "range": [
+            4,
+            8
+          ],
+          "note": "always even, half a side"
+        },
+        "centre_label": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "labels only on one side -> a legend layout",
+        "no ring, just the markers -> a lighter read"
+      ],
+      "viewing": "screen",
+      "slide": 46,
+      "preview": "previews/cycle-segments.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "claim-tree",
+      "name": "One claim, the things that carry it",
+      "structure": "A statement box on top, a stem and a cross bar, and a row of boxes hanging from it.",
+      "content_fit": [
+        "a conclusion and what it rests on",
+        "a goal and the measures under it, a decision and its reasons",
+        "the top box states it, the lower boxes are why it holds"
+      ],
+      "flex": {
+        "supports": {
+          "default": 4,
+          "range": [
+            2,
+            5
+          ]
+        },
+        "head_lines": {
+          "default": 2,
+          "range": [
+            1,
+            3
+          ]
+        }
+      },
+      "variants": [
+        "two levels of boxes -> a small org chart",
+        "the top box in a light tone -> a question rather than a claim"
+      ],
+      "viewing": "screen",
+      "slide": 47,
+      "preview": "previews/claim-tree.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "grouped-measures",
+      "name": "Grouped measures with priority and owner",
+      "structure": "A legend of priority marks, then grouped bands: a group name on the left, and per row a priority mark, the measure, and the owner on the right.",
+      "content_fit": [
+        "a plan: what is to be done, how urgent, and by whom",
+        "the grouping is the theme, the mark is the priority, the right column is the team",
+        "one line per measure - a measure that needs two lines is two measures"
+      ],
+      "flex": {
+        "groups": {
+          "default": 3,
+          "range": [
+            2,
+            5
+          ]
+        },
+        "rows_per_group": {
+          "default": 2,
+          "range": [
+            1,
+            4
+          ]
+        },
+        "priority_levels": {
+          "default": 4,
+          "range": [
+            2,
+            4
+          ]
+        },
+        "owner_column": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "no groups -> a flat list of measures",
+        "a date column instead of the owner",
+        "drop the legend -> the marks have to be self-explaining"
+      ],
+      "viewing": "screen",
+      "slide": 48,
+      "preview": "previews/grouped-measures.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 5
+      }
+    },
+    {
+      "id": "bullet-list",
+      "name": "Points with a heading each",
+      "structure": "A marker, a short heading and a line or two of text, repeated down the slide.",
+      "content_fit": [
+        "the plainest way to make several points on one slide",
+        "each point gets a name and an explanation - if a point needs neither, use a plain list",
+        "the slide most decks are mostly made of"
+      ],
+      "flex": {
+        "points": {
+          "default": 5,
+          "range": [
+            3,
+            6
+          ],
+          "note": "at 14pt six points leave one line of text each"
+        },
+        "headings": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "no headings -> a plain bullet list with more room per point",
+        "two columns -> up to ten shorter points",
+        "numbers instead of markers -> an ordered list"
+      ],
+      "viewing": "screen",
+      "slide": 49,
+      "preview": "previews/bullet-list.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "bullet-list-two-columns",
+      "name": "Points in two columns",
+      "structure": "The same point-with-heading shape, in two columns, read down the left first.",
+      "content_fit": [
+        "eight points that belong together and do not fit in one column",
+        "two groups of four, if the columns are given headings",
+        "reading order is down then across - say so if it should be across then down"
+      ],
+      "flex": {
+        "points_per_column": {
+          "default": 4,
+          "range": [
+            3,
+            5
+          ]
+        },
+        "columns": {
+          "default": 2,
+          "range": [
+            2,
+            3
+          ]
+        },
+        "column_headings": {
+          "default": 0,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "column headings -> two named groups",
+        "one column -> more room per point"
+      ],
+      "viewing": "screen",
+      "slide": 50,
+      "preview": "previews/bullet-list-two-columns.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "title-and-table",
+      "name": "Title and a plain table",
+      "structure": "A headed table filling the content area, first column text and the rest values.",
+      "content_fit": [
+        "figures that belong in rows and columns and need no picture",
+        "a price list, a schedule, a set of measurements",
+        "when a table needs a reading beside it, use the table-with-findings pattern"
+      ],
+      "flex": {
+        "rows": {
+          "default": 5,
+          "range": [
+            3,
+            7
+          ],
+          "note": "including the header row"
+        },
+        "columns": {
+          "default": 4,
+          "range": [
+            2,
+            6
+          ]
+        }
+      },
+      "variants": [
+        "no banding -> rules between the rows instead",
+        "a total row in a darker tone at the bottom"
+      ],
+      "viewing": "screen",
+      "slide": 51,
+      "preview": "previews/title-and-table.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "image-full",
+      "name": "One picture, full width",
+      "structure": "A picture area filling nearly the whole slide, with a caption and a source line under it.",
+      "content_fit": [
+        "a screenshot, a photograph, a diagram made elsewhere",
+        "the caption says what to look at, not what it is",
+        "the right-hand line takes the source or the date"
+      ],
+      "flex": {
+        "caption": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        },
+        "source_line": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "caption over the picture -> a fuller bleed",
+        "two pictures side by side -> a comparison"
+      ],
+      "viewing": "room",
+      "slide": 52,
+      "preview": "previews/image-full.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "title-only",
+      "name": "Title, intro and a free area",
+      "structure": "A title, one intro paragraph, and the whole content area left open.",
+      "content_fit": [
+        "the fallback when nothing else fits: a screenshot, a pasted chart, a drawing",
+        "the free area is the content area every other pattern divides up",
+        "use it knowingly, not because the library was not searched"
+      ],
+      "flex": {
+        "intro": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "without the intro -> the free area grows by 0.75in",
+        "the area split in two -> a rough two-column layout"
+      ],
+      "viewing": "screen",
+      "slide": 53,
+      "preview": "previews/title-only.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "question-answer",
+      "name": "A question and the answers to it",
+      "structure": "A question across the full width, and the answers as equal cards under it.",
+      "content_fit": [
+        "a slide that opens a discussion rather than closing one",
+        "an objection and the responses, a decision and the options",
+        "the question must be a real question, not a heading with a question mark"
+      ],
+      "flex": {
+        "answers": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        },
+        "question_lines": {
+          "default": 2,
+          "range": [
+            1,
+            3
+          ]
+        }
+      },
+      "variants": [
+        "one answer -> a statement slide",
+        "answers as a numbered list -> a ranking rather than options"
+      ],
+      "viewing": "screen",
+      "slide": 54,
+      "preview": "previews/question-answer.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "offer-two-blocks",
+      "name": "Offer: two blocks, results, terms",
+      "structure": "A kicker, title and coloured subtitle; two blocks side by side, each a heading, a paragraph and bullet lines; a result row under them; a dark band of labelled terms at the foot.",
+      "content_fit": [
+        "one offer on one slide: the situation, what happens, what comes out, what it costs",
+        "the left block is where the customer is, the right is what you do",
+        "the terms band takes duration, place, price - the three things asked next"
+      ],
+      "flex": {
+        "blocks": {
+          "default": 2,
+          "range": [
+            2,
+            3
+          ]
+        },
+        "bullets_per_block": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ],
+          "note": "at 14pt four bullets need the result row dropped"
+        },
+        "result_items": {
+          "default": 4,
+          "range": [
+            3,
+            5
+          ]
+        },
+        "terms": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        }
+      },
+      "variants": [
+        "no terms band -> an offer without a price",
+        "results as a row of cards -> more room per result"
+      ],
+      "viewing": "screen",
+      "slide": 55,
+      "preview": "previews/offer-two-blocks.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "timeline-phases",
+      "name": "Phases with headings above the line",
+      "structure": "A kicker, title and subtitle; phase headings above a horizontal line, a marker on it per phase, and the text below; a footnote at the foot.",
+      "content_fit": [
+        "a sequence where every step needs two or three sentences, not a label",
+        "before, during, after and the outcome - the last marker sits darker",
+        "the footnote takes the conditions that hold for all phases"
+      ],
+      "flex": {
+        "phases": {
+          "default": 4,
+          "range": [
+            3,
+            5
+          ]
+        },
+        "footnote": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        },
+        "subtitle": {
+          "default": 1,
+          "range": [
+            0,
+            1
+          ]
+        }
+      },
+      "variants": [
+        "markers as numbers -> a strictly counted sequence",
+        "no line -> four columns of text under headings"
+      ],
+      "viewing": "screen",
+      "slide": 56,
+      "preview": "previews/timeline-phases.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    },
+    {
+      "id": "numbered-sections",
+      "name": "Numbered sections stacked",
+      "structure": "Full-width bands stacked down the slide, each with a large number on the left, a heading and a short list.",
+      "content_fit": [
+        "three areas that each need several lines - a quarterly review, a status report",
+        "the number is an anchor, not a ranking",
+        "the shape a written summary takes when it has to go on one slide"
+      ],
+      "flex": {
+        "sections": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        },
+        "lines_per_section": {
+          "default": 3,
+          "range": [
+            2,
+            4
+          ]
+        }
+      },
+      "variants": [
+        "nested lines under a bullet -> a deeper breakdown",
+        "one section in a darker tone -> the one that matters"
+      ],
+      "viewing": "screen",
+      "slide": 57,
+      "preview": "previews/numbered-sections.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 1
+      }
+    },
+    {
+      "id": "media-feature-grid",
+      "name": "Picture area with a feature grid",
+      "structure": "A picture area on one side; on the other a grid of pairs, each an icon area, a heading and a paragraph.",
+      "content_fit": [
+        "a product or a screen with the four things worth saying about it",
+        "the icon area stays a grey square until a real icon goes in",
+        "four pairs is the balance point: six make the text too short to say anything"
+      ],
+      "flex": {
+        "features": {
+          "default": 4,
+          "range": [
+            2,
+            6
+          ]
+        },
+        "columns": {
+          "default": 2,
+          "range": [
+            1,
+            2
+          ]
+        },
+        "media_share": {
+          "default": 0.42,
+          "range": [
+            0.3,
+            0.55
+          ]
+        }
+      },
+      "variants": [
+        "picture on the right -> mirrored",
+        "one column of features -> a taller picture area",
+        "no icon areas -> a plain text grid"
+      ],
+      "viewing": "screen",
+      "slide": 58,
+      "preview": "previews/media-feature-grid.png",
+      "checks": {
+        "refs": 0,
+        "overflow": 0,
+        "off_slide": 0,
+        "overlaps_by_design": 0
+      }
+    }
+  ]
+}

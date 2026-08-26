@@ -15,13 +15,48 @@ The theme can be default Office (Calibri, Office palette) while the brand lives 
 
 A deck built slide by slide from scratch is the slow way and the drifting way at once: measured on a real run, three slides cost half an hour, and the fourth slide invented what the first had already solved. So the order is fixed, and composing is the exception.
 
+**Two checks that only look at the finished file.** `slide-library.py refs-check <deck.pptx>` reports any relationship id a slide points at that its own rels cannot resolve: that is what makes PowerPoint call a file damaged and strip the shape, while LibreOffice renders it silently without the image, so neither a render nor any other check here would show it. `slide-library.py overflow-check <deck.pptx>` reports text that wraps to a line the box has no room for, measured in the deck's own typeface at its own size, insets included. `overlap-check` cannot see that case: it compares the boxes two shapes declare, and a wrapped line lands on the shape below while the declared boxes still say the two do not touch. `overflow-check` reads table cells too, measured with the same calibrated character count `build` refuses on, because a battlecard is mostly table and a cell that outgrows its row pushes the rows under it down and covers their headings. Both run on the deck as written, after every build and every fill.
+
 **Harvest once.** `slide-library.py harvest <deck.pptx> --into trusted/brands/<brand>/slides/` reads a template or an approved deck and writes down, per slide, which master layout it uses, what its text slots are, and how much text each slot measurably holds (from the box and the type size in it, not from anyone's estimate). This runs when a brand's kit is first built and again whenever a deck is approved. The library is the user's own material, never a set of layouts we invented. A slide's rubrics are often laid out as a table rather than free text boxes; harvest reads a table's cells as slots too (`table1.r2c3`), not just text frames, so a template built entirely from tables still shows its real placeholders instead of reading as empty.
 
 **Then build in three tiers, in this order.**
 
+0. **Reuse what is already in this deck.** Before the library is even opened: does a slide in the file being built already carry this shape of content? Then clone that one and swap its text. A deck of thirty battlecards is one built slide and twenty-nine copies of it, not thirty builds. This tier is new on 2026-08-26 and it is the cheapest of all, because the geometry is not just approved, it is the geometry of this very deck. It also grows while the work runs: a slide composed at tier three becomes tier zero for every slide after it. Asked for one more slide after slide 10 in a deck that already holds fifty, the answer is almost never a build.
+
 1. **Match.** Read the library, take the slide that already carries this shape of content, clone it, swap the text. `slide-library.py build <plan.json> <out.pptx> --library <dir>` does exactly that and refuses text that would overflow a slot rather than shrinking type to fit. Seconds per slide, and the look cannot drift because nothing is drawn. **The fastest form of Match does not even deep-copy: work on the copy of the source deck, delete every slide except the one that already carries the shape, keep that slide's own XML untouched, and only swap its text.** Verified on a real deck, 7 minutes start to finished: this skipped all position work and font-size search entirely, because the geometry stayed byte-identical to the original rather than being reconstructed by a shape-copy. The slowest part of that run was finding the right exemplar among 41 slides by eye (under two minutes); a harvested library removes that lookup, so this path gets faster still once harvest has run once.
 2. **Adapt.** Nothing fits exactly: clone the closest slide, then multiply or remove an **existing** group inside it. A row of a measures band is its own four shapes; a further row is a copy of those four moved by the step two existing rows already have, measured from the file. A card too many is a deletion. Values that a source slide already carries are looked up, never chosen: the priority colours, for instance, are in that slide's own legend.
-3. **Compose.** Only when nothing in the library carries it. This is the expensive tier, so it is named before the work starts, not discovered afterwards, and whatever comes out and is approved is harvested back into the library so tier one grows and tier three gets rarer.
+3. **Wireframe.** The brand has nothing like it, but the neutral library does:
+   `zanmai/system/templates/wireframes/` holds 58 patterns in greyscale, built on theme roles and
+   theme fonts only. `slide-library.py migrate <wireframes.pptx> --slide N --into <brand deck>
+   --out <new>` puts the arrangement into a copy of the brand's own file, so master, layouts, logo
+   and colours come from there. Minutes, not an hour, and the geometry is one that has already
+   been rendered and looked at. `library.json` says per pattern what content it fits, what may
+   vary and within which bounds; the preview pictures are what to show the user before building.
+   **After a migrate, always `overflow-check` and `layout-check`**: a change of typeface changes
+   how much every slot holds, and the target brand may have collapsed two theme roles into one
+   value.
+4. **Compose.** Only when nothing in the library and nothing in the wireframes carries it. This is the expensive tier, so it is named before the work starts, not discovered afterwards, and whatever comes out and is approved is harvested back into the library so tier one grows and tier three gets rarer.
+
+**Changing the wording of a deck that already exists is not a build at all, and never a script.** `slide-library.py slots <deck.pptx>` prints every fillable place in a finished file, by the role its geometry gives it (`hub.lines2`, `card1.title`, `table1.r2c3`), with what stands there now and how much each holds. `slide-library.py fill <deck.pptx> --texts <texts.json> --out <new.pptx>` writes the new wording into those places and refuses text that does not fit rather than shrinking type. The texts file is `{"1": {"hub.lines": "..."}}` by slide number, flat for a one-slide deck. A table cell is a place like any other, addressed as `table1.r2c3`. A value can be one string, a list of strings for several paragraphs, or a list of `{"text": "...", "bold": true}` pieces for one paragraph made of several runs, which is how a rubric carries a bold objection and its plain answer together. Nothing is redrawn and nothing is cloned, so the geometry stays byte-identical. This exists because the alternative kept happening: a wording change on a finished deck was written as a purpose-built python-pptx script, twice in one bundle, and each of those is a new place for the layout to drift and a new thing to maintain. A one-off script for filling text is now a sign that the wrong route was taken.
+
+**When the user hands over content and asks what to make of it, the shape of the content picks
+the pattern, not the topic.** The question is never "what is this slide about", it is "how many
+things are there and how do they relate":
+
+- several things of the same rank → a card row; with a list each → cards with bullets
+- things in an order → a path, a chevron row or a staircase, depending on whether they build
+- one thing and its parts → a hub, or a claim with what carries it
+- two things weighed → columns compared row by row, or a butterfly of bars
+- measured values → a chart with the reading beside it, never a chart alone
+- things with a state and a duration → a status table with a timeline
+- one sentence that has to land → a statement slide, and nothing else on it
+- real prose → two columns of text, and accept that it will be read, not presented
+
+Each pattern in `library.json` states this in its own words under `content_fit`, including what it
+is **not** for. Read that field rather than guessing from the name, show the preview, and let the
+user say yes before the build. Content that fits no pattern is the honest case for Compose.
+
+**The tier is chosen per slide, never once for the job.** A set of pages is not one decision repeated. Page one may be composed, page two cloned from page one, page three migrated out of the neutral library and recoloured, page four cloned again from page two. Picking one tier at the start and holding it for twenty pages is what makes a run expensive, and it is the failure this list exists to prevent. The question is asked again at every page: what is the cheapest route to this one.
 
 **This order is enforced, not just stated.** `slide-library.py check <library> --task <slug>` prints the library and records that it was looked at for the `doing/<slug>/` bundle a deck belongs to; `library-check-guard` (`zanmai.py hook`, PreToolUse Bash) refuses to save a `.pptx` into that bundle until the record exists. Verified on a real deck: this exact order was skipped twice in one afternoon, straight to Compose, before anyone checked, which is where that run's whole cost went. Running the check is cheap even when Compose turns out to be the right call; the guard only proves the library was looked at, it never picks the tier.
 
@@ -48,21 +83,54 @@ Building a fresh, empty presentation and copying the CI (theme XML, measured pos
 ## Rules
 
 - The master is never modified. Never clone a finished slide (it corrupts the file); one layout per look, add from it, fill. Derived layouts with a `1_` prefix are the copy-and-modify artifact.
-- A new slide is never built in an empty `Presentation()` while a real deck carrying the brand is available. Derive from a copy of that deck, see Create.
+- A new slide is never built in an empty `Presentation()` **while a real deck carrying the brand is available**. Derive from a copy of that deck, see Create. Where there is no brand deck at all (a neutral wireframe, a first template for a vault that has none), the empty presentation is the correct start, and this rule does not apply. Stated because it was read as absolute once and cost a question that had an obvious answer.
 - **Repositioning an inherited placeholder sets all four of `left`, `top`, `width`, `height`, plus `text_frame.vertical_anchor`, together, never just the values that seem to need changing.** Verified on a real deck: setting only `left` and `width` on a placeholder still inheriting its position from the layout left `top`/`height` implicit, and python-pptx wrote an `xfrm` with `off y="0" ext cy="0"`, and the title rendered pinned to the slide's top edge. There is no partial-override state that is safe to leave implicit.
 - **A gap between two elements is closed by measuring, the same way a spacing constant is:** step the variable dimension (usually the type size of what sits above the gap) in small increments (0.5pt worked on a real deck) until the box's measured extent fills the space, rather than picking a plausible-looking value.
 - Diagrams are native chart objects with data, never an image. Real photos are images. No imported SVG or EMF for vector content.
 - Animation is not covered by this toolchain, name it, never promise it silently.
 
-## The deck is read, not photographed
+## Look at the deck, and read it too
 
-Only PowerPoint itself renders a `.pptx` faithfully; every other engine lays it out again, so a picture taken from one of those reports faults that are not there and passes ones that are. And PowerPoint's own automation needs the running app, which is the user's screen, not ours (operating-principles section 11). So there is no faithful headless render of a deck, and the measurable check does not need one: a `.pptx` is a file, and the questions worth asking are answered by reading it.
+Only PowerPoint itself renders a `.pptx` exactly. That was long taken to mean there is no
+useful headless render at all, and the consequence was that a deck went out having been
+described rather than seen. **That consequence was wrong, and it cost the most on 2026-08-26**,
+when ten faults in a freshly built library were found by looking and by nothing else: shapes
+sitting on each other, a two-digit marker breaking over two lines, banding that was white on
+white because the brand had put the same value on two theme roles. None of those wrap, none is
+a broken reference, and none looks unusual in the XML.
 
-`python3 zanmai/system/scripts/design-check.py --pptx <deck.pptx> --tokens <palette.css>` reads the file and reports numbers: how many slides use a real master layout instead of a blank, empty placeholders left standing, runs that override the layout with their own face, size or colour, colours outside the palette, and whether a diagram is a chart object or a flattened picture. Red means not finished.
+`python3 zanmai/system/scripts/slide-library.py render <deck.pptx> --into <dir>` writes one
+picture per slide, headless, no window, on macOS, Windows and Linux. Measured: 58 slides in
+about six seconds. **Look at every slide you built, before you report it done.**
 
-There is a way to see one slide without PowerPoint, and it still costs the user something, so it is not a free pass. On macOS `qlmanage -t -s 1600 -o <dir> <deck.pptx>` writes a PNG of the **first** slide in a fraction of a second, with the real fonts and exact colours. But `qlmanage` puts itself in the dock while it runs, observed, so it is visible activity on someone else's machine and falls under the same rule as an application: asked for once, with the reason, or not used (operating-principles section 11). Default is not to use it. When it is agreed: to see slide N, copy the deck, reduce the copy to that slide and render the copy, never the deliverable, and never `qlmanage -p`, which opens a window outright. Outside macOS there is no equivalent at all, and then there is no visual check to be had: say so rather than reaching for an application.
+**What it answers and what it does not.** LibreOffice lays the deck out again instead of
+reproducing PowerPoint, so this tells you whether the arrangement works, whether text sits in
+its box and whether anything covers anything else. It does not tell you the file is
+pixel-identical to what the customer will see, and two gaps are verified: a shape inherited
+from the layout and an `outerShdw` can render differently. Neither weakens the questions above.
 
-`qlmanage` is also not a complete renderer: verified on a real deck, it drew neither a shape inherited from the slide's layout nor an `outerShdw` shadow, both present and correct in the actual file and visible in LibreOffice. A slide that looks like it is missing its logo or a card's drop shadow in the preview can be complete in the file: check the XML for the inherited shape before "fixing" a preview gap by drawing a new object on top of it, which would break the inheritance that was already correct. On a large deck (real case: 7 MB) `qlmanage` can take minutes and blocks further calls to it meanwhile; budget for that or work on a slide-reduced copy as above.
+**Hidden slides are skipped by the export unless it is told otherwise, and nothing says so.**
+Measured on a real deck of 27 slides where 16 were hidden and 11 came out. `render` passes the
+flag; anyone exporting by hand has to.
+
+If LibreOffice is not on the machine, `render` says so and names the one command that installs
+it, per platform. That is a prerequisite to report, never a reason to deliver unseen
+(operating-principles section 10).
+
+`qlmanage` on macOS remains as a second opinion for a single slide, and its limits are
+unchanged: first slide only, it puts itself in the dock while it runs, so it is asked for once
+with a reason or not used, and on a large deck it takes minutes.
+
+The countable part is still read, not looked at: `refs-check`, `overflow-check`,
+`overlap-check`, `align-check` and `layout-check` all read the file, and a render does not
+replace any of them. The render catches the class none of them can: what the arrangement looks
+like once it is painted.
+
+`python3 zanmai/system/scripts/design-check.py --pptx <deck.pptx> --tokens <palette.css>` reads
+the file and reports numbers: how many slides use a real master layout instead of a blank,
+empty placeholders left standing, runs that override the layout with their own face, size or
+colour, colours outside the palette, and whether a diagram is a chart object or a flattened
+picture. Red means not finished.
 
 **A structural check passing (renderer, XML diff, `design-check.py`) is not proof PowerPoint will open the file cleanly.** Verified on a real deck: a file that passed all three still triggered PowerPoint's own repair dialog on open. None of the headless checks model everything PowerPoint's loader validates. When a repair dialog fires: let PowerPoint repair and save the result, then diff the repaired file's XML against the pre-repair copy part by part. The diff names the exact invalid element; guessing at the cause from the outside does not.
 

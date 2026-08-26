@@ -260,21 +260,21 @@ specialists keep it and the user reads it. Not a plan file, which principle 1 ke
 
 The user can set a state or write into the page by hand; the row identity survives an outside edit.
 
-## 14. Looking at material is a sample, never a full pass
+## 14. The route is chosen for the question, not for the role
 
-Reading before working exists to spend less. An examination costing as much as the work it precedes has
-defeated its purpose.
+**Every expert owns a full pipeline, and running all of it is the default that costs the most.** "The
+ten best C64 games" is not a literature review, it wants a short search and a list. "This image is too
+large" wants it resized, not generated again. A word changed on a finished deck wants that word changed,
+not the deck rebuilt. Name the cheapest route that still answers the question and take it; where it
+cannot carry the answer, say so and take the expensive one. Where the depth is genuinely unclear, ask
+once with a recommended answer rather than guessing upward: too thorough costs money and arrives late.
 
-**Sample rather than exhaust.** A two-hour recording is judged from its beginning, middle and end. A
-hundred-page document from its structure and a few passages. A folder of two thousand files from a
-handful across it.
-
-What costs almost nothing is used freely: metadata, measurements, a transcript, a structure listing,
-counts. What costs a great deal is rationed: images, frames, rendering, anything that runs per item
-across a large set. Where a sample turns out not to be enough, take a second one and say why.
-
-**Say what the sample was.** "Read the first and last pages and four in between" is an honest basis for
-a judgement.
+**Looking at material is a sample, never a full pass.** A two-hour recording is judged from beginning,
+middle and end, a hundred-page document from its structure and a few passages, a folder of two thousand
+files from a handful across it. Metadata, measurements, transcripts, structure listings and counts cost
+almost nothing and are used freely; images, frames, rendering and anything running per item across a
+large set are rationed. Where a sample is not enough, take a second and say why, and always say what
+the sample was: "the first and last pages and four in between" is an honest basis.
 
 **A loop that checks its own work runs two rounds**, then hands over what is still open. A round that
 changes nothing is the signal to stop at once. What two rounds did not fix is either a judgement for

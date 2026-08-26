@@ -18,6 +18,9 @@ their template and their approved decks, and it grows as they approve more.
     slide-library.py nudge <deck.pptx> --shape <name> --dx <in> --dy <in> --into <out.pptx>
     slide-library.py overlap-check <deck.pptx> [--slide <n>]
     slide-library.py align-check <deck.pptx> [--slide <n>]
+    slide-library.py layout-check <deck.pptx> [--slide <n>]
+    slide-library.py migrate <deck.pptx> --slide <n> --into <brand.pptx> --out <new.pptx>
+    slide-library.py render <deck.pptx> --into <dir>
 
 `harvest` writes `index.json` and a readable `index.md` describing each slide:
 which master layout it uses, what its slots are, and how much text each slot
@@ -56,6 +59,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import re
 import sys
 from datetime import datetime, timezone
@@ -63,6 +67,7 @@ from pathlib import Path
 
 try:
     from pptx import Presentation
+    from pptx.enum.text import MSO_AUTO_SIZE
     from pptx.oxml.ns import qn
     from pptx.util import Emu
 except ImportError:
@@ -76,6 +81,17 @@ EMU_PER_INCH = 914400
 # it is calibrated rather than guessed because a number nobody measured would let
 # every overflow through.
 CHAR_DENSITY = 42.0
+# Average glyph width of the face CHAR_DENSITY was calibrated against, in pixels per
+# character at 100 pt, measured on a reference sentence. Arial and Helvetica both sit here.
+# A face that runs wider carries fewer characters in the same box, and the density has to
+# follow: measured 2026-08-26, Montserrat runs 15.5% wider than Arial, so a cell that held
+# 23 characters before a brand's theme was applied holds 20 after it. Without this the count
+# does not move at all when the typeface changes, and a check that cannot see a theme swap
+# is quiet exactly where a brand hand-over goes wrong.
+REFERENCE_GLYPH_WIDTH = 44.85
+_WIDTH_SAMPLE = ("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod "
+                 "tempor incididunt")
+_width_cache: dict = {}
 
 
 def inches(value) -> float:
@@ -97,6 +113,32 @@ def sizes_in(shape) -> list[float]:
     return sizes
 
 
+def face_width_factor(family: str | None, bold: bool = False) -> float:
+    """How much wider this face runs than the one CHAR_DENSITY was calibrated on.
+
+    1.0 when the face cannot be measured on this machine, which leaves the calibrated
+    number exactly as it was rather than guessing a correction.
+    """
+    if not family:
+        return 1.0
+    key = (family.lower(), bold)
+    if key in _width_cache:
+        return _width_cache[key]
+    faktor = 1.0
+    try:
+        from PIL import ImageFont
+        path = _font_file(family, bold)
+        if path is not None:
+            font = ImageFont.truetype(str(path), 100)
+            breite = font.getlength(_WIDTH_SAMPLE) / len(_WIDTH_SAMPLE)
+            if breite > 0:
+                faktor = breite / REFERENCE_GLYPH_WIDTH
+    except Exception:  # noqa: BLE001 -- an unmeasurable face falls back, it does not crash a check
+        faktor = 1.0
+    _width_cache[key] = faktor
+    return faktor
+
+
 def capacity(shape) -> int:
     """How many characters this box carries at the size its own text uses. A slot
     with no text yet falls back to the deck's body size, which is the honest
@@ -115,12 +157,19 @@ def cell_sizes(cell) -> list[float]:
     return sizes
 
 
-def cell_capacity(cell, width_emu, height_emu) -> int:
+def cell_capacity(cell, width_emu, height_emu, family: str | None = None) -> int:
     """Same formula as `capacity()`, for a table cell rather than a shape: a cell has no
-    `.width`/`.height` of its own, those live on the table's column and row."""
+    `.width`/`.height` of its own, those live on the table's column and row.
+
+    `family` is the typeface the cell actually renders in. Given, the count is corrected by
+    how wide that face runs against the calibration face; left out, the calibrated number
+    stands unchanged. This is what lets the check notice a theme swap: the same table in
+    Montserrat holds about 13% less than in Arial, and before this the number did not move.
+    """
     size = max(cell_sizes(cell) or [12.0])
     area = inches(width_emu) * inches(height_emu)
-    return int(area * CHAR_DENSITY * (12.0 / size) ** 2)
+    roh = area * CHAR_DENSITY * (12.0 / size) ** 2
+    return int(roh / face_width_factor(family))
 
 
 def contains(outer, inner) -> bool:
@@ -276,16 +325,320 @@ def harvest(deck_path: Path, into: Path) -> int:
     return 0
 
 
+_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_REL_ATTRS = tuple(f"{{{_REL_NS}}}{name}" for name in ("embed", "link", "id", "pict", "dm", "lo", "qs", "cs"))
+
+
+def _carry_relationships(new_slide, source_slide, element) -> None:
+    """Bring the parts a copied shape points at across, and renumber the ids to match.
+
+    A picture is two things: the shape XML on the slide, and the image part it points at through a
+    relationship id. Deep-copying the element brings the first and leaves the second behind, so the
+    copy carries `r:embed="rId2"` into a slide whose rels have no rId2. PowerPoint calls that file
+    damaged and strips the shape; LibreOffice renders it silently without the image, which is why
+    every check and every render looked clean. Found 2026-08-26 on a deck built for a customer, with
+    the logo missing and the file repaired on open.
+    """
+    for el in element.iter():
+        for attr in _REL_ATTRS:
+            alt_id = el.get(attr)
+            if not alt_id:
+                continue
+            try:
+                rel = source_slide.part.rels[alt_id]
+            except KeyError:
+                continue
+            if rel.is_external:
+                neu_id = new_slide.part.relate_to(rel.target_ref, rel.reltype, is_external=True)
+            else:
+                neu_id = new_slide.part.relate_to(rel.target_part, rel.reltype)
+            el.set(attr, neu_id)
+
+
 def clone(deck, source):
     """A copy of one slide, shape for shape. Same layout, then every element of
     the source deep-copied in, so fills, connectors, pills and geometry come along
-    exactly. Nothing is redrawn, which is the whole point."""
+    exactly. Nothing is redrawn, which is the whole point.
+
+    The relationships come with it. Copying the XML alone leaves every picture, hyperlink and
+    embedded object pointing at an id the new slide does not have."""
     new = deck.slides.add_slide(source.slide_layout)
     for shape in list(new.shapes):
         shape._element.getparent().remove(shape._element)
     for shape in source.shapes:
-        new.shapes._spTree.append(copy.deepcopy(shape._element))
+        kopie = copy.deepcopy(shape._element)
+        _carry_relationships(new, source, kopie)
+        new.shapes._spTree.append(kopie)
     return new
+
+
+RENDER_HINT = ("install LibreOffice: macOS `brew install --cask libreoffice`, "
+               "Windows `winget install TheDocumentFoundation.LibreOffice`, "
+               "Debian/Ubuntu `apt install libreoffice-impress`")
+
+
+def _soffice() -> str | None:
+    """LibreOffice on this machine, whatever it is called here."""
+    import shutil
+    for name in ("soffice", "libreoffice"):
+        pfad = shutil.which(name)
+        if pfad:
+            return pfad
+    for pfad in ("/Applications/LibreOffice.app/Contents/MacOS/soffice",
+                 r"C:\Program Files\LibreOffice\program\soffice.exe",
+                 r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"):
+        if Path(pfad).is_file():
+            return pfad
+    return None
+
+
+def render(deck_path: Path, into: Path, dpi: int = 110) -> int:
+    """A picture of every slide, headless, on any platform.
+
+    This exists because the alternative was nothing. `qlmanage` renders the first slide only,
+    on macOS only, and puts itself in the dock while it runs; outside macOS there was no way
+    to look at a deck at all, and a check that cannot look is a check that trusts its own
+    description. Measured 2026-08-26 while building the wireframe library: 58 slides rendered
+    in about 6 seconds, and the render found ten faults that every other check here reported
+    clean -- shapes overlapping, a marker breaking over two lines, banding that was white on
+    white. None of those wrap, none of them is a broken reference, and none of them shows up
+    in the XML as anything unusual.
+
+    **What it is and is not.** LibreOffice lays a deck out again rather than reproducing
+    PowerPoint exactly, so this answers "does the arrangement work, does the text sit in its
+    box, is anything on top of anything else" and not "is this pixel-identical to what the
+    customer sees". Known gaps, verified: a shape inherited from the layout and an `outerShdw`
+    may render differently than PowerPoint does. For the questions above that is enough, and
+    for the questions below it it was never the tool.
+    """
+    exe = _soffice()
+    if exe is None:
+        print(f"slide-library: LibreOffice is not on this machine, so a deck cannot be looked "
+              f"at here. To make it possible: {RENDER_HINT}", file=sys.stderr)
+        return 1
+    import subprocess
+    import tempfile
+    into.mkdir(parents=True, exist_ok=True)
+    filter_arg = ('pdf:impress_pdf_Export:{"ExportHiddenSlides":{"type":"boolean",'
+                  '"value":"true"}}')
+    with tempfile.TemporaryDirectory() as tmp:
+        # Hidden slides are skipped by the export by default and nothing says so: measured on a
+        # real deck of 27 slides where 16 were hidden and 11 came out, with no warning at all.
+        lauf = subprocess.run([exe, "--headless", "--convert-to", filter_arg, "--outdir", tmp,
+                               str(deck_path)], capture_output=True, text=True)
+        pdfs = list(Path(tmp).glob("*.pdf"))
+        if not pdfs:
+            print(f"slide-library: LibreOffice produced no PDF for {deck_path.name}. "
+                  f"{lauf.stderr.strip() or lauf.stdout.strip()}", file=sys.stderr)
+            return 1
+        stamm = into / deck_path.stem
+        try:
+            import fitz  # noqa: F401 -- PyMuPDF, when it happens to be there
+        except ImportError:
+            fitz = None
+        import shutil as _shutil
+        if _shutil.which("pdftoppm"):
+            subprocess.run(["pdftoppm", "-png", "-r", str(dpi), str(pdfs[0]), str(stamm)],
+                           check=True)
+        elif fitz is not None:
+            doc = fitz.open(str(pdfs[0]))
+            for i, seite in enumerate(doc, start=1):
+                seite.get_pixmap(dpi=dpi).save(f"{stamm}-{i:02d}.png")
+        else:
+            ziel = into / (deck_path.stem + ".pdf")
+            _shutil.copy(str(pdfs[0]), str(ziel))
+            print(f"rendered {deck_path.name} -> {ziel} (PDF only: neither pdftoppm nor PyMuPDF "
+                  f"is here to cut it into pictures)")
+            return 0
+    bilder = sorted(into.glob(f"{deck_path.stem}-*.png"))
+    print(f"rendered {len(bilder)} slide(s) of {deck_path.name} into {into}")
+    for bild in bilder:
+        print(f"  {bild}")
+    return 0
+
+
+def brand_master(deck, scheme_name: str | None = None):
+    """The master to build on, chosen by the colour scheme its own theme carries.
+
+    A deck can hold several masters and only one of them be the brand: measured 2026-08-26 on a
+    real company template with three, two of which were stock Office. Picking a layout by name
+    landed on the Office master and produced a slide that looked finished in the wrong colours,
+    with nothing to show it was wrong. Without a name, the first master whose scheme is not
+    called "Office" wins, and failing that the first one.
+    """
+    kandidaten = []
+    for master in deck.slide_masters:
+        name = None
+        for rel in master.part.rels.values():
+            if "theme" in rel.reltype:
+                xml = rel.target_part.blob.decode("utf-8", "ignore")
+                treffer = re.search(r'<a:clrScheme name="([^"]*)"', xml)
+                name = treffer.group(1) if treffer else None
+                break
+        kandidaten.append((master, name or ""))
+        if scheme_name and scheme_name.lower() in (name or "").lower():
+            return master, name
+    if scheme_name:
+        raise SystemExit(f"slide-library: no master carries a theme named like {scheme_name!r}; "
+                         f"this deck has {[n for _m, n in kandidaten]}")
+    for master, name in kandidaten:
+        if name and name.lower() != "office":
+            return master, name
+    return kandidaten[0] if kandidaten else (None, None)
+
+
+def migrate(source_path: Path, slide_no: int, target_path: Path, out: Path,
+            layout_name: str | None = None, scheme: str | None = None,
+            title: str | None = None) -> int:
+    """Put one slide into another deck, so it belongs there instead of bringing its own world.
+
+    `clone` copies inside one deck: same master, same theme, and a colour difference would be a
+    fault. This is the opposite case. The slide arrives in a file that already carries a brand,
+    and what comes across is the arrangement: shapes, geometry and text. Master, layouts, theme,
+    fonts and whatever the layout paints -- a logo, a background shape -- come from the target,
+    because the slide is added to a copy of the target rather than the theme being copied into
+    the source.
+
+    Two things this reports rather than silently fixing. A shape that names a colour outright
+    instead of a theme role keeps that colour, and is listed: only a person can say which brand
+    role a literal `#2E86AB` was standing in for. And a title placeholder in the chosen layout is
+    filled if `title` is given, because a title written into a placeholder inherits the brand's
+    own type, while one drawn as a text box does not.
+    """
+    warnungen: list[str] = []
+    quelle = Presentation(str(source_path))
+    if not 1 <= slide_no <= len(quelle.slides._sldIdLst):
+        print(f"slide-library: {source_path.name} has no slide {slide_no}", file=sys.stderr)
+        return 1
+    folie = quelle.slides[slide_no - 1]
+
+    ziel = Presentation(str(target_path))
+    lst = ziel.slides._sldIdLst
+    for sld in list(lst):
+        ziel.part.drop_rel(sld.rId)
+        lst.remove(sld)
+    master, scheme_name = brand_master(ziel, scheme)
+    if master is None:
+        print(f"slide-library: {target_path.name} carries no master", file=sys.stderr)
+        return 1
+    layouts = list(master.slide_layouts)
+    if layout_name:
+        passend = [L for L in layouts if L.name.lower() == layout_name.lower()]
+        if not passend:
+            print(f"slide-library: {target_path.name} has no layout {layout_name!r} on the "
+                  f"{scheme_name!r} master; it has {[L.name for L in layouts]}", file=sys.stderr)
+            return 1
+        layout = passend[0]
+    else:
+        layout = next((L for L in layouts if L.name.lower() in ("leer", "blank", "inhalt 1")),
+                      layouts[0])
+    neu = ziel.slides.add_slide(layout)
+
+    titel_ph = None
+    for ph in list(neu.placeholders):
+        if ph.placeholder_format.idx == 0 and title:
+            titel_ph = ph
+        else:
+            ph._element.getparent().remove(ph._element)
+    if titel_ph is not None:
+        titel_ph.text_frame.text = title
+
+    # A slide that already carries its own title text box, plus a title written into the
+    # layout's placeholder, paints both on top of each other. Reported, not silently dropped:
+    # which of the two is the real title is not this command's call.
+    if titel_ph is not None:
+        oben = [sh for sh in folie.shapes
+                if sh.has_text_frame and text_of(sh)
+                and inches(sh.top) < inches(titel_ph.top) + inches(titel_ph.height)]
+        if oben:
+            warnungen.append(
+                "the source slide already carries text where the layout's title sits (%s); "
+                "both will paint. Drop --title, or remove that shape from the source."
+                % ", ".join(repr(text_of(sh)[:20]) for sh in oben[:2]))
+
+    fest = []
+    for shape in folie.shapes:
+        kopie = copy.deepcopy(shape._element)
+        _carry_relationships(neu, folie, kopie)
+        neu.shapes._spTree.append(kopie)
+        for treffer in re.findall(r'srgbClr val="([0-9A-Fa-f]{6})"',
+                                  kopie.xml if hasattr(kopie, "xml") else ""):
+            fest.append((shape.name, treffer))
+
+    # Two things a theme swap changes that no colour check sees.
+    quell_schrift = _theme_fonts(source_path).get("minor")
+    ziel_schrift = None
+    for rel in master.part.rels.values():
+        if "theme" in rel.reltype:
+            xml = rel.target_part.blob.decode("utf-8", "ignore")
+            treffer = re.search(r"<a:minorFont><a:latin typeface=\"([^\"]*)\"", xml)
+            ziel_schrift = treffer.group(1) if treffer else None
+            break
+    if quell_schrift and ziel_schrift and quell_schrift != ziel_schrift:
+        vor, nach = face_width_factor(quell_schrift), face_width_factor(ziel_schrift)
+        if vor and nach and abs(nach - vor) > 0.02:
+            warnungen.append(
+                "the body face changes from %s to %s, which runs %+.0f%% wider, so every slot "
+                "holds about %.0f%% less: run overflow-check on the result and shorten what no "
+                "longer fits." % (quell_schrift, ziel_schrift, (nach / vor - 1) * 100,
+                                  (1 - vor / nach) * 100))
+    # A brand may put the same value on two roles. Where a slide told two things apart by using
+    # both, that distinction is gone and nothing in the file says so.
+    rollen = {}
+    for rel in master.part.rels.values():
+        if "theme" in rel.reltype:
+            xml = rel.target_part.blob.decode("utf-8", "ignore")
+            schema = re.search(r"<a:clrScheme.*?</a:clrScheme>", xml, re.S)
+            if schema:
+                for rolle, srgb, sys_ in re.findall(
+                        r"<a:(lt1|lt2|dk1|dk2|accent[1-6])><a:(?:srgbClr val=\"([0-9A-Fa-f]{6})\""
+                        r"|sysClr val=\"[^\"]*\" lastClr=\"([0-9A-Fa-f]{6})\")", schema.group(0)):
+                    rollen.setdefault((srgb or sys_).upper(), []).append(rolle)
+            break
+    doppelt = {wert: r for wert, r in rollen.items() if len(r) > 1}
+    for wert, r in doppelt.items():
+        warnungen.append(
+            "this brand puts the same colour #%s on %s, so anything that told those two apart "
+            "now reads as one." % (wert, " and ".join(r)))
+
+    ziel.save(str(out))
+    print(f"migrated slide {slide_no} of {source_path.name} into {target_path.name} "
+          f"-> {out} (master {scheme_name!r}, layout {layout.name!r})")
+    if fest:
+        gezaehlt = {}
+        for name, wert in fest:
+            gezaehlt.setdefault(wert, []).append(name)
+        print(f"  {len(gezaehlt)} literal colour(s) came across unchanged; only a person can say "
+              f"which brand role each stood for:")
+        for wert, namen in sorted(gezaehlt.items(), key=lambda kv: -len(kv[1])):
+            print(f"    #{wert}  {len(namen)}x  e.g. {namen[0]}")
+    else:
+        print("  no literal colours: every fill and every run named a theme role, so the target's "
+              "theme colours all of it")
+    for warnung in warnungen:
+        print(f"  CHECK: {warnung}")
+    return 0
+
+
+def dangling_refs(deck_path: Path) -> list[str]:
+    """Every relationship id a slide points at that its own rels cannot resolve.
+
+    Read from the written file rather than from the object in memory, because that is the file the
+    user opens. A reference into nothing is always a defect, whatever produced it.
+    """
+    import zipfile
+    problems = []
+    with zipfile.ZipFile(deck_path) as z:
+        namen = z.namelist()
+        for slide in sorted(n for n in namen if re.match(r"ppt/slides/slide\d+\.xml$", n)):
+            xml = z.read(slide).decode("utf-8", "ignore")
+            ids = set(re.findall(r'r:(?:embed|link|id)="([^"]+)"', xml))
+            rels_name = slide.replace("slides/", "slides/_rels/") + ".rels"
+            rels = z.read(rels_name).decode("utf-8", "ignore") if rels_name in namen else ""
+            vorhanden = set(re.findall(r'Id="([^"]+)"', rels))
+            for fehlend in sorted(ids - vorhanden):
+                problems.append(f"{Path(slide).name} points at {fehlend}, which its rels do not carry")
+    return problems
 
 
 _TABLE_SLOT = re.compile(r"^table(\d+)\.r(\d+)c(\d+)$")
@@ -336,19 +689,61 @@ def _fill_text_frame(frame, lines: list) -> str | None:
                 new_p.remove(run)
             frame._txBody.append(new_p)
             paragraph = frame.paragraphs[-1]
-        run_element = copy.deepcopy(keep)
-        end_para_rpr = paragraph._p.find(
-            "{http://schemas.openxmlformats.org/drawingml/2006/main}endParaRPr")
-        if end_para_rpr is not None:
-            # A run appended after endParaRPr breaks the schema's element order; PowerPoint
-            # then drops the run silently, no error, while a more tolerant renderer still
-            # shows it. TextFrame.clear() keeps endParaRPr on the first paragraph, so this
-            # is the common case, not the rare one.
-            end_para_rpr.addprevious(run_element)
-        else:
-            paragraph._p.append(run_element)
-        paragraph.runs[-1].text = str(line)
+        # One paragraph can carry several runs with different weight. A rubric like an objection
+        # and its answer is written that way, bold question then plain reply in one paragraph, and
+        # without this the only route to it was a purpose-written script. A line given as a list of
+        # {"text": ..., "bold": ...} becomes exactly those runs, in order.
+        stuecke = line if isinstance(line, list) else [line]
+        for stueck in stuecke:
+            run_element = copy.deepcopy(keep)
+            end_para_rpr = paragraph._p.find(
+                "{http://schemas.openxmlformats.org/drawingml/2006/main}endParaRPr")
+            if end_para_rpr is not None:
+                # A run appended after endParaRPr breaks the schema's element order; PowerPoint
+                # then drops the run silently, no error, while a more tolerant renderer still
+                # shows it. TextFrame.clear() keeps endParaRPr on the first paragraph, so this
+                # is the common case, not the rare one.
+                end_para_rpr.addprevious(run_element)
+            else:
+                paragraph._p.append(run_element)
+            neuer = paragraph.runs[-1]
+            roh = str(stueck.get("text", "")) if isinstance(stueck, dict) else str(stueck)
+            if isinstance(stueck, dict):
+                if "bold" in stueck:
+                    neuer.font.bold = bool(stueck["bold"])
+                if "italic" in stueck:
+                    neuer.font.italic = bool(stueck["italic"])
+            _set_run_text(paragraph, neuer, roh, keep)
     return None
+
+
+_SOFT_BREAK = "\u000b"
+
+
+def _set_run_text(paragraph, run, text: str, template_r) -> None:
+    """Put text into a run, turning a soft line break into the element PowerPoint reads as one.
+
+    A soft break inside a paragraph is U+000B in the text, and `<a:br/>` in the file. Assigning the
+    character straight to `run.text` writes the literal `_x000B_` into the XML, and the render then
+    shows those seven characters in the middle of the sentence. Found in the field 2026-08-26: a
+    hand-corrected reference slide carried such a break, and writing its text back put the literal
+    on the slide. A newline in the same position means the same thing and is treated the same way.
+    """
+    teile = str(text).replace("\r\n", "\n").replace("\r", "\n").replace("\n", _SOFT_BREAK)
+    stuecke = teile.split(_SOFT_BREAK)
+    run.text = stuecke[0]
+    letzter = run._r
+    for weiterer in stuecke[1:]:
+        br = letzter.makeelement(
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}br", {})
+        letzter.addnext(br)
+        neuer_r = copy.deepcopy(template_r)
+        br.addnext(neuer_r)
+        letzter = neuer_r
+        for lauf in paragraph.runs:
+            if lauf._r is neuer_r:
+                lauf.text = weiterer
+                break
 
 
 def fill_slots(slide, texts: dict, slots: dict, strict: bool) -> list[str]:
@@ -363,7 +758,15 @@ def fill_slots(slide, texts: dict, slots: dict, strict: bool) -> list[str]:
             continue
         lines = value if isinstance(value, list) else [value]
         room = slots.get(name, live[name])["capacity"]
-        length = sum(len(str(line)) for line in lines)
+
+        def _laenge(teil) -> int:
+            if isinstance(teil, dict):
+                return len(str(teil.get("text", "")))
+            if isinstance(teil, list):
+                return sum(_laenge(t) for t in teil)
+            return len(str(teil))
+
+        length = sum(_laenge(line) for line in lines)
         if length > room:
             problems.append(f"slot '{name}' holds {room} characters, the new text has {length}")
             if strict:
@@ -378,11 +781,30 @@ def fill_slots(slide, texts: dict, slots: dict, strict: bool) -> list[str]:
     return problems
 
 
+def _resolve_source(source: Path, library: Path) -> Path | None:
+    """The harvested deck, found from wherever this is called.
+
+    The index stores the path as it was given at harvest time, which is relative to the directory
+    the harvest ran in. Called from anywhere else, that path points at nothing, and the message said
+    the deck was "gone", sending someone to look for a file that was never deleted. Found 2026-08-26
+    on a real run from the vault root.
+    """
+    for kandidat in (source, library / source, library.parent / source,
+                     library.resolve().parent.parent / source):
+        if kandidat.is_file():
+            return kandidat
+    return None
+
+
 def build(plan_path: Path, out: Path, library: Path, strict: bool) -> int:
     index = json.loads((library / "index.json").read_text(encoding="utf-8"))
-    source_deck = Path(index["source"])
-    if not source_deck.is_file():
-        print(f"slide-library: the harvested deck is gone from {source_deck}", file=sys.stderr)
+    source_deck = _resolve_source(Path(index["source"]), library)
+    if source_deck is None:
+        roh = Path(index["source"])
+        print(f"slide-library: cannot find the harvested deck. The index names {roh}, which is "
+              f"relative, and it was tried from here ({Path.cwd()}) and from the library "
+              f"({library.resolve()}). Run this from the bundle the harvest ran in, or re-harvest.",
+              file=sys.stderr)
         return 2
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     slides = plan.get("slides") or []
@@ -418,6 +840,16 @@ def build(plan_path: Path, out: Path, library: Path, strict: bool) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     deck.save(str(out))
     print(f"built {len(slides)} slides into {out}")
+    # Read back what was actually written. A reference into nothing makes PowerPoint call the file
+    # damaged and strip the shape, while LibreOffice renders it without a word, so neither the render
+    # nor any other check here would have caught it.
+    lose = dangling_refs(out)
+    for eintrag in lose:
+        print(f"FAIL: {eintrag}", file=sys.stderr)
+    if lose:
+        print(f"{len(lose)} reference(s) into nothing. The file will open as damaged in PowerPoint.",
+              file=sys.stderr)
+        return 1
     if problems:
         print()
         for problem in problems:
@@ -774,6 +1206,362 @@ def overlap_check(deck_path: Path, slide_no: int | None) -> int:
     return 1 if problems else 0
 
 
+_THEME_PLACEHOLDER = {"+mn-lt": "minor", "+mj-lt": "major", "+mn-ea": "minor", "+mj-ea": "major",
+                      "+mn-cs": "minor", "+mj-cs": "major"}
+
+
+def _cell_family(cell, theme: dict | None) -> str | None:
+    """The typeface a table cell really renders in: what its own runs name, resolved through
+    the theme placeholders, and the theme's body face where a run names nothing."""
+    for paragraph in cell.text_frame.paragraphs:
+        for run in paragraph.runs:
+            family = _resolve_family(run.font.name, theme)
+            if family:
+                return family
+    return (theme or {}).get("minor")
+
+
+LAYOUT_MIN_MARGIN = 0.5      # inch from the slide edge; a deck may hold itself to more
+LAYOUT_MIN_PT = 12.0         # the lowest size still readable on a shared screen
+LAYOUT_MIN_PAD = 0.08        # inch between text and the edge of the filled box it sits in
+
+
+def layout_check(deck_path: Path, slide_no: int | None = None, min_margin: float = None,
+                 min_pt: float = None, min_pad: float = None) -> int:
+    """Three faults that every other check here is blind to, because they are about where a
+    shape sits rather than what is in it.
+
+    `overflow-check` reads the box; this reads where the box is. A card that runs past the
+    slide edge, a caption at 8 pt, a heading whose text touches the edge of its own fill:
+    all three paint, none of them wrap, and none of them is an overlap. Found 2026-08-26
+    while building the wireframe library, where the first run reported 440 of them across
+    21 slides and every single one had passed the existing checks.
+
+    The floors are deliberately low. This says "nobody meant that", not "this is the house
+    style": a deck that holds itself to wider margins passes its own numbers in.
+    """
+    min_margin = LAYOUT_MIN_MARGIN if min_margin is None else min_margin
+    min_pt = LAYOUT_MIN_PT if min_pt is None else min_pt
+    min_pad = LAYOUT_MIN_PAD if min_pad is None else min_pad
+    deck = Presentation(str(deck_path))
+    breite, hoehe = inches(deck.slide_width), inches(deck.slide_height)
+    slides = ([(slide_no, deck.slides[slide_no - 1])] if slide_no
+              else list(enumerate(deck.slides, start=1)))
+    problems, geprueft = [], 0
+    for index, slide in slides:
+        for shape, _rect in _leaf_rects(slide.shapes):
+            if shape.left is None or shape.width is None:
+                continue
+            geprueft += 1
+            links, oben = inches(shape.left), inches(shape.top)
+            rechts, unten = links + inches(shape.width), oben + inches(shape.height)
+            if links < -0.02 or oben < -0.02 or rechts > breite + 0.02 or unten > hoehe + 0.02:
+                problems.append(
+                    "slide %d: '%s' runs off the slide (%.2f/%.2f to %.2f/%.2f on %.2f x %.2f)"
+                    % (index, shape.name, links, oben, rechts, unten, breite, hoehe))
+            elif min(links, oben, breite - rechts, hoehe - unten) < min_margin - 0.02:
+                problems.append(
+                    "slide %d: '%s' sits %.2f inch from the slide edge, under the %.2f floor"
+                    % (index, shape.name, min(links, oben, breite - rechts, hoehe - unten),
+                       min_margin))
+            if not shape.has_text_frame or not text_of(shape):
+                continue
+            for groesse in sizes_in(shape):
+                if groesse < min_pt - 0.01:
+                    problems.append(
+                        "slide %d: '%s' carries %g pt text, under the %g pt floor: '%s'"
+                        % (index, shape.name, groesse, min_pt, text_of(shape)[:24]))
+                    break
+            gefuellt = False
+            try:
+                gefuellt = shape.fill.type == 1
+            except Exception:  # noqa: BLE001 -- a shape without a fill type is simply not filled
+                pass
+            marker = inches(shape.width) < 1.0 and len(text_of(shape)) <= 4
+            rand = inches(shape.text_frame.margin_left or 0)
+            if gefuellt and not marker and rand < min_pad - 0.005:
+                problems.append(
+                    "slide %d: '%s' sets its text %.2f inch from its own filled edge, under the "
+                    "%.2f floor" % (index, shape.name, rand, min_pad))
+    for problem in problems:
+        print(f"FAIL: {problem}")
+    print(f"{geprueft} shape(s) checked on {len(slides)} slide(s), {len(problems)} layout fault(s) "
+          f"[off slide, margin under {min_margin:g}in, type under {min_pt:g}pt, "
+          f"padding under {min_pad:g}in]")
+    return 1 if problems else 0
+
+
+def _resolve_family(name: str | None, theme: dict | None) -> str | None:
+    """The real typeface behind what a run names.
+
+    A run in a deck built from a template does not carry "Montserrat", it carries `+mn-lt`, the
+    theme's own placeholder for the body face. Passed on unchanged, no font file matches it, so
+    every measurement returned None and every check that depends on one went quiet: `align-check`
+    reported nothing on a built deck for the same reason `overflow-check` measured nothing. Found
+    2026-08-26 while chasing the second of those.
+    """
+    if not name:
+        return (theme or {}).get("minor")
+    rolle = _THEME_PLACEHOLDER.get(name.strip().lower())
+    if rolle:
+        return (theme or {}).get(rolle)
+    return name
+
+
+def _theme_fonts(deck_path: Path) -> dict:
+    """The major and minor latin typefaces this deck's theme declares."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(deck_path) as z:
+            themes = sorted(n for n in z.namelist() if re.match(r"ppt/theme/theme\d+\.xml$", n))
+            if not themes:
+                return {}
+            xml = z.read(themes[0]).decode("utf-8", "ignore")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return {}
+    out = {}
+    for rolle, tag in (("major", "majorFont"), ("minor", "minorFont")):
+        treffer = re.search(r"<a:%s>.*?<a:latin[^>]*typeface=\"([^\"]+)\"" % tag, xml, re.S)
+        if treffer and treffer.group(1):
+            out[rolle] = treffer.group(1)
+    return out
+
+
+def _theme_font(deck_path: Path) -> str | None:
+    """The body typeface this deck's own theme names.
+
+    A run that does not name a font is not fontless: it inherits, and what it inherits is what
+    PowerPoint reads out of the theme. Without this the measurement gave up on every built deck,
+    where the runs carry no explicit family, which is exactly the file that needs checking. This
+    reads the deck's own declaration, so it stays measured rather than assumed.
+    """
+    import zipfile
+    try:
+        with zipfile.ZipFile(deck_path) as z:
+            themes = sorted(n for n in z.namelist() if re.match(r"ppt/theme/theme\d+\.xml$", n))
+            if not themes:
+                return None
+            xml = z.read(themes[0]).decode("utf-8", "ignore")
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return None
+    treffer = re.search(r'<a:minorFont>.*?<a:latin[^>]*typeface="([^"]+)"', xml, re.S)
+    return treffer.group(1) if treffer and treffer.group(1) else None
+
+
+def _frame_lines(rahmen, breite_emu, groessen, fallback_family: dict | None = None) -> float | None:
+    """Lines a text frame really takes in a given width. Shared by shapes and table cells, because
+    a cell overflows exactly the way a box does and the arithmetic must not differ between them."""
+    links = inches(rahmen.margin_left if rahmen.margin_left is not None else 91440)
+    rechts = inches(rahmen.margin_right if rahmen.margin_right is not None else 91440)
+    breite_in = inches(breite_emu) - links - rechts
+    if breite_in <= 0:
+        return None
+    ersatz_groesse = max(groessen or [0.0])
+    zeilen = 0.0
+    for paragraph in rahmen.paragraphs:
+        text = "".join(r.text for r in paragraph.runs)
+        if not text.strip():
+            zeilen += 1
+            continue
+        size = max((r.font.size.pt for r in paragraph.runs if r.font.size), default=0.0) or ersatz_groesse
+        family = _resolve_family(
+            next((r.font.name for r in paragraph.runs if r.font.name), None), fallback_family)
+        bold = any(r.font.bold for r in paragraph.runs)
+        if not size:
+            return None
+        real = _real_ink_bbox(text, family, size, bold)
+        if real is None:
+            return None
+        # A line breaks between words, never inside one. Without this a single wide glyph, a "2" at
+        # 54 pt in a narrow box, counted as two lines and was reported as an overflow. It cannot
+        # wrap; it paints past its box sideways, which is what `_painted_rect` handles.
+        woerter = len(text.split())
+        gebrochen = math.ceil(real[1] / breite_in)
+        zeilen += max(1.0, min(float(gebrochen), float(woerter)))
+    return zeilen or None
+
+
+def _lines_needed(shape, fallback_family: dict | None = None) -> float | None:
+    """How many lines this shape's text really takes in its own box width, or None if it cannot
+    be measured on this machine.
+
+    Measured, not counted: a character count says "Plattform- & Virtualisierungsstrategien" fits a
+    7.09 inch box at 26 pt, and the render says it wraps. The width comes from the same font file
+    the deck asks for, through `_real_ink_bbox`, which is what `align_check` already trusts. Where
+    the font cannot be resolved this returns None and the shape is left out, never assumed to fit.
+    """
+    # The insets, not the box. PowerPoint lays the text out inside the frame's margins, 0.1 inch
+    # left and right by default, and the line breaks against that width. Measured on the reported
+    # case: the title needs 6.96 inch, the box is 7.09 wide and looks roomy, and the text area is
+    # 6.89, so it wrapped. Ignoring the insets makes the check agree with the geometry and disagree
+    # with the render, which is the failure it exists to catch.
+    return _frame_lines(shape.text_frame, shape.width, sizes_in(shape), fallback_family)
+
+
+def overflow_check(deck_path: Path, slide_no: int | None) -> int:
+    """Text that needs more height than its own box has.
+
+    `overlap-check` compares the boxes two shapes declare, so it is blind to the case where one
+    shape's text wraps past its own box and lands on the shape below: the geometry still says they
+    do not touch, and the render says otherwise. Found 2026-08-26 on a real deck, where a 26 pt
+    title wrapped to a second line and sat on the claim under it, letters on letters, while
+    overlap-check reported 1134 pairs and no overlap. Only looking at the render caught it.
+
+    Two things this deliberately does not do. It does not use `capacity()`, the character count
+    `build` uses to decide whether text fits a slot: measured against a finished deck that produced
+    31 findings on a reference deck its owner had corrected by hand, and missed the one case that
+    was actually broken. And it stays quiet where the text shrinks to fit, since nothing can
+    overflow there. A shape whose font cannot be measured is left out, never called clean.
+    """
+    deck = Presentation(str(deck_path))
+    slides = [(slide_no, deck.slides[slide_no - 1])] if slide_no else list(enumerate(deck.slides, start=1))
+    theme = _theme_fonts(deck_path)
+    problems, checked, unmeasured = [], 0, 0
+    for index, slide in slides:
+        for shape, _rect in _leaf_rects(slide.shapes):
+            if not shape.has_text_frame or not text_of(shape):
+                continue
+            if shape.text_frame.auto_size == MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE:
+                continue
+            zeilen = _lines_needed(shape, theme)
+            if zeilen is None:
+                unmeasured += 1
+                continue
+            checked += 1
+            size = max(sizes_in(shape) or [12.0])
+            noetig = zeilen * size * 1.2 / 72.0
+            noetig += inches(shape.text_frame.margin_top or 0) + inches(shape.text_frame.margin_bottom or 0)
+            hoch = inches(shape.height)
+            # Only a wrap counts. A single line in a box a tenth of an inch shorter than its own
+            # line height is a design choice and paints fine; reporting it buried the one finding
+            # that mattered under a symbol in a tight box. The damage this check exists for is the
+            # second line, which lands on whatever sits below.
+            if zeilen > 1 and noetig > hoch + 0.02:
+                problems.append(
+                    "slide %d: '%s' needs about %.2f inch for %d line(s) at %.0f pt, its box is "
+                    "%.2f inch high"
+                    % (index, text_of(shape)[:24], noetig, int(zeilen), size, hoch))
+        # A battlecard is mostly a table, and a cell overflows exactly the way a box does: the
+        # fourth line of a pitch lands on the row below and takes its headings with it. Nothing saw
+        # that, because every check here walks shapes and a cell is not one. Reported from the field
+        # 2026-08-26 on a file the user had already approved, with two headings hidden in the render.
+        # A battlecard is mostly a table, and nothing here saw inside one: every check walks shapes,
+        # and a cell is not a shape. Reported from the field 2026-08-26 on a file the user had
+        # already approved, where a pitch ran to a fourth line and covered the two headings below.
+        #
+        # Measured with `cell_capacity`, not with the line arithmetic above. Two attempts at
+        # measuring a cell by height were thrown away first: a row's stated height is a minimum,
+        # PowerPoint grows the row and pushes the rest down, so height says almost nothing. Both
+        # attempts reported an overflow on a battlecard that renders correctly, and neither told the
+        # reported case apart from the clean one. `cell_capacity` is calibrated against real decks
+        # and is what `build` already refuses on; the reported cell held 568 characters in a slot
+        # measured at 372, which this catches and height did not.
+        for shape in slide.shapes:
+            if not getattr(shape, "has_table", False):
+                continue
+            table = shape.table
+            for r in range(len(table.rows)):
+                for c in range(len(table.columns)):
+                    zelle = table.cell(r, c)
+                    if zelle.is_spanned or not zelle.text_frame.text.strip():
+                        continue
+                    breite = table.columns[c].width or 0
+                    hoehe = table.rows[r].height or 0
+                    if not breite or not hoehe:
+                        continue
+                    raum = cell_capacity(zelle, breite, hoehe,
+                                         _cell_family(zelle, theme))
+                    if raum <= 0:
+                        continue
+                    checked += 1
+                    text = zelle.text_frame.text.strip()
+                    if len(text) > raum:
+                        problems.append(
+                            "slide %d: cell r%dc%d holds about %d characters and carries %d, so it "
+                            "grows the row and covers what sits below: '%s'"
+                            % (index, r + 1, c + 1, raum, len(text), text[:40]))
+    for problem in problems:
+        print(f"FAIL: {problem}")
+    rest = f", {unmeasured} not measurable" if unmeasured else ""
+    print(f"{checked} text box(es) and cell(s) checked on {len(slides)} slide(s), "
+          f"{len(problems)} overflow(s){rest}")
+    return 1 if problems else 0
+
+
+def slots(deck_path: Path, slide_no: int | None) -> int:
+    """The fillable places in a deck that already exists, by name, with what stands there now.
+
+    `show` does this for a harvested library. This does it for any file, which is the case that was
+    missing: changing the wording of a finished deck needed either a full rebuild from a library or
+    a purpose-written python-pptx script, and the second is what kept happening. The names printed
+    here are what `fill` takes.
+    """
+    deck = Presentation(str(deck_path))
+    paare = [(slide_no, deck.slides[slide_no - 1])] if slide_no else list(enumerate(deck.slides, start=1))
+    gesamt = 0
+    for index, slide in paare:
+        gefunden = slot_names(slide)
+        print(f"Slide {index}: {len(gefunden)} slot(s)")
+        for name in sorted(gefunden):
+            eintrag = gefunden[name]
+            text = " ".join(str(eintrag["text"]).split())
+            print(f"   {name:<22} holds ~{eintrag['capacity']:>4} chars   now {len(eintrag['text']):>4}"
+                  f"   {text[:48]}")
+        gesamt += len(gefunden)
+        print()
+    print(f"{gesamt} slot(s) on {len(paare)} slide(s)")
+    return 0
+
+
+def fill(deck_path: Path, texts_path: Path, out: Path | None, strict: bool) -> int:
+    """Change the wording of a deck that already exists, in place or into a copy.
+
+    The whole mechanic for this was already here, in `fill_slots`: address a place by name, refuse
+    text that does not fit rather than shrink it. What was missing was a way in without a library,
+    so every wording change on a finished file became a one-off script. Written 2026-08-26 after
+    that had happened twice in one bundle.
+
+    The texts file is `{"1": {"slot": "new text"}}` by slide number, or a flat `{"slot": "text"}`
+    when the deck has one slide. A list of strings fills several paragraphs.
+    """
+    daten = json.loads(texts_path.read_text(encoding="utf-8"))
+    deck = Presentation(str(deck_path))
+    if daten and not any(str(k).isdigit() for k in daten):
+        if len(deck.slides) != 1:
+            print("slide-library: this deck has more than one slide, so the texts file has to name "
+                  "them: {\"1\": {...}, \"2\": {...}}", file=sys.stderr)
+            return 2
+        daten = {"1": daten}
+    problems = []
+    angefragt = 0
+    for schluessel, texte in daten.items():
+        try:
+            nummer = int(schluessel)
+            slide = deck.slides[nummer - 1]
+        except (ValueError, IndexError):
+            print(f"slide-library: there is no slide {schluessel} in this deck", file=sys.stderr)
+            return 2
+        angefragt += len(texte)
+        problems += [f"slide {nummer}: {p}" for p in fill_slots(slide, texte, {}, strict)]
+    ziel = out or deck_path
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    deck.save(str(ziel))
+    rest = f", {len(problems)} reported" if problems else ""
+    print(f"{angefragt} slot(s) asked for, written to {ziel}{rest}")
+    lose = dangling_refs(ziel)
+    for eintrag in lose:
+        print(f"FAIL: {eintrag}", file=sys.stderr)
+    if lose:
+        return 1
+    for problem in problems:
+        print(f"FAIL: {problem}", file=sys.stderr)
+    if problems:
+        print(f"{len(problems)} open. Shorten the text, or pass --loose to write it anyway.",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Harvest a brand's own slides, then fill copies of them.")
     sub = ap.add_subparsers(dest="command", required=True)
@@ -808,6 +1596,25 @@ def main(argv: list[str]) -> int:
     pn.add_argument("--slide", type=int, help="1-based; default searches every slide, errors if ambiguous")
     pn.add_argument("--into", type=Path, required=True)
 
+    psl = sub.add_parser("slots", help="the fillable places in a deck that already exists")
+    psl.add_argument("deck", type=Path)
+    psl.add_argument("--slide", type=int)
+
+    pfi = sub.add_parser("fill", help="change the wording of a deck that already exists")
+    pfi.add_argument("deck", type=Path)
+    pfi.add_argument("--texts", type=Path, required=True,
+                     help='JSON: {"1": {"slot": "new text"}}, or flat for a one-slide deck')
+    pfi.add_argument("--out", type=Path, help="write a copy instead of changing the file itself")
+    pfi.add_argument("--loose", action="store_true",
+                     help="write text that exceeds a slot's capacity anyway, still reported")
+
+    pr = sub.add_parser("refs-check", help="relationship ids a slide points at that its rels do not carry")
+    pr.add_argument("deck", type=Path)
+
+    pf = sub.add_parser("overflow-check", help="text that needs more room than its own box has")
+    pf.add_argument("deck", type=Path)
+    pf.add_argument("--slide", type=int)
+
     po = sub.add_parser("overlap-check", help="pairwise text-over-text check, ink-aware for wrap=none")
     po.add_argument("deck", type=Path)
     po.add_argument("--slide", type=int, help="1-based; default checks every slide")
@@ -815,6 +1622,29 @@ def main(argv: list[str]) -> int:
     pa = sub.add_parser("align-check", help="ink-left alignment between text frames sharing a box-left edge")
     pa.add_argument("deck", type=Path)
     pa.add_argument("--slide", type=int, help="1-based; default checks every slide")
+
+    pr = sub.add_parser("render", help="a picture of every slide, headless, any platform")
+    pr.add_argument("deck", type=Path)
+    pr.add_argument("--into", type=Path, required=True, help="directory for the pictures")
+    pr.add_argument("--dpi", type=int, default=110)
+
+    pm = sub.add_parser("migrate", help="put one slide into another deck, adopting its master, "
+                                       "theme and layout")
+    pm.add_argument("deck", type=Path, help="the deck the slide comes from")
+    pm.add_argument("--slide", type=int, required=True, help="1-based slide number in that deck")
+    pm.add_argument("--into", type=Path, required=True, help="the deck whose brand it should adopt")
+    pm.add_argument("--out", type=Path, required=True)
+    pm.add_argument("--layout", help="layout name on the target's brand master")
+    pm.add_argument("--scheme", help="colour scheme name that identifies the brand master")
+    pm.add_argument("--title", help="text for the layout's title placeholder")
+
+    pl = sub.add_parser("layout-check", help="shapes off the slide, under the margin, "
+                                             "under the type floor, or touching their own fill")
+    pl.add_argument("deck", type=Path)
+    pl.add_argument("--slide", type=int, help="1-based; default checks every slide")
+    pl.add_argument("--min-margin", type=float, help=f"inch from the slide edge (default {LAYOUT_MIN_MARGIN})")
+    pl.add_argument("--min-pt", type=float, help=f"smallest type allowed (default {LAYOUT_MIN_PT})")
+    pl.add_argument("--min-pad", type=float, help=f"inch inside a filled box (default {LAYOUT_MIN_PAD})")
 
     args = ap.parse_args(argv[1:])
     if args.command == "harvest":
@@ -826,15 +1656,41 @@ def main(argv: list[str]) -> int:
         return build(args.plan, args.out, args.library, strict=not args.loose)
     if args.command == "check":
         return check(args.library, args.task, args.vault)
-    if args.command in ("nudge", "overlap-check", "align-check") and not args.deck.is_file():
+    if args.command in ("nudge", "overlap-check", "align-check", "layout-check") and not args.deck.is_file():
         print(f"slide-library: no deck at {args.deck}", file=sys.stderr)
         return 2
     if args.command == "nudge":
         return nudge(args.deck, args.shape, args.dx, args.dy, args.slide, args.into)
+    if args.command == "slots":
+        return slots(args.deck, args.slide)
+    if args.command == "fill":
+        return fill(args.deck, args.texts, args.out, strict=not args.loose)
+    if args.command == "refs-check":
+        lose = dangling_refs(args.deck)
+        for eintrag in lose:
+            print(f"FAIL: {eintrag}")
+        print(f"{len(lose)} reference(s) into nothing")
+        return 1 if lose else 0
+    if args.command == "overflow-check":
+        return overflow_check(args.deck, args.slide)
     if args.command == "overlap-check":
         return overlap_check(args.deck, args.slide)
     if args.command == "align-check":
         return align_check(args.deck, args.slide)
+    if args.command == "render":
+        if not args.deck.is_file():
+            print(f"slide-library: {args.deck} is not a file", file=sys.stderr)
+            return 1
+        return render(args.deck, args.into, args.dpi)
+    if args.command == "migrate":
+        for pfad in (args.deck, args.into):
+            if not pfad.is_file():
+                print(f"slide-library: {pfad} is not a file", file=sys.stderr)
+                return 1
+        return migrate(args.deck, args.slide, args.into, args.out, args.layout, args.scheme,
+                       args.title)
+    if args.command == "layout-check":
+        return layout_check(args.deck, args.slide, args.min_margin, args.min_pt, args.min_pad)
     return show(args.library, args.slide)
 
 

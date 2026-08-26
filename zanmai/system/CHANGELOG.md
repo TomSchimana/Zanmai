@@ -4,6 +4,72 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.4.0] - 2026-08-26
+
+**A deck was built by describing it, never by looking at it. That was not a habit but a rule: the
+skill said no headless render is faithful, so nobody rendered, and faults that only a picture shows
+went out unseen. This version turns that around. `render` writes a picture of every slide on any
+platform, and the first time it ran against a freshly built set of 58 slides it found ten faults
+that every existing check had reported clean. Alongside it comes a library of 58 neutral wireframes,
+a way to put one of them into a brand's own deck, and three checks for faults that are about where
+a shape sits rather than what is in it.**
+
+### Added
+
+- **A wireframe library: 58 neutral slide patterns** in `zanmai/system/templates/wireframes/`.
+  Greyscale, built on theme roles and theme fonts only, never a literal colour or typeface, so
+  taking one into a brand is a theme swap rather than a rebuild. Each pattern says in plain words
+  what content it fits and what it is **not** for, what may vary and within which bounds, and comes
+  with a preview picture. They cover what a master never provides: card rows, paths, chevrons,
+  pyramids, funnels, matrices, status tables with timelines, charts with their reading beside them,
+  and the plain ones every deck needs and nobody designs twice, from a title slide to an agenda to
+  a bullet list.
+- **`slide-library.py migrate`** puts one slide into another deck. `clone` copies inside one deck,
+  where a colour difference would be a fault; this is the opposite case, where the slide arrives in
+  a file that already carries a brand and adopts its master, layouts, theme, fonts and logo. It
+  reports rather than silently fixing: literal colours that came across, a change of body face and
+  what that costs in capacity, and theme roles the brand has collapsed onto one value.
+- **`slide-library.py render`** writes one picture per slide, headless, no window, on macOS,
+  Windows and Linux. 58 slides in about six seconds. Where the renderer is missing it names the one
+  command that installs it, per platform, instead of leaving a deck unlooked-at.
+- **`slide-library.py layout-check`** finds three faults no other check here can see, because they
+  are about where a shape sits rather than what is in it: a shape past the slide edge, a shape
+  under the margin, and type under a readable size. Its first run against a new library reported 440.
+
+### Fixed
+
+- **A cloned slide lost every picture.** `clone` copied the shape XML and left the image parts
+  behind, so the new slide pointed at relationship ids it did not have. PowerPoint called such a
+  file damaged and stripped the shape; LibreOffice rendered it silently without the image, which is
+  why nothing caught it for so long. Found on a real customer deck.
+- **A table cell's capacity ignored the typeface.** The count came from one density figure for every
+  face, so it did not move when a brand's theme swapped the font, and a check that cannot see a
+  theme swap is quiet exactly where a hand-over goes wrong. Measured: Montserrat runs 16% wider than
+  Arial, so a cell that held 23 characters holds 20 after the swap and text that fitted overflows.
+- **A soft line break came out as `_x000B_` on the slide.** U+000B has to be written as `<a:br/>`.
+- **Files landed outside the vault when the host offered a scratch directory.** `zanmai/temp/` takes
+  precedence: a file outside the vault is invisible to the vault's own tools, and a source that
+  reads files refuses a path that leaves it.
+
+### Changed
+
+- **Writing into a system outside the vault is its own act.** It waits for an explicit yes in the
+  same message, and `outward-guard` hands the decision back to the user on any outward write,
+  recognised by the verb in the tool name rather than by a list of servers. A question asked in
+  chat is answered in chat.
+- **What was created unasked is taken back unasked.** Leaving the user to decide whether to delete
+  something they never asked for puts the cleanup on them.
+- **The cheapest route that does the job is a rule for every expert**, not one written into eleven
+  contracts: a short search where a short search suffices, resizing an image rather than generating
+  it again.
+- **A set single-page piece goes to PowerPoint**, whatever its page size. A flyer, a one-pager, a
+  poster: the file stays editable by the person who receives it, which a PDF does not, and it is
+  the only medium here with checks that measure the finished file. The line is not flyer against
+  document, it is whether the layout is set or the text flows.
+- **Changing the wording of a finished deck is not a build and never a script.** `slots` prints
+  every fillable place with what it holds; `fill` writes new wording into them without redrawing
+  anything.
+
 ## [0.3.7] - 2026-08-26
 
 **A vault that cannot tell you what happened yesterday is a vault with no memory, whatever else it
