@@ -7823,9 +7823,18 @@ def _hook_read_payload() -> dict:
     The payload is kept because stdin can only be read once, and the refusal note written after the
     guard returns needs the working directory in it to find the vault."""
     global _LAST_PAYLOAD
+    # A hook is always given its payload on a pipe. Run by hand from a terminal there is no payload
+    # and no end of file either, and a blocking read there would hang the thing that runs before
+    # every session start. So an interactive stdin is treated as "no payload" rather than waited on.
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            _LAST_PAYLOAD = {}
+            return _LAST_PAYLOAD
+    except (AttributeError, ValueError, OSError):
+        pass
     try:
         _LAST_PAYLOAD = json.loads(sys.stdin.read())
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, ValueError):
         _LAST_PAYLOAD = {}
     return _LAST_PAYLOAD
 
@@ -10753,6 +10762,11 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     all static state (`zanmai/user.md`, last-session-end
     marker, index entries) and prints a compact briefing
     that Claude Code injects into the session context as a system-reminder."""
+    # Read the payload once, up front. stdin can only be read once, and two things want it now: the
+    # vault fallback below and the model name at the end. `SessionStart` is the only event that
+    # carries `model` at all, and the docs say it is not guaranteed to be there, so everything that
+    # reads it treats it as optional.
+    payload = _hook_read_payload()
     vault = _session_find_vault_root()
     if vault is None:
         import os
@@ -10762,13 +10776,9 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             if (candidate / SYSTEM_DIR / "user.md").exists():
                 vault = candidate
     if vault is None:
-        try:
-            payload = json.loads(sys.stdin.read())
-            cwd_hint = payload.get("cwd") or payload.get("project_dir")
-            if cwd_hint and (Path(cwd_hint) / SYSTEM_DIR / "user.md").exists():
-                vault = Path(cwd_hint)
-        except (json.JSONDecodeError, ValueError, OSError):
-            pass
+        cwd_hint = payload.get("cwd") or payload.get("project_dir")
+        if cwd_hint and (Path(cwd_hint) / SYSTEM_DIR / "user.md").exists():
+            vault = Path(cwd_hint)
     if vault is None:
         # No initialised vault found by the user.md marker. Detect an
         # uninitialised Zanmai vault (system tree present, user.md absent) and
@@ -11066,6 +11076,21 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             f"`{MEMORY_DIR}/briefing.md` and the greet list above: address, the open items grouped "
             f"by time, nearest first, six lines at most, no ids and no paths."
         )
+
+    # Which model is running, one line at the end, because the user asked for it on 2026-08-13 and
+    # the answer changes what a turn can be trusted with. `SessionStart` is the only hook event that
+    # carries the field, there is no `$CLAUDE_MODEL` in the environment (measured: none), and
+    # `settings.json` holds the default rather than what a `/model` switch left running. So the
+    # payload is the one honest source, and where it does not carry the field the line is left out
+    # rather than guessed.
+    modell = payload.get("model")
+    if isinstance(modell, dict):
+        modell = modell.get("display_name") or modell.get("id") or modell.get("name")
+    if isinstance(modell, str) and modell.strip():
+        lines.append("")
+        lines.append(f"- End the greet with one line naming the model in the user's writing "
+                     f"language: this session runs on {modell.strip()}. The line is the whole of it, "
+                     f"no assessment and no recommendation.")
 
     ausgabe = "\n".join(lines)
     # Size guard. The host replaces hook output over its limit with a 2 KB preview plus a file

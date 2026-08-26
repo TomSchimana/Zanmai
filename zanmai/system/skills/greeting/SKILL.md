@@ -56,6 +56,12 @@ Hello <preferred-address>.
 
 Where the hook says the list is empty, the greet is one sentence plus a question.
 
+**The model line.** Where the hook names the model, the greet ends with one line saying which one is
+running, in the user's writing language, after the closing question. Just the name, no assessment and
+no recommendation. Where the hook does not name it, the line is left out; it is never guessed, and
+never read out of a settings file, which holds the default rather than what a `/model` switch left
+running.
+
 **If the greet list is not in the hook output at all**, the hook did not run. Compose from
 `zanmai/memory/briefing.md` in the same shape: the same time groups in the same order, six lines
 including the overflow, nearest first. Say in one line that the session started without its hook.

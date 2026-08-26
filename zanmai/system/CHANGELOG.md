@@ -4,6 +4,26 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.4.5] - 2026-08-26
+
+### Added
+
+- **The greet says which model is running**, one line at the end, name only. Asked for on 2026-08-13
+  and left open because the source was unclear and guessing it was worse than not having it. It is
+  the `model` field on the session-start payload, which is the only hook event that carries it and
+  carries it only sometimes. Where it is absent the line is left out rather than invented: there is
+  no `CLAUDE_MODEL` in the environment (measured, no such variable), and the settings file holds the
+  default rather than what a `/model` switch left running, so it would answer the wrong question
+  confidently.
+
+### Fixed
+
+- **The session-start hook no longer waits for input that will never come.** It now reads its payload
+  once, up front, because stdin can only be read once and two things want it. Run by hand from a
+  terminal there is no payload and no end of file either, so an interactive stdin is treated as "no
+  payload" instead of being waited on. Without that guard, the one thing that runs before every
+  session would hang there.
+
 ## [0.4.4] - 2026-08-26
 
 **The first greet after the greet was fixed still left out the most important thing in the vault.
