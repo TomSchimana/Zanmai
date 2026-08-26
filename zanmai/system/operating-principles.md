@@ -31,6 +31,11 @@ nobody asked for (Hard Rule 9), and a correction that would change what a senten
 
 A trivial single-file edit on a direct user instruction is executed without the gate.
 
+**Writing into a system outside the vault always waits for an explicit yes in the same message**,
+whatever its size (a Confluence page, an email, a ticket, a repository): others see it and an undo
+does not reach them. It is never how a question gets answered either; an ask in the chat is answered
+in the chat. **What was created unasked is taken back unasked.**
+
 ## 2. Source files are sacred
 
 User-authored content stays verbatim, on import, on move, and on any later edit. Add your own lines,
@@ -211,13 +216,11 @@ writes the open point to the work object (principle 13), and ends.
    Ten minutes in five-second steps, plain shell, same on every machine. No model turn runs while it
    blocks, so the wait costs nothing.
 
-   **Set the host's own timeout on this call, at its maximum.** A shell call carries a host limit
-   whether or not the command asks for one, often two minutes. In Claude Code the parameter is
-   `timeout` and its maximum is 600000 milliseconds, exactly one block.
-
-   Read the outcomes apart: signal file present means woken; absent with `cycles=118` means the block
-   elapsed; absent with a lower count means the host cut the call short, so fix the timeout and wait
-   again rather than reading it as silence.
+   **Set the host's own timeout on this call, at its maximum**, because a shell call carries a host
+   limit whether or not the command asks for one, often two minutes. In Claude Code that is
+   `timeout: 600000`, exactly one block. Read the outcomes apart: signal file present means woken;
+   absent with `cycles=118` means the block elapsed; absent with a lower count means the host cut the
+   call short, so fix the timeout and wait again rather than reading it as silence.
 4. **On the signal**, read `zanmai/temp/<task>/instruction.md`, delete the signal file, carry on.
 5. **On the user's word that it is finished**, write `state: done` and return.
 
@@ -287,11 +290,10 @@ The vault is plain files, so the tools are the ordinary ones. Reading, copying a
 refers to, goes through `zanmai.py`, because those operations have a second half: an index line, an
 activity-log entry, a path that has to stay reconstructible.
 
-- **Discarding is `zanmai.py file trash --path <path>`**, which files it under the trash by the day it
-  was discarded, keeping its whole path, so `zanmai.py file restore` puts it back. This is the route
-  for anything that looks like junk too. The `delete-guard` hook on the shell and `permission-guard`
-  on an emptying write refuse the alternatives. The only real deletion is the retention sweep after
-  thirty days, and it reaches only what the machine itself put aside.
+- **Discarding is `zanmai.py file trash --path <path>`**, filed under the trash by the day it went,
+  whole path kept, so `zanmai.py file restore` puts it back. This is the route for anything that looks
+  like junk too. `delete-guard` and `permission-guard` refuse the alternatives. The only real deletion
+  is the thirty-day sweep, and it reaches only what the machine itself put aside.
 - **`zanmai.py file archive <path>`** for something finished, same shape, same restore.
 - **`zanmai.py bundle remove-file`** for a bundle member: trashes and removes the index line in one act.
 - **`zanmai.py task add` / `task done`** for a task the user asked for (principle 8), the only route.
@@ -301,11 +303,9 @@ activity-log entry, a path that has to stay reconstructible.
   how many files it searched, so a zero reads as a zero. A plain recursive grep honours ignore files
   and has already produced a confident written falsehood.
 
-Zanmai depends on no particular editor: the folder names, the journal and the trash are its own.
-
-MCP servers are not loaded by default (slower than the CLI when measured, permanent token cost, a
-separate install for the user). Where the user has configured one it is usable: the CLI first, the MCP
-where it does something the CLI cannot.
+Zanmai depends on no particular editor. MCP servers are not loaded by default (measured slower than
+the CLI, permanent token cost, a separate install); where the user configured one it is usable, CLI
+first, MCP where it does something the CLI cannot.
 
 ## Permission buckets
 

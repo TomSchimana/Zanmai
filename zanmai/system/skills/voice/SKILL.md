@@ -1,6 +1,6 @@
 ---
 name: zanmai:voice
-description: Turn spoken notes dropped in `import/` into what they were meant to be, a journal entry, an instruction, an idea, or material to file. Runs in the background, uses the vault's own names so the transcript is right, corrects the text against the vault before acting on it, and comes back with what happened plus only the questions nobody else can answer. Triggers on `/zanmai-voice`, on the session-start hook reporting recordings waiting, or when the user says they recorded something.
+description: Turn spoken notes in `import/` into what they were meant to be. Triggers on `/zanmai-voice`, on the hook reporting recordings, or on "I recorded something".
 ---
 
 # voice

@@ -1,6 +1,6 @@
 ---
 name: zanmai:designer
-description: Method for designing a branded piece, let the structure follow the content, decompose the brand's templates into a concrete building-block kit, compose the new piece from that kit, and pass a fresh-eyes check against a hard checklist before delivery. Not taste written as prose; a procedure that makes the model's taste actually bind.
+description: Design a branded piece: structure follows content, decompose the brand's templates into a building-block kit, compose from it, then a fresh-eyes check before delivery.
 ---
 
 # designer

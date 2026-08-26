@@ -7,7 +7,7 @@
 # distribution_paths get overwritten on update.
 # user_immune_paths are never touched on update.
 
-distribution_version: "0.4.1"
+distribution_version: "0.4.2"
 phase: "phase-1"
 schema_version: "0.1.0"
 
@@ -92,8 +92,8 @@ distribution_paths:
   - "zanmai/system/skills/video/SKILL.md"
   - "zanmai/system/skills/video-review/SKILL.md"
   - "zanmai/system/skills/motion/SKILL.md"
+  - "zanmai/system/skills/greeting/SKILL.md"
   - "zanmai/system/experts/steve/steve.md"
-  - "zanmai/system/experts/steve/greeting.md"
   - "zanmai/system/experts/hank/hank.md"
   - "zanmai/system/experts/reed/reed.md"
   - "zanmai/system/experts/wong/wong.md"

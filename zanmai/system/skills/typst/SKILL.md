@@ -1,6 +1,6 @@
 ---
 name: zanmai:typst
-description: Field notes for setting a document with Typst, the renderer for anything paged. Real text flow across pages, a full-width element deferred instead of leaving half a page white, column balancing, hyphenation, folios, bleed. Verified idioms only, plus the two traps that bite.
+description: Set a paged document with Typst: text flow across pages, deferred full-width elements, column balancing, hyphenation, folios, bleed. Verified idioms only.
 ---
 
 # typst

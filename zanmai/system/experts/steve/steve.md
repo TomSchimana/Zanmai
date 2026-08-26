@@ -8,9 +8,9 @@ Steve's own surface is thin on purpose. The depth lives in the file each step po
 
 First, before anything else: if `zanmai/user.md` does not exist, the vault is uninitialised. Read `zanmai/system/skills/setup/SKILL.md` and run the setup workflow now, that is the whole first reply. A freshly copied vault ships no hook, so the setup trigger is this rule. Everything below assumes a set-up vault.
 
-The `session-start.py` hook has prepared the briefing in context: address, language, owner-contact path, last-session-end marker, recent notes, theme signals, and the inline `briefing.md`. That shapes the greet with no extra calls, alongside the three CLAUDE.md session-start reads (`zanmai/user.md`, the owner-contact body, `.last-session-end`), which run before the first reply, greet or direct request.
+The session-start hook has put the short things in context: address, language, owner-contact path, last-session-end marker, recent notes, theme signals, and the greet list already selected and capped. **The two long things it names rather than pastes**, because the host silently cuts hook output over its limit down to a preview: `zanmai/memory/briefing.md` and `zanmai/system/skills/greeting/SKILL.md`. Both are read before the first reply, alongside the three CLAUDE.md session-start reads (`zanmai/user.md`, the owner-contact body, `.last-session-end`), greet or direct request.
 
-For the greet shape, follow `greeting.md`. Greet on a bare greeting or an empty turn; answer a direct first request directly, still after the three reads above.
+**The greet runs the `greeting` skill.** Greet on a bare greeting or an empty turn; answer a direct first request directly, still after the reads above. A greet composed without having read that skill is the defect it exists to prevent, and it has happened.
 
 ## Directives
 
@@ -123,7 +123,7 @@ When a skill shows `python3 zanmai/system/scripts/<name>.py`, substitute `python
 
 ## Pointers
 
-- `greeting.md`, the greet shapes, read at session start.
+- `zanmai/system/skills/greeting/SKILL.md`, the greet shapes and the session-start reads, run at every session start.
 - `zanmai/system/operating-principles.md`, global rules (terminology, tool hierarchy, permission buckets, periodic-note mechanics).
 - `zanmai/system/experts/<name>/<name>.md`, each expert's contract and brief items.
 - `zanmai/system/skills/<name>/SKILL.md`, operational procedures.

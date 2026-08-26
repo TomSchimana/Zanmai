@@ -1,6 +1,6 @@
 ---
 name: zanmai:update
-description: Explicit update trigger for Pepper. The user invoked `/zanmai-update` to bring the vault's distribution to the current published version. The slash-command form is the strongest possible trigger; Steve dispatches Pepper in the same turn. Steve checks the version inline first and only dispatches Pepper when there is something to apply; Pepper then builds the update TL;DR for the user to approve, snapshots, applies, verifies, and rolls back on failure. The full workflow lives in Pepper's contract.
+description: Bring the vault's distribution to the published version, run by Pepper. Triggers on `/zanmai-update` and any ask to update Zanmai.
 ---
 
 # update

@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Timed visuals built as code and rendered headless: deciding whether a moment deserves one at all, the rules a jump-rendered timeline has to obey, what makes a design read as motion rather than as slides, and the failures that only surface once everything is assembled. Shared by anything that produces moving visuals.
+description: Timed visuals built as code and rendered headless: whether a moment deserves one, what a jump-rendered timeline must obey, and what only breaks once assembled.
 ---
 
 # motion

@@ -1,6 +1,6 @@
 ---
 name: classify-note
-description: Decide the `kind` (focus, doing, habit, knowledge, contact/person, contact/organization) and the bundle for an inbound note or set of notes. Used during `import-bundle` Step 2 or when Steve files standalone material. Returns kind plus bundle slug. Bundle is the default, single notes are the exception.
+description: Decide the `kind` (focus, doing, habit, knowledge, contact/person, contact/organization) and the bundle for inbound notes. Used in `import-bundle` and when filing.
 ---
 
 # classify-note

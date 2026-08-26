@@ -1,6 +1,6 @@
 ---
 name: zanmai:html
-description: Turning a design into a handoff-ready file through HTML, construction is free, so the work goes into the look; the format follows the piece, fonts are embedded, the preview is cheap. Only the things that actually bite, plus the edges where a native tool is the honest answer.
+description: Set a design as a handoff-ready file through HTML: format follows the piece, fonts embedded, preview cheap. Plus where a native tool is the honest answer.
 ---
 
 # html

@@ -1,6 +1,6 @@
 ---
 name: zanmai:research
-description: Explicit research trigger for Reed. Used when the user invokes `/zanmai-research <topic>`. The command form removes the natural-language guesswork around whether a topic needs Reed or model knowledge. Steve runs the mandatory pre-dispatch brief, gets user confirmation, then dispatches Reed via the `Agent` tool. Output lands per CLAUDE.md Hard Rule 9 (reference versus read-once filing kind, general-to-specific theme path). On finish, follow Hard Rule 10 (one-paragraph summary plus path plus offer to open).
+description: Sourced research with citations, run by Reed. Triggers on `/zanmai-research`, "find out", "what is out there", "what does it cost".
 ---
 
 # research

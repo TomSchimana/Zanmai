@@ -1,6 +1,6 @@
 ---
 name: brief
-description: Build the handover to an expert, and get what is missing by asking rather than by assuming. Two blocks, the user's own words and what Steve concluded from them, kept apart so the expert can tell them apart. Where the first block is too thin for the job, run the question rounds below. Triggers before any dispatch whose inputs are incomplete, and on "grill me", "stress-test this", "ask me what you need".
+description: Build the handover to an expert: two labelled blocks, the user's words and Steve's conclusion. Before any dispatch with thin inputs, and on "grill me".
 ---
 
 # brief

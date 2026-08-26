@@ -1,6 +1,6 @@
 ---
 name: zanmai:connection
-description: Overview and use of connections to sources outside the vault, whatever the host machine already exposes (an MCP server, a local CLI), plus setting one up where it is needed. Connections are Wong's domain: Steve dispatches Wong, which drives it as a conversation and guards its security. The user never types subcommands or slugs, they say what they want, Wong uses what the host exposes.
+description: Use and set up connections to sources outside the vault: MCP server, local CLI, credentialed source. Wong's domain. Triggers on `/zanmai-connection`.
 ---
 
 # connection

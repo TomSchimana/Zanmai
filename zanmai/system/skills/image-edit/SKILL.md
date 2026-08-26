@@ -1,6 +1,6 @@
 ---
 name: image-edit
-description: Loki's local pixel workbench, deterministic image edits that need no model and cost nothing to run, convert (incl. WebP), resize, rotate, crop, grayscale, composite, optimize, and batch a whole folder; plus colour grading (a .cube LUT or matching a reference image) and RAW develop where the host has the libraries. Prefer this to regenerating whenever the pixels already exist.
+description: Local image edits needing no model: convert, resize, crop, composite, optimize, batch a folder, colour-grade, RAW develop. Prefer it to regenerating.
 ---
 
 # image-edit

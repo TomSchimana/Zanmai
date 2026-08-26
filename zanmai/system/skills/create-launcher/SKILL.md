@@ -1,6 +1,6 @@
 ---
 name: zanmai:create-launcher
-description: Build a double-clickable starter for this vault, an app icon that opens a terminal already in the right folder and running Claude. Used when the user asks for an icon, an app, a launcher or a shortcut to start Zanmai, in any phrasing and any language, at any point in a session, and offered once as an optional step at the end of first-time setup. Wraps `zanmai/system/scripts/zanmai.py launcher`.
+description: Build a double-clickable starter for this vault. Triggers on any ask for an icon, app, launcher or shortcut to start Zanmai, and once as an optional step after setup.
 ---
 
 # create-launcher

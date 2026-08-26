@@ -1,6 +1,6 @@
 ---
 name: setup
-description: First-time Zanmai vault setup. Used when `zanmai/user.md` does not exist, or when the user asks for an initial install or first run. Drives an interactive dialogue, then calls `zanmai/system/scripts/zanmai.py setup init` to create folders and `zanmai/user.md`.
+description: First-time vault setup. Runs when `zanmai/user.md` does not exist, or on any ask for an initial install or first run. Dialogue, then `zanmai.py setup init`.
 ---
 
 # setup

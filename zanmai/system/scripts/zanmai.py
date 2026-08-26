@@ -5756,6 +5756,27 @@ _SKILL_SYMLINK_MAP: list[tuple[str, str]] = [
     ("zanmai-voice", "voice"),
     ("zanmai-write", "write"),
     ("zanmai-grill-me", "brief"),
+    ("zanmai-greeting", "greeting"),
+    # Below: the skills that carry the craft. They shipped for months with no adapter, which meant
+    # the host never offered them and they were reached only when a contract line happened to be
+    # remembered at the right moment. A skill the host cannot see is a file, not a capability. The
+    # slash form is a side effect of registering; the point is the `description`, which is what the
+    # host shows the model when it is deciding what this job needs.
+    ("zanmai-classify-note", "classify-note"),
+    ("zanmai-content-brief", "content-brief"),
+    ("zanmai-design", "designer"),
+    ("zanmai-powerpoint", "powerpoint"),
+    ("zanmai-html", "html"),
+    ("zanmai-typst", "typst"),
+    ("zanmai-affinity", "affinity"),
+    ("zanmai-media", "media"),
+    ("zanmai-image-edit", "image-edit"),
+    ("zanmai-video", "video"),
+    ("zanmai-video-review", "video-review"),
+    ("zanmai-motion", "motion"),
+    ("zanmai-create-expert", "create-expert"),
+    ("zanmai-create-launcher", "create-launcher"),
+    ("zanmai-setup", "setup"),
 ]
 
 
@@ -5803,9 +5824,29 @@ def _install_agent_symlinks(vault_root: Path, agent_names: list[str]) -> None:
         if gewaehlt:
             fm = (re.sub(r"^model:.*$", f"model: {gewaehlt}", fm, count=1, flags=re.M)
                   if re.search(r"^model:", fm, re.M) else fm.rstrip() + f"\nmodel: {gewaehlt}")
+        # A reading list in execution order, not a pointer. "Read your contract" left it to the
+        # run to work out what else it needed and when, and what it did not think of, it did not
+        # read: the rule that turned a dispatch back sat in a file nobody opened at the moment of
+        # dispatch. Numbered steps that name the file and say when it applies are what a fresh
+        # context can actually follow.
         body = (
-            f"\n\nAdapter only. Read your full contract at `{source_rel}` and follow it before "
-            "acting, that file is authoritative. This file just makes you discoverable to the host."
+            f"\n\nAdapter only, so the host can find you. The procedure lives in the vault.\n\n"
+            f"## On every invocation, in order\n\n"
+            f"1. Read `{source_rel}`, your full contract. It is authoritative over anything here.\n"
+            f"2. Read `{SYSTEM_MATERIAL_DIR}/operating-principles.md` for the rules that hold across "
+            f"every expert: approval before write, source files, indexing and logging, how a reply "
+            f"reads.\n"
+            f"3. Read the skills your contract names for this job, at the point the job needs them, "
+            f"from `{SYSTEM_MATERIAL_DIR}/skills/<name>/SKILL.md`. Anything longer than a line that "
+            f"gets written for the user goes through the `write` skill, whoever runs it.\n\n"
+            f"## Cold start\n\n"
+            f"Your context is fresh every time. What you were not handed, you do not know. Where the "
+            f"brief is too thin to act on, say so in the return rather than inventing the missing "
+            f"half: you run in the background and have nobody to ask.\n\n"
+            f"## What you return\n\n"
+            f"One status line, then the paths of every file you wrote, then anything you parked for "
+            f"the user, then anomalies. Your final text is the return value, not a message to a "
+            f"person."
         )
         p = agents_dir / f"{name}.md"
         if p.exists() or p.is_symlink():
@@ -10458,6 +10499,14 @@ _SESSION_DAILY_WINDOW_DAYS = 7
 _SESSION_WEEKLY_WINDOW_DAYS = 28
 _SESSION_MONTHLY_WINDOW_DAYS = 92
 
+# What the session-start hook may print. The host caps hook output at 10,000 characters and
+# replaces anything longer with a 2 KB preview plus a path to a file, without telling the model
+# that it is looking at a fragment. The cap is undocumented in the hooks reference and the two
+# reports about it (anthropics/claude-code #44086, #70460) are closed as not planned, so this is
+# ours to stay under. The budget sits below the cap rather than at it: what the hook prints grows
+# with the vault, and the margin is what keeps a busy vault from silently crossing the line.
+_HOOK_OUTPUT_BUDGET = 9000
+
 
 def _session_find_vault_root() -> Path | None:
     """Walk upward from cwd to find a folder that has zanmai/user.md."""
@@ -10942,18 +10991,27 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     if stale.exists():
         lines.append("- `zanmai/memory/.index-stale` marker is set. Refresh `zanmai.py index rebuild` + `zanmai.py index patterns` before any theme query.")
 
+    # The briefing is named, never pasted. Embedding it put the payload over the host's
+    # hook-output limit, and everything past that limit is replaced by a 2 KB preview the
+    # model cannot tell is incomplete. Measured on 79 real starts in a live vault: every
+    # single one exceeded the limit, the greet list and the greet shape sat past it, and
+    # the greet was composed from the briefing's first two kilobytes instead. A path plus
+    # one read is cheaper than a greet built on a fragment.
     briefing_path = vault / MEMORY_DIR / "briefing.md"
     if briefing_path.exists():
         try:
-            briefing_text = briefing_path.read_text(encoding="utf-8")
+            briefing_size = briefing_path.stat().st_size
         except OSError:
-            briefing_text = ""
-        if briefing_text.strip():
-            lines.append("")
-            lines.append("---")
-            lines.append("Below is the pre-built briefing (already synthesised, enough to shape the greet with no extra reads). It does NOT replace the three CLAUDE.md session-start reads (`zanmai/user.md`, the owner-contact body, `.last-session-end`), which run before the first reply whether the turn opens with a greet or a direct request:")
-            lines.append("")
-            lines.append(briefing_text)
+            briefing_size = 0
+        lines.append("")
+        lines.append("---")
+        lines.append(
+            f"- The pre-built briefing is at `{MEMORY_DIR}/briefing.md` ({briefing_size} bytes): what is due, "
+            "what happened since the last close, current state, open items. **Read that file before the first "
+            "reply.** It does not replace the three CLAUDE.md session-start reads (`zanmai/user.md`, the "
+            "owner-contact body, `.last-session-end`), which run whether the turn opens with a greet or a "
+            "direct request."
+        )
     else:
         lines.append("- `zanmai/memory/briefing.md` does not exist yet. Run `zanmai.py memory briefing` once to build the first version.")
 
@@ -10970,49 +11028,48 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
         lines.append("---")
         lines.extend(greet_lines)
 
+    # The greet shape is named, never pasted. A hand-carried copy of it is what pushed the
+    # payload past the host's hook-output limit, and past that limit the model sees a 2 KB
+    # preview with no sign that anything is missing. One file decides the shape; this hook
+    # points at it and the reply reads it.
     lines.append("")
-    greeting_path = vault / SYSTEM_MATERIAL_DIR / "experts" / "steve" / "greeting.md"
-    try:
-        greeting_full = greeting_path.read_text(encoding="utf-8") if greeting_path.exists() else ""
-    except OSError:
-        greeting_full = ""
-    # Verbatim, never paraphrased here: a hand-kept second copy of the greet shape
-    # is exactly how the six-line cap and the no-reverify rule were fixed in
-    # greeting.md and still never reached a real session. One file decides the
-    # shape, this hook only carries it into context.
-    # Only the section a normal, already-set-up session needs: the onboarding and
-    # empty-vault branches (`## First session...`, `## Empty vault`) are for states
-    # this hook already detects separately, and including them here every single
-    # day just made every hook payload big enough to get cut to a preview, which is
-    # the one thing "so the greet needs zero further tool calls" was for.
-    # Matched on the stable prefix, not the full heading: the heading has been reworded once
-    # already, and a miss here silently ships the whole file instead of the one section.
-    match = re.search(r"(?ms)^## Regular session:.*?(?=^## Empty vault)", greeting_full)
-    greeting_text = match.group(0).strip() if match else greeting_full
-    if greeting_text.strip():
-        lines.append("---")
-        lines.append(f"Greet shape, verbatim from `{SYSTEM_MATERIAL_DIR}/experts/steve/greeting.md`, "
-                      f"address the user as **{preferred}** where it applies:")
-        lines.append("")
-        lines.append(greeting_text)
+    lines.append("---")
+    greeting_rel = f"{SYSTEM_MATERIAL_DIR}/skills/greeting/SKILL.md"
+    if (vault / greeting_rel).exists():
+        lines.append(
+            f"- **Read `{greeting_rel}` and follow it before the first user-facing sentence.** It "
+            f"carries the greet shape, the mandatory reads and what a greet must never contain. "
+            f"Address the user as **{preferred}** where it applies."
+        )
     else:
         lines.append(
-            f"- `{SYSTEM_MATERIAL_DIR}/experts/steve/greeting.md` missing or unreadable, "
-            "read it directly before any greet."
+            f"- `{greeting_rel}` is missing. Say so in one line, then greet from "
+            f"`{MEMORY_DIR}/briefing.md` and the greet list above: address, the open items grouped "
+            f"by time, nearest first, six lines at most, no ids and no paths."
         )
-    lines.append("")
-    lines.append(
-        "Handed over, or found: that is the line for Reed. Pages the user hands over, by URL or by path, are Steve's own plain work. "
-        "He fetches them, reads them and answers in the chat, however many there are and whether or not the answer is a comparison between them. "
-        "Reed is dispatched where the sources still have to be found: `find out`, `what is out there`, `what does it cost these days`, a survey of a field, "
-        "or a source with its own pipeline (video, audio, podcast, repository), which Reed fetches with his own tools. "
-        "Where the user names who does it, that word decides and outranks this rule. "
-        "Before a Reed dispatch, state the planned brief in one user-facing sentence in the user's writing language, ask for confirmation, wait, "
-        "then dispatch via the `Agent` tool with `subagent_type: reed`. "
-        "See CLAUDE.md Hard Rule 9 and the Steve contract, Routing and Directive 4."
-    )
 
-    print("\n".join(lines))
+    ausgabe = "\n".join(lines)
+    # Size guard. The host replaces hook output over its limit with a 2 KB preview plus a file
+    # path, and a preview is worse than nothing: it carries enough to compose a plausible reply
+    # from and no sign that the rest was dropped. Measured in a live vault on 2026-08-26, every
+    # one of 79 recorded starts was over, so the greet had never once seen its own instructions.
+    # Kept well under the limit rather than at it: what this hook prints grows with the vault.
+    if len(ausgabe) > _HOOK_OUTPUT_BUDGET:
+        kopf = [l for l in lines if l.startswith("Zanmai session briefing")]
+        rest = [l for l in lines if l not in kopf]
+        gekuerzt = kopf + [
+            f"- **This briefing was cut**: it came to {len(ausgabe)} characters against a budget of "
+            f"{_HOOK_OUTPUT_BUDGET}, and the host silently replaces anything over its own limit with "
+            f"a 2 KB preview. The lines below are the ones that decide the first reply; the rest is "
+            f"in `{MEMORY_DIR}/briefing.md`. Say in one line that the session start was trimmed.",
+        ]
+        for zeile in rest:
+            if len("\n".join(gekuerzt)) + len(zeile) + 1 > _HOOK_OUTPUT_BUDGET:
+                break
+            gekuerzt.append(zeile)
+        ausgabe = "\n".join(gekuerzt)
+
+    print(ausgabe)
     return 0
 
 

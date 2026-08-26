@@ -1,6 +1,6 @@
 ---
 name: zanmai:create-expert
-description: Procedure for adding a new expert to the vault without drift, research the role first so the spec is not generic, draft a role-specific contract, place it update-safe under extensions, and wire every registration point in lockstep. Stan runs this; any agent can follow it.
+description: Add a new expert without drift: research the role, draft a role-specific contract, place it update-safe, wire every registration point in lockstep. Stan's procedure.
 ---
 
 # create-expert

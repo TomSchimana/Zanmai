@@ -1,6 +1,6 @@
 ---
 name: zanmai:content-brief
-description: Turn a solution's raw source material into a structured, audience-neutral content substrate that every downstream artifact (flyer, deck, one-pager, post) draws from. Carol runs this before producing any document. Not a finished document, not audience-tailored copy, the neutral, source-grounded base.
+description: Turn raw material into an audience-neutral content substrate every later artifact draws from. Carol runs it before producing any document. Not finished copy.
 ---
 
 # content-brief

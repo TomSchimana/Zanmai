@@ -1,6 +1,6 @@
 ---
 name: zanmai:close-session
-description: Write the session hand-off when the user wraps a session. Triggers when the user asks to close, wrap or end the session in their writing language, or via `/zanmai-close-session`. Writes a hand-off log to `zanmai/logs/YYYY/MM/<timestamp>-<slug>.md` with four sections (Done, Next, Intent, Realignments) and graduates durable insights to `zanmai/memory/general.md`. Closes with a briefing rebuild so the next session starts ready.
+description: Write the session hand-off. Triggers on "close", "wrap", "end the session" in any language, or `/zanmai-close-session`. Log, insights, briefing rebuild.
 ---
 
 # close-session

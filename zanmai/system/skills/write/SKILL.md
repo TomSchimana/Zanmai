@@ -1,6 +1,6 @@
 ---
 name: write
-description: Write a document for the user, anything longer than a line that is not a filing operation, a design piece or a research report. Meeting notes, a summary of a recording, an overview of vault material, a handover, a letter, copy for a page. Settles what the document is for before the first sentence, and takes its level from a document that already works. Triggers on `/zanmai-write`, and on any ask whose answer is a document; every expert who writes pulls it, Steve, Ben, Reed and Carol.
+description: Write any document longer than a line that is not filing, design or research: notes, summary, overview, handover, letter, page copy. Triggers on `/zanmai-write`.
 ---
 
 # write

@@ -1,6 +1,6 @@
 ---
 name: zanmai:affinity
-description: Field notes for building natively in Affinity, fast, verified idioms and stumble warnings from real runs, plus the pre-flight ladder that starts the app or repairs a wedged scripting session. Accelerators for Carol's design work, not the boundary of what is allowed.
+description: Building natively in Affinity: verified idioms, stumble warnings, and the pre-flight that starts the app or repairs a wedged scripting session.
 ---
 
 # affinity

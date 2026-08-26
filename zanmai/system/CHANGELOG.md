@@ -4,6 +4,56 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.4.2] - 2026-08-26
+
+**The session start had never once been read in full. The host caps what a hook may put into context
+at 10,000 characters and silently replaces anything longer with a two-kilobyte preview plus a path to
+a file, with nothing in the preview to say the rest was dropped. Measured across all 79 recorded
+session starts in a vault in daily use: every single one was over, between 11,274 and 22,453
+characters. The greet list sat at character 11,466 and the greet shape at 12,378, so neither had ever
+arrived. What did arrive was the first two kilobytes of the briefing, which is enough to write a
+plausible greeting from and wrong in every particular. The greeting that exposed it carried no dates,
+no grouping, and a work-object id that the greet rules forbid by name, because the rule forbidding it
+sat past the cut.**
+
+### Fixed
+
+- **The session-start hook now names the two long things instead of pasting them**: the briefing and
+  the greet shape. On a real vault its output went from 16,444 characters to 3,519. The briefing alone
+  was 9,741 of them. One extra read at the start of a session is cheaper than a greeting built on a
+  fragment.
+- **A size guard in the hook**, plus a regression test that builds a vault whose briefing is well over
+  the cap and checks that the output still fits and still carries the greet instruction. Where the
+  hook ever has to trim, it says so in the reply rather than trimming quietly.
+- **Fifteen skills had no adapter and were invisible to the host**, among them `powerpoint`,
+  `designer`, `classify-note` and `write`. A skill is offered to the model through its adapter's
+  `description`; without one it is a file that gets used only when someone happens to remember a line
+  in a contract. All 26 are registered now.
+- **Skill descriptions are triggers again, not summaries**, and there is a gate on what they may cost
+  together. Registering those fifteen would have taken the text every session start carries from
+  4,214 to 9,186 characters, against a host budget that scales with the context window and truncates
+  the listing silently past it. That is the same failure this version exists to fix, one layer up, and
+  it was caught only because someone asked whether the work had been done properly. Rewritten, all 26
+  now cost 3,964 characters, less than the previous ten did, and `contract-budget.py` fails the build
+  if that total or any single description goes over.
+
+### Changed
+
+- **The greet is a skill.** `zanmai/system/skills/greeting/SKILL.md` replaces the greet section that
+  lived beside Steve's contract: the reads in execution order, the three shapes, and what a greet must
+  never contain. It is reachable as `/zanmai-greeting`, and the hook names it as the file to read
+  before the first sentence.
+- **An expert's adapter is a reading list, not a pointer.** It was one line saying "read your
+  contract", which left the run to work out what else it needed and when. It now names the contract,
+  the operating principles and the skills, in the order they apply, plus the cold-start rule and the
+  return shape.
+- **`CLAUDE.md` is a third smaller**, from 25,045 characters to 15,571, and every session pays for it.
+  The folder map keeps the parts that are rules and points at the documentation for the rest; the
+  command list is gone, because each skill carries its own trigger in its own `description` and a
+  second copy only drifts; the session-start sequence is now one line pointing at the greet skill.
+- **Writing into a system outside the vault** moved from the vault schema into operating principles
+  §1, where the rest of the approval rule already lived.
+
 ## [0.4.1] - 2026-08-26
 
 **Every dispatch to an expert was refused on the first try. `dispatch-guard` checks that a handover

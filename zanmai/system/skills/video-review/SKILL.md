@@ -1,6 +1,6 @@
 ---
 name: video-review
-description: Reading a video by pulling its frames: the two-pass review of a finished render before anyone else sees it, picking usable moments out of existing footage, and reading an editing style off a reference video. Runs in sub-agents, because frame dumps flood a context window.
+description: Read a video by pulling frames: the two-pass review of a render, picking usable moments out of footage, reading a style off a reference. Runs in sub-agents.
 ---
 
 # video-review

@@ -1,6 +1,6 @@
 ---
 name: zanmai:journal
-description: Capture freeform input into today's journal entry (or the week, month or year when named), and write the period rollups. Steve runs this skill inline, capture is lightweight and does not need a subagent. Triggered by `/zanmai-journal <text>`, by any equivalent "log this / trag das ein" intent, and at session start for a due rollup.
+description: Capture freeform input into today's journal entry, or a named period, and write rollups. Triggers on `/zanmai-journal`, any "log this" intent, a due rollup.
 ---
 
 # journal

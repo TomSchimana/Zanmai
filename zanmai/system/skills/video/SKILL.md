@@ -1,6 +1,6 @@
 ---
 name: video
-description: Luis's method for turning footage into a finished cut: transcription with word timing, the rough cut decided by reading, hiding the seams a cut leaves, captions in two classes, sound, reframing to another format, and one file per purpose at the end. The judgment layer; the mechanics are `zanmai.py video`.
+description: Turn footage into a finished cut: transcription with word timing, the rough cut decided by reading, seams, captions, sound, reframing. Luis's judgment layer.
 ---
 
 # video

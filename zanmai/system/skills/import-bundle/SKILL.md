@@ -1,6 +1,6 @@
 ---
 name: zanmai:import
-description: Import a source folder, zip or file into Zanmai bundles. Triggers when the user asks to file material from `import/` or an external path, or via `/zanmai-import`. Asks mode, scope and conflict-policy where the target state leaves them open, the rest smart-default. State changes go through `zanmai/system/scripts/zanmai.py`, the AI plans, the script executes.
+description: Import a folder, zip or file into Zanmai bundles. Triggers on any ask to file material from `import/` or an external path, or `/zanmai-import`.
 ---
 
 # import-bundle

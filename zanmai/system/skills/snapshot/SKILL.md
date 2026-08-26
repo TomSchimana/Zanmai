@@ -1,6 +1,6 @@
 ---
 name: zanmai:snapshot
-description: Record the vault as it is before a risky write, and put a file back from an earlier record. Used before bulk imports, moves across many bundles, body rewrites, or when the user asks for a backup or snapshot in their writing language, or via `/zanmai-snapshot`. Wraps `zanmai/system/scripts/zanmai.py snapshot`.
+description: Record the vault before a risky write, and restore from an earlier record. Triggers before bulk imports, cross-bundle moves, body rewrites, or `/zanmai-snapshot`.
 ---
 
 # snapshot

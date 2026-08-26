@@ -1,6 +1,6 @@
 ---
 name: media
-description: Loki's method for generating images and video, backend routing, the swappable model registry, prompt craft, the quality axes, cost control and lawful marking. The judgment layer. The runnable generate and labeling scripts are provisioned when a backend is wired.
+description: Generate images and video: backend routing, model registry, prompt craft, quality axes, cost control, lawful marking. Loki's judgment layer.
 ---
 
 # media

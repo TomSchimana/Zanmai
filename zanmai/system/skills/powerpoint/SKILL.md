@@ -1,6 +1,6 @@
 ---
 name: zanmai:powerpoint
-description: Native PowerPoint handling, fill a template or create new slides, fully headless (no app, no MCP). A .pptx is a ZIP of XML edited locally. Carol runs this to produce or fill decks. Native objects only; the CI lives in the master and layouts, not the theme alone.
+description: Native PowerPoint, fully headless: fill a template or build new slides. Triggers on any deck, slide or `.pptx` work. The CI lives in master and layouts.
 ---
 
 # powerpoint
