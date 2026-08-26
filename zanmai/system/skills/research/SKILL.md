@@ -28,6 +28,8 @@ The slash-command form is the strongest possible trigger. Steve does not second-
 
 3. Dispatch Reed via the `Agent` tool with `subagent_type: "reed"`. Reed gets the brief verbatim plus any clarifications from the confirmation turn.
 
+**The prompt carries the two labelled blocks** (`brief`), headed exactly `What the user said:` and `What I concluded:`. `dispatch-guard` checks for the first heading literally and refuses the dispatch without it.
+
 4. Reed runs the five-step research protocol independently in its own context (see `zanmai/system/experts/reed/reed.md`). Steve waits.
 
 5. Reed returns with the deliverable path, the TL;DR and any source material that is worth preserving (transcript, repo snippets, domain pages).

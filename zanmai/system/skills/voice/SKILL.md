@@ -78,6 +78,8 @@ The report is short and has three parts: how many notes and how long, what each 
 
 The session-start hook says how many recordings are waiting; it does not transcribe, because a hook that takes a minute is a session that starts in a minute. On the next turn Steve dispatches Reed in the background (`subagent_type: reed`, `run_in_background: true`) for the reading legs, so the user can carry on while it runs, and acts on what comes back.
 
+**The prompt carries the two labelled blocks** (`brief`), headed exactly `What the user said:` and `What I concluded:`. `dispatch-guard` checks for the first heading literally and refuses the dispatch without it.
+
 Everything up to the report happens without asking: transcribing, correcting, filing a journal entry, carrying out an instruction that was actually given. What waits is money nobody asked for, a missing tool or model to fetch, and a correction that changes what a sentence means.
 
 **When nobody is at the keyboard.** The run can be started on a schedule, and then the invocation says so. Nothing about the reading changes; three things about the ending do. Open points go to `zanmai.py work ask` instead of a question, because a question asked into an empty room stops the run for a day. The run does not park (operating-principles §12): nobody is there to wake it. And it closes itself through the `close-session` skill, which writes the log with `session_type: unattended`, so the next real session is told in one line what happened and what is waiting. Decisions are taken rather than deferred, in the knowledge that the report makes them easy to undo.

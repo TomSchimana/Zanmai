@@ -11,6 +11,8 @@ A connection is this vault reaching one source outside it, an MCP server or a lo
 
 `/zanmai-connection` (with or without extra words) reaches Steve, as does any natural request that needs an outside source ("what's in my calendar", "pull that wiki page"). The outside boundary is Wong's, so Steve dispatches Wong via the `Agent` tool with `subagent_type: "wong"`. Wong drives it as a conversation, the user speaks plainly, Wong translates; the user never types `scan` or a slug.
 
+**The prompt carries the two labelled blocks** (`brief`), headed exactly `What the user said:` and `What I concluded:`. `dispatch-guard` checks for the first heading literally and refuses the dispatch without it.
+
 ## Using a host source
 
 1. **Vault first.** If the answer is inside, point there and stop.

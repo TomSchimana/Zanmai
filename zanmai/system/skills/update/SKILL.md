@@ -17,7 +17,20 @@ The slash-command form is the strongest possible trigger. Steve dispatches Peppe
 
 2. **Nothing newer: one line, no dispatch.** Say the version they are on and that it is current, in their language, and stop. No expert is dispatched, no CHANGELOG is opened, nothing is verified a second time. A report with headings about an update that does not exist is noise.
 
-3. **Something newer: dispatch Pepper** via the `Agent` tool with `subagent_type: pepper`, passing the version pair the check reported. Pepper reads the CHANGELOG for what changed, snapshots, applies, verifies, and rolls back on failure. Steve relays her preview verbatim and asks for the go; the apply happens after the user's yes.
+3. **Something newer: dispatch Pepper** via the `Agent` tool with `subagent_type: pepper`, passing the version pair the check reported. **The prompt needs the two labelled blocks** (`brief`), and here they are short and always the same shape, so there is nothing to interview about:
+
+   ```
+   What the user said: /zanmai-update
+   What I concluded: bring this vault from <old> to <new>, the published release. Nothing else.
+   ```
+
+   Without the first heading, `dispatch-guard` refuses the dispatch. Measured in the field on the
+   first real `/zanmai-update` after the guard existed: the handover was the version pair alone, the
+   guard turned it back, and the turn was spent twice.
+
+   Pepper then reads the CHANGELOG for what changed, snapshots, applies, verifies, and rolls back
+   on failure. Steve relays her preview verbatim and asks for the go; the apply happens after the
+   user's yes.
 
 ## When to use
 

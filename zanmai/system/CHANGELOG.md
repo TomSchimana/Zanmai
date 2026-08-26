@@ -4,6 +4,25 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.4.1] - 2026-08-26
+
+**Every dispatch to an expert was refused on the first try. `dispatch-guard` checks that a handover
+carries two labelled blocks and looks for the heading `What the user said:` literally, but no skill
+that dispatches ever said so, and neither did Steve's contract. The rule lived in one place nobody
+reads at the moment of dispatch. Found in the field on the first real `/zanmai-update` after the
+guard existed: the handover was a version pair, the guard turned it back, and the turn was spent
+twice.**
+
+### Fixed
+
+- **The four skills that dispatch an expert now name the two blocks where the dispatch is
+  described**, with the exact headings the guard checks for: `update`, `research`, `voice` and
+  `manage-connections`. `update` carries the whole handover as a template, because there it is
+  always the same two lines and there is nothing to interview about.
+- **Steve's routing says the headings are literal**, not a matter of style. His contract described
+  passing the user's ask in their own words, which is the right instruction and does not tell anyone
+  that a specific wording is checked.
+
 ## [0.4.0] - 2026-08-26
 
 **A deck was built by describing it, never by looking at it. That was not a habit but a rule: the
