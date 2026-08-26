@@ -4,11 +4,23 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.4.7] - 2026-08-26
+
+### Changed
+
+- **An empty session-start payload is now said out loud.** The greet's model line is left out both
+  when the host sends no model and when nothing arrives on stdin at all, and from the outside those
+  two look identical. They are not: another `SessionStart` hook may have read stdin first. The hook
+  now names the empty case in one line, so the difference is visible the first time it matters
+  instead of being reconstructed afterwards.
+
 ## [0.4.6] - 2026-08-26
 
-**Two ways the session start could fail to happen at all, both found within an hour of shipping the
-version that introduced the first one. A hook that hangs or times out delivers nothing, not even the
-two-kilobyte preview this day was otherwise spent on, and the session opens blind.**
+**Two ways the session start could fail to happen at all. A hook that hangs or times out delivers
+nothing, not even the two-kilobyte preview this day was otherwise spent on, and the session opens
+blind. The two have different ages and that matters: the first was introduced by 0.4.5 an hour
+earlier, the second had been shipping quietly for several versions and only became visible when
+somebody measured the hook instead of reading the comment above it.**
 
 ### Fixed
 
@@ -18,7 +30,8 @@ two-kilobyte preview this day was otherwise spent on, and the session opens blin
   bitten; "probably" is the wrong kind of safe for the one script that runs before every session.
   There is now a two-second window instead of an unbounded read. The test suite found it by hanging
   on it, and a case that runs the hook against a pipe that never closes now holds it.
-- **The index rebuild no longer runs inside the hook.** Measured in a vault in daily use: the
+- **The index rebuild no longer runs inside the hook.** Older than the version that fixes it, and
+  not introduced by 0.4.5: the measurement covers 30 runs on 0.4.4 and earlier. Measured in a vault in daily use: the
   session-start hook has a median of 248 ms and a worst case of 8,452 ms, against a host timeout of
   10 seconds. The rebuild was the expensive part, sitting under a comment claiming it was sub-second
   on thousands of files. It is handed to a detached process now, and the hook does not wait: nothing

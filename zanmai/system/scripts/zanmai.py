@@ -11122,12 +11122,27 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # rather than guessed.
     modell = payload.get("model")
     if isinstance(modell, dict):
+        # The display name, never the id: "Opus 5 (1M context)" answers the user's question,
+        # "claude-opus-5[1m]" does not. Both exist at runtime and the greet must not take whichever
+        # arrives first, or it reads plausibly and stays wrong.
         modell = modell.get("display_name") or modell.get("id") or modell.get("name")
     if isinstance(modell, str) and modell.strip():
         lines.append("")
         lines.append(f"- End the greet with one line naming the model in the user's writing "
                      f"language: this session runs on {modell.strip()}. The line is the whole of it, "
                      f"no assessment and no recommendation.")
+    elif not payload:
+        # Nothing arrived on stdin at all. That is not the same as "the host sent no model", and
+        # without saying so the two are indistinguishable from the outside: the line is simply
+        # absent either way. It matters because another SessionStart hook may have drained stdin
+        # first. Toms machine has one: `herdr-agent-state.sh` runs `cat` into a temp file at line 13,
+        # seven lines before it exits for an unset `HERDR_ENV`, so it consumes stdin on every start
+        # whether or not that tool is in use. Whether hooks share one stdin or get their own is not
+        # documented; this line is what tells us which, the first time it matters.
+        lines.append("")
+        lines.append("- The session-start payload was empty, so the model is unknown and that line "
+                     "is left out. Not a fault by itself. Worth one look only if it persists: it "
+                     "can mean another SessionStart hook read stdin first.")
 
     ausgabe = "\n".join(lines)
     # Size guard. The host replaces hook output over its limit with a 2 KB preview plus a file
