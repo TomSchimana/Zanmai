@@ -84,7 +84,7 @@ CHAR_DENSITY = 42.0
 # Average glyph width of the face CHAR_DENSITY was calibrated against, in pixels per
 # character at 100 pt, measured on a reference sentence. Arial and Helvetica both sit here.
 # A face that runs wider carries fewer characters in the same box, and the density has to
-# follow: measured 2026-08-26, Montserrat runs 15.5% wider than Arial, so a cell that held
+# follow: Montserrat runs 15.5% wider than Arial, so a cell that held
 # 23 characters before a brand's theme was applied holds 20 after it. Without this the count
 # does not move at all when the typeface changes, and a check that cannot see a theme swap
 # is quiet exactly where a brand hand-over goes wrong.
@@ -194,7 +194,7 @@ def _every_leaf(shapes, tf=(1.0, 0.0, 1.0, 0.0)):
     what gives the text inside them its name.
 
     This exists because everything above worked on `slide.shapes`, which is the top level
-    only. Measured on a real corporate template 2026-08-27: `slots` found 6 places where
+    only. Measured on a corporate template: `slots` found 6 places where
     the deck has about 30, and one banded slide reported a single slot, its title, while
     five labelled bands sat on it. That template draws almost every rubric as a group
     inside a group, so the whole build chain -- harvest, slots, fill -- saw nothing.
@@ -285,7 +285,7 @@ def slot_names(slide) -> dict:
 
     # A template's rubrics are often laid out as a table rather than free text boxes; a table's
     # cells carry no `has_text_frame`, so they are invisible to everything above this point. Found
-    # 2026-08-24: a real Battlecard template was entirely tables, and harvest reported only a title
+    # a real Battlecard template was entirely tables, and harvest reported only a title
     # and a bar, which read as "no placeholders here" and was wrong.
     table_index = 0
     for shape in slide.shapes:
@@ -385,7 +385,7 @@ def _carry_relationships(new_slide, source_slide, element) -> None:
     relationship id. Deep-copying the element brings the first and leaves the second behind, so the
     copy carries `r:embed="rId2"` into a slide whose rels have no rId2. PowerPoint calls that file
     damaged and strips the shape; LibreOffice renders it silently without the image, which is why
-    every check and every render looked clean. Found 2026-08-26 on a deck built for a customer, with
+    every check and every render looked clean. Found on a finished deck, with
     the logo missing and the file repaired on open.
     """
     for el in element.iter():
@@ -499,7 +499,7 @@ def _shape_props(shape):
 def schema_check(deck_path: Path, slide_no: int | None = None) -> int:
     """Shapes PowerPoint will not draw, though every render shows them.
 
-    Found in the field 2026-08-27: on six slides of a finished deck the load-bearing shapes, a hub
+    Found in practice: on six slides of a finished deck the load-bearing shapes, a hub
     circle, a chevron chain, every bullet marker, were invisible in PowerPoint and complete in the
     file. The geometry had ended up before the position inside `a:spPr`, and against the schema
     PowerPoint drops the position and draws nothing. LibreOffice is tolerant there, so the control
@@ -556,7 +556,7 @@ def render(deck_path: Path, into: Path, dpi: int = 110) -> int:
     This exists because the alternative was nothing. `qlmanage` renders the first slide only,
     on macOS only, and puts itself in the dock while it runs; outside macOS there was no way
     to look at a deck at all, and a check that cannot look is a check that trusts its own
-    description. Measured 2026-08-26 while building the wireframe library: 58 slides rendered
+    description. Measured while building the wireframe library: 58 slides rendered
     in about 6 seconds, and the render found ten faults that every other check here reported
     clean -- shapes overlapping, a marker breaking over two lines, banding that was white on
     white. None of those wrap, none of them is a broken reference, and none of them shows up
@@ -618,7 +618,7 @@ def render(deck_path: Path, into: Path, dpi: int = 110) -> int:
 def brand_master(deck, scheme_name: str | None = None):
     """The master to build on, chosen by the colour scheme its own theme carries.
 
-    A deck can hold several masters and only one of them be the brand: measured 2026-08-26 on a
+    A deck can hold several masters and only one of them be the brand: measured on a
     real company template with three, two of which were stock Office. Picking a layout by name
     landed on the Office master and produced a slide that looked finished in the wrong colours,
     with nothing to show it was wrong. Without a name, the first master whose scheme is not
@@ -673,7 +673,7 @@ def migrate(source_path: Path, slide_no: int, target_path: Path, out: Path,
 
     # Where the brand is measured. The target is the default and the wrong default in the one case
     # that matters most: a deck built set by set starts empty, so the brand lives in another file
-    # and everything measured here finds nothing. Reported from the field 2026-08-27, where the
+    # and everything measured here finds nothing. Seen in practice, where the
     # first sets came out square and the later ones round, with nothing said either way.
     marke = brand_from or target_path
     marken_warnung = _theme_carries_the_brand(marke)
@@ -684,7 +684,7 @@ def migrate(source_path: Path, slide_no: int, target_path: Path, out: Path,
     vorhanden = len(lst)
     # This used to empty the target unconditionally, and it cost real work: two migrates in a row
     # do not accumulate that way, the second one throws the first one's slide away. Reported from
-    # the field 2026-08-27, with the built file lost because `--out` pointed at it. `--into` reads
+    # the field, with the built file lost because `--out` pointed at it. `--into` reads
     # as putting something in, and composing a deck out of several patterns is the actual use, so
     # appending is now what happens and emptying is a flag.
     if replace:
@@ -832,7 +832,7 @@ def suggest(library: Path, elements: int | None, order: str | None, movement: st
     Not a decision, a shortlist. The choice between the candidates is a judgement about this
     content, and it stays with the person making it; what this removes is the part that was never
     judgement, reading a few of 57 prose descriptions and taking the first that sounds plausible.
-    Reported from the field 2026-08-27: the pattern used for one piece was reused for a piece whose
+    Seen in practice: the pattern used for one piece was reused for a piece whose
     content had a different shape, and a plausible reason was written for both.
 
     The shape of the content is described first and on its own: how many things there are, whether
@@ -955,7 +955,7 @@ def extract(deck_path: Path, slides: list[int], out: Path) -> int:
 
     That third step is what this exists for. Deleting a navigation button's shape is not enough: the
     slide's own relationship to the slide it pointed at stays behind, and it keeps every part that
-    slide reaches alive in the file. Measured in the field 2026-08-27: 7.1 MB against 4.1 MB after
+    slide reaches alive in the file. Measured: 7.1 MB against 4.1 MB after
     the relationship was cut, fifteen foreign slide parts held by one leftover link. PowerPoint also
     calls a file damaged over a reference into nothing, so this is not only about size.
     """
@@ -1045,7 +1045,7 @@ def structure_check(deck_path: Path, slide_no: int, gegen: str, toleranz: float 
     that should be there is missing, and that is the failure they let through: a hub with four
     satellites and no hub, a stage band with the stages gone, two text columns with the areas that
     separated them dropped. All five checks reported clean on all three, correctly, because nothing
-    that remained was wrong. Reported from the field 2026-08-27, found by a person on the sixteenth
+    that remained was wrong. Seen in practice, found by a person on the sixteenth
     slide, after fifteen had been reported green.
 
     **A difference is not a fault.** A wireframe is a starting point, not a template to be copied:
@@ -1140,9 +1140,8 @@ def leftover_check(deck_path: Path) -> int:
     """What the file carries that is not the content: comments, speaker notes, animations, authors.
 
     A cloned slide brings its whole history along, and none of it shows in a render or in any
-    geometry check. Reported from the field 2026-08-27: a colleague's comment stood on a finished
-    customer slide, next to a notes page and the original's animations, and it was only found by
-    opening the file. This is the kind of defect that becomes visible at the recipient.
+    geometry check. A comment written during review can stand on a finished slide, next to a notes
+    page and the source's animations, and be found only by opening the file. This is the kind of defect that becomes visible at the recipient.
 
     Reported, never removed. Speaker notes are often wanted, an animation may be the point, and
     which of them belongs in a handover is not a decision a check may take.
@@ -1318,7 +1317,7 @@ def _set_run_text(paragraph, run, text: str, template_r) -> None:
 
     A soft break inside a paragraph is U+000B in the text, and `<a:br/>` in the file. Assigning the
     character straight to `run.text` writes the literal `_x000B_` into the XML, and the render then
-    shows those seven characters in the middle of the sentence. Found in the field 2026-08-26: a
+    shows those seven characters in the middle of the sentence. Found in practice: a
     hand-corrected reference slide carried such a break, and writing its text back put the literal
     on the slide. A newline in the same position means the same thing and is treated the same way.
     """
@@ -1476,7 +1475,7 @@ def check(library: Path, task: str, vault_root: Path,
     result = show(library, None)
     # The brand's own approved slides belong in this look, and for a while they were not in it:
     # the guard proved the library had been seen while the cheapest route of all, a slide the user
-    # already approved, was not on the list being shown. Measured 2026-08-27, a run did the check
+    # already approved, was not on the list being shown. Measured: a run did the check
     # and then wrote its own build script, with two matching slides sitting unlisted.
     marken = sorted((vault_root / "trusted" / "brands").glob("*/slides/INDEX.md"))
     if marken:
@@ -1509,7 +1508,7 @@ def check(library: Path, task: str, vault_root: Path,
             frueher = {}
     # Which shape was chosen, and why. Kept per bundle, because the failure this catches is a
     # bundle-level one: the pattern used for the last piece gets used again for a piece whose
-    # content has a different shape. Seen 2026-08-27 on the second piece of a bundle, with the
+    # content has a different shape. Seen on the second piece of a bundle, with the
     # skill's "decide the shape first" already in place: a sentence in a file costs nothing to
     # skip, a line that has to be written and read back does not.
     gewaehlt = list(frueher.get("shapes_chosen") or [])
@@ -1617,7 +1616,7 @@ def swap_image(deck_path: Path, wanted: str, quelle: str, slide_no: int | None, 
     and still hold different amounts of whitespace inside it, and the crop is what evens that out.
     Leave the old crop on the new artwork and the icon slides out of its field and gets cut off --
     visible in a render, invisible to every check here, because the shape's box never changed.
-    Reported from the field 2026-08-27, after the naive version had been built first and the render
+    Seen in practice, after the naive version had been built first and the render
     disproved it.
 
     So the whole `p:pic` comes across, crop included, and only the placement is set afterwards:
@@ -1828,7 +1827,7 @@ def _leaf_rects(shapes, tf=(1.0, 0.0, 1.0, 0.0)):
 
 def _painted_rect(shape, rect):
     """Widen `rect` to the glyph's real ink where `wrap="none"` lets the run paint past its
-    own box. Verified on a real deck: an 80pt digit box sized for two characters still
+    own box. Seen in practice: an 80pt digit box sized for two characters still
     painted a three-character run, and the saved bounding box said nothing overlapped."""
     body_pr = shape.text_frame._txBody.find(qn("a:bodyPr"))
     if body_pr is None or body_pr.get("wrap") != "none":
@@ -1861,7 +1860,7 @@ def _ink_left_offset(shape) -> int | None:
     was counted: the frame's own left inset, the paragraph's indent, and the glyph's side bearing.
     The inset is the one that bites, because it is usually inherited rather than written: a title
     taking the layout's default 0.1 inch over a lead paragraph set to zero reads as misaligned on
-    every slide, while both boxes sit on exactly the same edge. Reported from the field twice, the
+    every slide, while both boxes sit on exactly the same edge. Seen twice, the
     second time on 13 of 16 slides, with the check reporting 47 groups and no fault.
     """
     rahmen = shape.text_frame
@@ -1948,11 +1947,10 @@ def _ohne_folie(befund: str) -> str:
 def _nur_neue(problems: list[str], baseline: Path | None, pruefer) -> tuple[list[str], int]:
     """The findings that are not already in `baseline`, and how many were dropped.
 
-    Why this exists: on a real corporate template `overlap-check` reported 15 overlaps on a built
-    file and the identical 15 on the untouched original, because that template lays its bands over
-    each other on purpose. Without this, the next run repairs fifteen things the customer built
-    that way, which is the most expensive kind of mistake -- correcting something correct. Reported
-    from the field 2026-08-27, where the comparison had to be done by hand.
+    Why this exists: on a corporate template `overlap-check` reported fifteen overlaps on a built
+    file and the identical fifteen on the untouched original, because that template lays its bands
+    over each other on purpose. Without this, the next run repairs fifteen things that were built
+    that way, which is the most expensive kind of mistake, correcting something correct.
     """
     if baseline is None:
         return problems, 0
@@ -2198,7 +2196,7 @@ def _wireframe_furniture(slide) -> list[str]:
     A wireframe is a sketch of where things go, and it draws its own aids to show that: rules beside
     a block, ticks, spacers, boxes standing in for a picture. Those are the sketch's language, not
     the piece's, and `migrate` brings the whole arrangement across including them. Reported from the
-    field 2026-08-27: nine 0.04 inch bars ended up as rules in front of every text block, in a brand
+    field nine 0.04 inch bars ended up as rules in front of every text block, in a brand
     whose own 74 vertical rules only ever sit between an icon and its text column. The shape was
     formally right and in the wrong role, which no geometry check can see.
 
@@ -2265,7 +2263,7 @@ def _theme_carries_the_brand(deck_path: Path) -> str | None:
     all of it". Where the target deck carries a stock theme -- an untouched Office palette under a
     template name -- that promise turns into its opposite: the migrated pattern comes out in Office
     magenta while every slide around it is painted in a brand colour the theme has never heard of.
-    Reported from the field 2026-08-27: 1186 hard #00005A against a theme that does not know it.
+    Seen in practice: 1186 hard #00005A against a theme that does not know it.
 
     Read from the file, not from the object, and only reported. Which colour is the brand is not a
     thing a script may decide.
@@ -2332,7 +2330,7 @@ def _frame_height(rahmen, breite_emu, groessen, fallback_family: dict | None = N
     a box holds more than one size, which is most cards: a heading at 16 pt over a paragraph at
     12 pt got all six lines charged at 16 and then compared against a box that had room for that,
     while the render showed the text running out of its area. Paragraph spacing was not in it at
-    all. Reported from the field 2026-08-27 on three cards a check called clean.
+    all. Seen in practice, on three cards a check called clean.
 
     Each paragraph is measured at its own size, with its own line spacing and the space before and
     after it. Where a paragraph cannot be measured the whole frame returns None, never a number
@@ -2447,7 +2445,7 @@ def overflow_check(deck_path: Path, slide_no: int | None, baseline: Path | None 
 
     `overlap-check` compares the boxes two shapes declare, so it is blind to the case where one
     shape's text wraps past its own box and lands on the shape below: the geometry still says they
-    do not touch, and the render says otherwise. Found 2026-08-26 on a real deck, where a 26 pt
+    do not touch, and the render says otherwise. Found on a real deck, where a 26 pt
     title wrapped to a second line and sat on the claim under it, letters on letters, while
     overlap-check reported 1134 pairs and no overlap. Only looking at the render caught it.
 
@@ -2490,10 +2488,10 @@ def overflow_check(deck_path: Path, slide_no: int | None, baseline: Path | None 
                     % (index, text_of(shape)[:24], noetig, int(zeilen), size, hoch))
         # A battlecard is mostly a table, and a cell overflows exactly the way a box does: the
         # fourth line of a pitch lands on the row below and takes its headings with it. Nothing saw
-        # that, because every check here walks shapes and a cell is not one. Reported from the field
-        # 2026-08-26 on a file the user had already approved, with two headings hidden in the render.
+        # that, because every check here walks shapes and a cell is not one, so headings can sit
+        # hidden in a render on a file that was already approved.
         # A battlecard is mostly a table, and nothing here saw inside one: every check walks shapes,
-        # and a cell is not a shape. Reported from the field 2026-08-26 on a file the user had
+        # and a cell is not a shape. Seen in practice, on a file the user had
         # already approved, where a pitch ran to a fourth line and covered the two headings below.
         #
         # Measured with `cell_capacity`, not with the line arithmetic above. Two attempts at
@@ -2577,7 +2575,7 @@ def fill(deck_path: Path, texts_path: Path, out: Path | None, strict: bool) -> i
 
     The whole mechanic for this was already here, in `fill_slots`: address a place by name, refuse
     text that does not fit rather than shrink it. What was missing was a way in without a library,
-    so every wording change on a finished file became a one-off script. Written 2026-08-26 after
+    so every wording change on a finished file became a one-off script. Written after
     that had happened twice in one bundle.
 
     The texts file is `{"1": {"slot": "new text"}}` by slide number, or a flat `{"slot": "text"}`

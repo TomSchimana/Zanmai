@@ -62,7 +62,7 @@ Some experts need external tools (Carol a renderer, Loki image libraries). Befor
 
 - **ready** → dispatch.
 - **auto_provision** (small libraries) → Steve pulls them in (`tools ensure <id>`, Wong governs the fetch of outside code), says so in one line, re-checks, then dispatches.
-- **needs_user** (a heavy tool like a browser, a host MCP, or Python too old) → Steve tells the user, in their language, what is missing, **why it is needed for this job**, and the simplest way to get it (the install hint the check returns, usually `brew ...` on macOS). The dispatch waits for that, and the piece is not built another way in the meantime (operating-principles section 10).
+- **needs_user** (a heavy tool like a browser, a host MCP, or Python too old) → Steve tells the user, in their language, what is missing, **why it is needed for this job**, and the simplest way to get it (the install hint the check returns, usually `brew...` on macOS). The dispatch waits for that, and the piece is not built another way in the meantime (operating-principles section 10).
 
 The check is machine-local and cached, a quick look rather than a rescan each time.
 

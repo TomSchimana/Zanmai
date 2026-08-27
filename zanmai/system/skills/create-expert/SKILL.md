@@ -50,7 +50,7 @@ An expert is not real until all of these are in lockstep. Miss one and it crashe
 **Then grep-sweep the whole tree for the new name** and confirm every reference agrees. An identifier change ends with a full-tree grep and a verify grep, never a single representative edit, that rule exists because this exact drift has bitten before.
 
 ### 7. Verify
-`python3 zanmai/system/scripts/zanmai.py setup validate .`, green, or the expert is not shipped. Validate checks that adapters match the roster and no registration is dangling.
+`python3 zanmai/system/scripts/zanmai.py setup validate.`, green, or the expert is not shipped. Validate checks that adapters match the roster and no registration is dangling.
 
 ### 8. Report
 Stan returns the contract path, the adapter, what the research surfaced, the registration points wired, the validate result, and anything open. For a core expert the draft is shown for approval before it ships.

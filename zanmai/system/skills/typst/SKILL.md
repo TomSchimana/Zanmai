@@ -8,7 +8,7 @@ description: Set a paged document with Typst: text flow across pages, deferred f
 A browser paginates a web page. It was never a typesetting system, and the one
 thing it cannot do is the thing a document is made of: a full-width element that
 no longer fits is pushed to the next page and the rest of the current page is
-left white, because text does not flow around it. Measured on a real 62-page
+left white, because text does not flow around it. Measured on a 62-page
 piece: 22 pages under 70 percent coverage, one of them 97 percent white. That is
 not a composition problem to work around, it is the wrong tool, and this is the
 right one.
@@ -58,14 +58,14 @@ A full-width element inside a two-column flow, deferred rather than leaving a ho
 inside one column:
 
 ```typst
-#let wide(caption, cols, ..cells) = place(
+#let wide(caption, cols,..cells) = place(
   top, scope: "parent", float: true, clearance: 12pt,
   block(width: 100%)[
-    #table(columns: cols, inset: 5pt, stroke: none, ..cells)
+    #table(columns: cols, inset: 5pt, stroke: none,..cells)
     #text(size: 7.5pt, caption)
   ],
 )
-#columns(2)[ ... #wide("caption", (1fr,) * 4, [a], [b], [c], [d]) ... ]
+#columns(2)[... #wide("caption", (1fr,) * 4, [a], [b], [c], [d])... ]
 ```
 
 A form is a `#let`, which is what makes the form ceiling real: one definition per
@@ -90,7 +90,7 @@ Colour to all four edges, for a cover or a closing statement:
 
 ```typst
 #page(margin: 0pt, header: none, footer: none)[
-  #rect(width: 100%, height: 100%, fill: red, inset: 24mm)[ ... ]
+  #rect(width: 100%, height: 100%, fill: red, inset: 24mm)[... ]
 ]
 ```
 

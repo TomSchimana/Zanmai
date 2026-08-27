@@ -531,7 +531,7 @@ def main(argv: list[str]) -> int:
         return 2
     # The kit is CSS or Typst, and it is read as text three lines down. Handed a deck, that used to
     # end in a UnicodeDecodeError traceback, which tells the user their tooling is broken rather
-    # than that they put an argument in the wrong place. Found 2026-08-26 on a real run, where the
+    # than that they put an argument in the wrong place. Found on a real run, where the
     # deck had been passed positionally and the next message asked for a `--pdf` nobody needed.
     if args.kit.suffix.lower() not in (".css", ".typ"):
         print(f"design-check: {args.kit.name} is not a kit. A kit is the .css or .typ that "

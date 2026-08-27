@@ -91,13 +91,13 @@ researcher: reed
 ## Key Findings
 1. **<Finding>** (Confidence: high, medium or low)
    <one-line statement>
-2. **<Finding>** (Confidence: ...)
+2. **<Finding>** (Confidence:...)
    ...
 
 ## Evidence
 ### <Finding 1>
 - Source A: <URL>. <one-line credibility note>. <what it says verbatim or near-verbatim>.
-- Source B: <URL>. ...
+- Source B: <URL>....
 
 ### <Finding 2>
 ...

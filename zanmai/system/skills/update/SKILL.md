@@ -13,7 +13,7 @@ The slash-command form is the strongest possible trigger. Steve dispatches Peppe
 
 ## Workflow
 
-1. **Check it yourself first, it takes a second.** Steve runs `zanmai.py setup upgrade . --check` inline. This is mechanics, not expert work: the command resolves where this vault gets updates, compares versions and prints the answer.
+1. **Check it yourself first, it takes a second.** Steve runs `zanmai.py setup upgrade. --check` inline. This is mechanics, not expert work: the command resolves where this vault gets updates, compares versions and prints the answer.
 
 2. **Nothing newer: one line, no dispatch.** Say the version they are on and that it is current, in their language, and stop. No expert is dispatched, no CHANGELOG is opened, nothing is verified a second time. A report with headings about an update that does not exist is noise.
 
@@ -24,7 +24,7 @@ The slash-command form is the strongest possible trigger. Steve dispatches Peppe
    What I concluded: bring this vault from <old> to <new>, the published release. Nothing else.
    ```
 
-   Without the first heading, `dispatch-guard` refuses the dispatch. Measured in the field on the
+   Without the first heading, `dispatch-guard` refuses the dispatch. Seen on the
    first real `/zanmai-update` after the guard existed: the handover was the version pair alone, the
    guard turned it back, and the turn was spent twice.
 
@@ -38,7 +38,7 @@ The slash-command form is the strongest possible trigger. Steve dispatches Peppe
    **Two dispatches, not one, and this is the whole point of the step.** A subagent runs start to
    finish and cannot wait mid-run for an answer that is not in its context, so "apply after the user
    says yes" inside one dispatch is an instruction nobody can carry out. On 2026-08-26 that is exactly
-   what happened in a live vault: the preview came back reading "ready to apply on your yes", and the
+   what happened in a vault in daily use: the preview came back reading "ready to apply on your yes", and the
    vault was already on the new version when it was read. The gate belongs to Steve, in the chat,
    between two dispatches. Nowhere else can hold it.
 
@@ -49,7 +49,7 @@ The slash-command form is the strongest possible trigger. Steve dispatches Peppe
 
 ## Channel
 
-By default a vault tracks the published release. `zanmai.py setup upgrade . --channel <name>` (for
+By default a vault tracks the published release. `zanmai.py setup upgrade. --channel <name>` (for
 example `beta`) switches which branch it tracks and remembers the choice in `zanmai/user.md`, so it
 survives every later update; `--channel release` switches back. Steve only runs this on an explicit
 user request naming the channel, never on his own judgement, since a beta channel by definition carries

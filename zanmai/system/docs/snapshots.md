@@ -32,7 +32,7 @@ Every restore and update is recorded in `zanmai/update-history.md`, which no upd
 
 ## How long they are kept
 
-**Seven days, and the newest one always stays.** Whether an update or a large edit went wrong is something you find out within days, not within months. After that the snapshot has done its job, and keeping it turns a safety line into a pile: measured in one real vault, twenty-five snapshots held 2.6 GB, nearly all of it video and slide files carried along a second time.
+**Seven days, and the newest one always stays.** Whether an update or a large edit went wrong is something you find out within days, not within months. After that the snapshot has done its job, and keeping it turns a safety line into a pile, since every changed video and slide file is carried along again.
 
 The clearing runs by itself at session start, alongside the trash and the scratch area. It only ever reaches what Zanmai put there. Nothing you filed is in scope.
 

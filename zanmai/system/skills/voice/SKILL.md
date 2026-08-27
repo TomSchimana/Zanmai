@@ -39,7 +39,7 @@ The language is detected, not assumed, and the transcript stays in the language 
 
 ### 4. Read it and put it right
 
-Most of the work is here, and it is reading rather than machinery. A garbled word resolves from the sense of the sentence, the way a typo does: given that the note is about an island, a mangled town name is that town; given a colleague called Pat, "pad" is Pat. Nothing needs to be consulted for that.
+Most of the work is here, and it is reading rather than machinery. A garbled word resolves from the sense of the sentence, the way a typo does: given that the note is about an island, a mangled town name is that town; given a name that appears elsewhere in the note, a mangled version of it is that name. Nothing needs to be consulted for that.
 
 **First, what is this note about?** One line. It is what makes a wrong word visible as a wrong word.
 

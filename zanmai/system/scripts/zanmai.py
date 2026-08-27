@@ -81,7 +81,7 @@ KNOWLEDGE_DIR = "knowledge"     # everything gathered, no ranking, and it may co
 TRUSTED_DIR = "trusted"         # what I have settled on. Small, curated, one answer.
 # The one area inside `trusted/` the system knows by name, because four experts read it by path.
 # Created empty at setup: without the folder there is nowhere for an approved piece to land, and
-# every run starts from nothing again. Measured 2026-08-27: a first build of two slides took 26
+# every run starts from nothing again. Measured: a first build of two slides took 26
 # minutes and 76 tool calls, the correction of the same two 2.5 minutes and 11, and the only
 # difference was that the way was known the second time.
 BRANDS_DIR = f"{TRUSTED_DIR}/brands"
@@ -1448,7 +1448,7 @@ def _spoken_length(seconds: float) -> str:
 # cross-check: where the two disagree, something is wrong and it is said rather than
 # quietly sorted.
 _NAME_STAMP_PATTERNS = (
-    # 2026-08-01 14-32-05, 2026-08-01_1432, 20260801-1432, with any separators
+    # 14-32-05, 2026-08-01_1432, 20260801-1432, with any separators
     re.compile(r"(?P<y>20\d{2})[-_.]?(?P<mo>\d{2})[-_.]?(?P<d>\d{2})"
                r"(?:[-_.T ]?(?P<h>\d{2})[-_.:]?(?P<mi>\d{2})(?:[-_.:]?(?P<s>\d{2}))?)?"),
 )
@@ -1702,7 +1702,7 @@ def cmd_voice_lexicon(args: argparse.Namespace) -> int:
     The one thing worth getting right is which names, because a prompt holds a few
     hundred characters and a vault holds hundreds of contacts. Ordered by how much the
     vault links to each one: a name a dozen notes point at is someone this person works
-    with, a name nothing points at is a directory entry. Measured on a real vault of
+    with, a name nothing points at is a directory entry. Measured on a vault of
     ninety-five contacts, filling alphabetically left out five of the six people in the
     recording being transcribed.
     """
@@ -2072,7 +2072,7 @@ def _detect_sync_host(vault: Path) -> str:
 def _work_vault(args: argparse.Namespace) -> Path:
     """The vault a work command acts on: the root, never the folder someone happens to stand in.
 
-    Found 2026-08-26 on the live vault: a `work` call made from inside `doing/<slug>/` created a
+    Found on the live vault: a `work` call made from inside `doing/<slug>/` created a
     second, empty `zanmai/open.base` there, because the default was the literal `.`. A work object
     written into it would have been invisible to every later `work list`, which is the one thing
     this database exists to prevent.
@@ -2400,7 +2400,7 @@ def cmd_work_show(args: argparse.Namespace) -> int:
     `list` prints a short id and every other command takes one, so the one thing missing was a way
     to read what that id stands for. Without it the only route to the content was the page folder
     and its full uuid, which is the machine's own filing and not something anyone should have to
-    know. Found 2026-08-26, when a live session went looking for it and had to `ls` the folder.
+    know. Found in practice: when a live session went looking for it and had to `ls` the folder.
     """
     vault = _work_vault(args)
     rows, _headers = _work_read(vault)
@@ -4241,8 +4241,8 @@ def cmd_journal_rollup(args: argparse.Namespace) -> int:
 # `experts/steve/greeting.md` used to carry the whole judgement: which sources, in what order, a cap
 # of six, the overflow as its own numbered line rather than a nested sub-bullet, no work-object id.
 # Each of those was written down plainly, with its reason, and each broke in a live session anyway.
-# On 2026-08-12 two months of meeting backlog buried a task written that same day. On 2026-08-14 a
-# work-object id reached the user. On 2026-08-17 the overflow came back as a sub-bullet and the
+# On two months of meeting backlog buried a task written that same day. On a
+# work-object id reached the user. On the overflow came back as a sub-bullet and the
 # numbering jumped from 4 to 6. A rule that does not hold on the third attempt is not a wording
 # problem, so ordering, the cap, the overflow line and id-stripping happen here. What is left to
 # judgement is the wording of a line and the closing sentence.
@@ -4253,7 +4253,7 @@ _GREET_UNDATED_DAYS = 7       # how fresh a journal or focus file must be for it
 
 # Two orders, and keeping them apart is the point. Which items get one of the six slots is decided
 # by urgency alone; how the chosen ones are laid out is decided by group. Sorting the selection by
-# group instead was tried first and reproduced the 2026-08-12 defect in miniature: a four-day-old
+# group instead was tried first and reproduced the defect in miniature: a four-day-old
 # test entry took slot one from seven items due that day, because "overdue" led the group order.
 _GREET_GROUPS = ("waiting", "overdue", "today", "tomorrow", "this week", "open")
 
@@ -4360,7 +4360,7 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
 
     # Waiting on the user, with no date on it. This comes first and on its own pass, because
     # `_work_due_soon` filters by date before anything else sees the row, so an undated one never
-    # arrived at all. Found in the field on 2026-08-26, on the first greet after the greet itself was
+    # arrived at all. Found in practice, on the first greet after the greet itself was
     # fixed: the most active piece of work in the vault, three days old and explicitly waiting on the
     # user, was missing from the list, and the three work objects in that state all had no due date.
     # A due date is a plan; `waiting on you` is a recorded fact about who holds the thing. Dropping
@@ -4391,7 +4391,7 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
         # item due today and drops out of the six.
         wartet = (row.get("state") or "").strip() == "waiting on you"
         # The row's `id` stays here. It is the handle for `zanmai.py work` and tells the user
-        # nothing; on 2026-08-14 one reached a greet because the rule against it lived in prose.
+        # nothing; one reached a greet because the rule against it lived in prose.
         aufnehmen("waiting" if wartet else _greet_group(tage), row.get("work", ""),
                   "work object", abs(tage), rang=0 if wartet else 1, faellig=faellig)
 
@@ -4732,7 +4732,7 @@ def cmd_briefing(args: argparse.Namespace) -> int:
 def cmd_hook_session_end(args: argparse.Namespace) -> int:
     """SessionEnd hook: rebuild the briefing, and mark the close only if one really happened.
 
-    Until 2026-08-26 the handover between sessions ran entirely through the `close-session` skill,
+    Until the handover between sessions ran entirely through the `close-session` skill,
     which someone has to invoke. On a live vault after four weeks, no session log had ever been
     written: shutting the window is what actually ends a session, and nothing was bound to that.
     The next morning then opened on a briefing that stood at the previous afternoon, with the whole
@@ -5051,7 +5051,7 @@ def cmd_register_contact(args: argparse.Namespace) -> int:
     # A value the user typed now beats one sitting in the file.
     # Straight from the schema, not from a second list typed out here. The hand-kept version had
     # drifted: `address` and `birthday` are in the schema for a person and were not accepted, so a
-    # practice address ended up as body prose in the field's place.
+    # practice address ended up as body prose in practice's place.
     for k in KIND_FIELDS[kind_field]["optional"]:
         v = getattr(args, k, None)
         if v:
@@ -5723,7 +5723,7 @@ def _install_skill_symlinks(vault_root: Path, mapping: list[tuple[str, str]]) ->
         # The adapter's name has to be the folder it sits in, because that is what the host offers as
         # a command. Copying the source's own `name:` shipped `zanmai:update` in a folder called
         # `zanmai-update`, and typing either one answered "Unknown command": the colon form is how a
-        # plugin skill is addressed, not a project one. Found in a live vault on 2026-08-06, and it
+        # plugin skill is addressed, not a project one. Found in a vault in daily use, and it
         # was true for all eight commands at once.
         fm = re.sub(r"^name:.*$", f"name: {claude_folder}", fm, count=1, flags=re.M)
         body = (
@@ -6316,7 +6316,7 @@ def _render_settings_local_json(vault_root: Path, *, python_cmd: str = "python3"
     # shipped, while every caller in the vault runs from the vault root and types the relative path,
     # so the rule never matched anything and every write went to a permission prompt. It stayed
     # invisible because read-only calls are waved through on their own merits: the update check ran,
-    # and the apply right behind it stopped dead. Measured in a live vault on 2026-08-06.
+    # and the apply right behind it stopped dead.
     allow = [
         f'Bash({python_cmd} "{scripts_dir}/zanmai.py":*)',
         f'Bash({python_cmd} {scripts_dir}/zanmai.py:*)',
@@ -6634,9 +6634,9 @@ def cmd_gaps(args: argparse.Namespace) -> int:
 
     A dispatched expert has no way to speak while it runs: it returns to whoever called it, once,
     at the end. `builder-gaps.md` is the one channel it can use in the meantime, and the experts use
-    it without being told to. What was missing is the other half, somebody reading it: measured
-    2026-08-27, a whole day of entries sat there, including one that said the expert cannot send
-    messages at all, and they reached the workshop only where a person happened to relay one.
+    it without being told to. What was missing is the other half, somebody reading it: a whole day
+    of entries can sit there, including one saying the expert cannot send messages at all, and
+    reach the workshop only where a person happens to relay one.
     """
     vault = Path(args.vault).resolve()
     grenze = datetime.now() - timedelta(hours=args.hours)
@@ -7640,7 +7640,7 @@ def _sweep_snapshots(vault: Path) -> list[str]:
 
     A snapshot is a point to jump back to, taken before an update or a large edit, and whether that
     went wrong is known within days. Kept for a month it stops being a safety line and becomes a
-    pile: measured in one live vault, 25 of them held 2.6 GB, almost all of it the user's own video
+    pile: 25 of them held 2.6 GB, almost all of it the user's own video
     and slide files carried along a second time.
 
     The newest one always survives, however old it is. A vault nobody touched for three weeks would
@@ -7715,7 +7715,7 @@ def cmd_snapshot_create(args: argparse.Namespace) -> int:
     """Take a snapshot: commit the whole vault into the history repository.
 
     A snapshot used to be a full copy of the vault, which cost what the user owns every single time
-    while protecting one change. Measured in a live vault: two copies, thirteen gigabytes, for three
+    while protecting one change. Measured: two copies, thirteen gigabytes, for three
     gigabytes of material, because each copy also copied the copies before it. The history stores
     every file once by content, so an unchanged file costs nothing on the second snapshot and a
     changed line costs the line.
@@ -7929,7 +7929,7 @@ _HOOK_ALLOWED_KINDS = set(KIND_FIELDS)
 def _guard_refused(payload: dict, guard: str, grund: str) -> None:
     """Write down that a guard turned something away.
 
-    Until 2026-08-26 no guard left a trace of any kind. The user's own words: "ich habe das Gefuehl,
+    Until no guard left a trace of any kind. The user's own words: "ich habe das Gefuehl,
     dass die Live-Umgebung nicht alles meldet, dass sie so beschaeftigt ist, dass es untergeht." That
     could not be answered, because nothing was written down: a refusal existed only in the session
     that saw it, and reporting it depended on a busy session remembering to. So it goes in the
@@ -7962,7 +7962,7 @@ def _hook_read_payload() -> dict:
     # nothing on it and no end of file coming, and a plain `.read()` there waits for ever: the hook
     # runs before every session start, so that is a session that never begins. `isatty()` alone does
     # not cover it, because an inherited pipe is not a terminal and still never closes. Caught by the
-    # test suite on 2026-08-26, which hung on exactly this the first time the payload was read
+    # test suite on, which hung on exactly this the first time the payload was read
     # unconditionally. So: wait a moment for data to appear, and treat silence as "no payload".
     _LAST_PAYLOAD = {}
     try:
@@ -8228,7 +8228,7 @@ def _hook_prose_text(text: str, suffix: str) -> str:
 
     A JSON content file carries its prose inside quoted string values, and the quote-span
     blank-out that keeps a verbatim quote in markdown from being refused would blank every one
-    of them, so such a file would always read as clean. Found on a real run 2026-08-25: a
+    of them, so such a file would always read as clean. Found in practice: a
     dash-as-punctuation sentence reached a finished slide through exactly such a file, and the
     guard never saw it. The string values are pulled out and scanned as their own lines instead.
     """
@@ -8353,7 +8353,7 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
     re-indenting the user's material passes untouched.
 
     It binds at every point the prose can reach a deliverable, not only at the one the AI usually
-    takes. Until 2026-08-25 it took a markdown file, written by Write or Edit, carrying frontmatter
+    takes. Until it took a markdown file, written by Write or Edit, carrying frontmatter
     that said the AI wrote it, and all three had to hold. A finished slide with a dash-sentence on it
     proved how little that covers: the text came out of a JSON content file (not markdown, no
     frontmatter possible) and reached the deck through a Python build script (Bash, not Write). Each
@@ -8382,7 +8382,7 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
         # The quote marks themselves are blanked, never what stands between them: in a build
         # command the prose sits inside the string literals, so blanking the content would hide
         # exactly what this is looking for. Blanking only the marks makes them a word boundary,
-        # which is what the dash pattern needs. Found 2026-08-26: `--text "Wir schaffen -"` was
+        # which is what the dash pattern needs. Found in practice: `--text "Wir schaffen -"` was
         # silent because the dash was followed by a quote mark, so neither a space nor a line end
         # closed it, and that is the same end-of-string construction the 0.3.6 fix was built for.
         dazu = [z for z, gescannt in ((z, _hook_command_prose(z)) for z in command.splitlines())
@@ -10451,7 +10451,7 @@ def _library_guard_slug(command: str, vault: Path | None = None,
 
     Two ways to know. The command names the path, which is the case a `cd` or an absolute
     argument covers. Or the command says nothing because the working directory is already
-    inside the bundle and every path in it is relative: found on a real run 2026-08-25, where
+    inside the bundle and every path in it is relative: found on a real run, where
     dropping the `cd` was used as the way past the guard. Reading the working directory closes
     that, and it is the same fact either way.
     """
@@ -10459,7 +10459,7 @@ def _library_guard_slug(command: str, vault: Path | None = None,
     if match:
         return match.group(1)
     # The working directory of the shell that runs the command, which the hook payload carries,
-    # never the hook process's own. Found 2026-08-26: a hook runs from the project root, so
+    # never the hook process's own. Found in practice: a hook runs from the project root, so
     # `Path.cwd()` here is always the vault root and the whole branch was dead code. That made the
     # 0.3.5 fix for a dropped `cd` ineffective, and it never showed because nothing tested it from
     # inside a bundle.
@@ -10487,7 +10487,7 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
     when nothing in the library carries it) lived only as prose, and a live build on
     2026-08-24 went straight to Compose twice without it, which is where that run's whole
     cost went. A rule that has to be repeated in text is the signal that it needs a
-    mechanic instead (the lesson from 2026-08-09), and this is that mechanic. It does not
+    mechanic instead (an earlier lesson), and this is that mechanic. It does not
     judge whether Compose was the right tier, only that the library was actually looked
     at before the deliverable was written, which is the step that kept getting skipped.
 
@@ -10514,7 +10514,7 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
     if slug is None:
         return 0
     # Against the vault root, never against the working directory. Found on a real run
-    # 2026-08-25: with the shell sitting in the bundle, `Path.cwd()` looked for the marker at
+    # with the shell sitting in the bundle, `Path.cwd()` looked for the marker at
     # `doing/<slug>/zanmai/temp/<slug>/`, which cannot exist, so a run that had done the check
     # was refused anyway and went looking for a way around a guard that was right in principle.
     checked = (vault or Path.cwd()) / SCRATCH_DIR / slug / "library-checked.json"
@@ -10556,7 +10556,7 @@ def cmd_hook_outward_guard(args: argparse.Namespace) -> int:
     Writing into the vault is reversible and private. Writing into Confluence, a mailbox, a ticket
     system or a repository is neither: colleagues see it, and an undo does not reach them. Hard Rule 3
     says such a write waits for an explicit yes in the same message. That was prose, and prose at this
-    point does not hold: on 2026-08-26 a session was asked in the chat where information was missing,
+    point does not hold: a session was asked in the chat where information was missing,
     built the answer as an XHTML file, published it to Confluence, and then offered to delete it again
     if that was not wanted. The offer came after the page existed.
 
@@ -10900,7 +10900,7 @@ def _session_refresh_index(vault: Path, *, detached: bool = True) -> None:
     process and the hook does not wait for it.
 
     It used to run inline, on a docstring that claimed sub-second on thousands of files. Measured
-    on 2026-08-26 in a vault in daily use: median 248 ms, worst case 8,452 ms, against the host's
+    in a vault in daily use: median 248 ms, worst case 8,452 ms, against the host's
     10-second SessionStart timeout. A hook that times out delivers nothing at all, so the greet
     would have opened blind, which is worse than the truncation this same day was spent fixing.
     Nothing in the greet needs the index, so waiting for it buys nothing and risks everything.
@@ -11238,7 +11238,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     greeting_rel = f"{SYSTEM_MATERIAL_DIR}/skills/greeting/SKILL.md"
     # A resumed conversation is not a new one. The host says which it is in the payload, and where
     # it says resume the session already carries everything a greet exists to establish. Greeting
-    # there reads as amnesia: a user reopened a running build in another terminal on 2026-08-27,
+    # there reads as amnesia: a user reopened a running build in another terminal on,
     # got a full greet with a task list, and answered "I am completely lost about where you are".
     fortsetzung = str(payload.get("source") or "").lower() in ("resume", "compact")
     if fortsetzung:
@@ -11261,7 +11261,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             f"by time, nearest first, six lines at most, no ids and no paths."
         )
 
-    # Which model is running, one line at the end, because the user asked for it on 2026-08-13 and
+    # Which model is running, one line at the end, because the user asked for it on and
     # the answer changes what a turn can be trusted with. `SessionStart` is the only hook event that
     # carries the field, there is no `$CLAUDE_MODEL` in the environment (measured: none), and
     # `settings.json` holds the default rather than what a `/model` switch left running. So the
@@ -11282,10 +11282,9 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
         # Nothing arrived on stdin at all. That is not the same as "the host sent no model", and
         # without saying so the two are indistinguishable from the outside: the line is simply
         # absent either way. It matters because another SessionStart hook may have drained stdin
-        # first. Toms machine has one: `herdr-agent-state.sh` runs `cat` into a temp file at line 13,
-        # seven lines before it exits for an unset `HERDR_ENV`, so it consumes stdin on every start
-        # whether or not that tool is in use. Whether hooks share one stdin or get their own is not
-        # documented; this line is what tells us which, the first time it matters.
+        # first: a hook that reads stdin before checking whether it should run consumes it on every
+        # start. Whether hooks share one stdin or get their own is not documented, and this line is
+        # what tells us which, the first time it matters.
         lines.append("")
         lines.append("- The session-start payload was empty, so the model is unknown and that line "
                      "is left out. Not a fault by itself. Worth one look only if it persists: it "
@@ -11294,7 +11293,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     ausgabe = "\n".join(lines)
     # Size guard. The host replaces hook output over its limit with a 2 KB preview plus a file
     # path, and a preview is worse than nothing: it carries enough to compose a plausible reply
-    # from and no sign that the rest was dropped. Measured in a live vault on 2026-08-26, every
+    # from and no sign that the rest was dropped. Measured, every
     # one of 79 recorded starts was over, so the greet had never once seen its own instructions.
     # Kept well under the limit rather than at it: what this hook prints grows with the vault.
     if len(ausgabe) > _HOOK_OUTPUT_BUDGET:
@@ -11752,7 +11751,7 @@ def cmd_media_mark(args: argparse.Namespace) -> int:
     key = args.key or os.environ.get("ZANMAI_C2PA_KEY")
     tsa = args.tsa or os.environ.get("ZANMAI_C2PA_TSA", "http://timestamp.digicert.com")
     # Fall back to the self-managed signer, and establish it on demand when this
-    # mark actually needs to sign or re-seal (Tom: create the cert if none exists).
+    # mark actually needs to sign or re-seal: the certificate is created when none exists.
     if not (cert and key):
         cp, kp = _signer_paths()
         if not (cp.is_file() and kp.is_file()) and (args.sign or (reencoded and present is True)):
@@ -13193,7 +13192,7 @@ def main(argv: list[str]) -> int:
     sub_work = p_work.add_subparsers(dest="work_cmd", required=True)
 
     # Every one of these takes its subject as a bare positional as well as a flag. The flag is
-    # what the skills write; the bare form is what a person types, and until 2026-08-26 the bare
+    # what the skills write; the bare form is what a person types, and until the bare
     # form was silently eaten by an optional `vault` positional that nothing in the product ever
     # passed: `work open "a title"` failed with "the following arguments are required: --title",
     # naming the flag the user had not used instead of the argument they had. The vault is a flag

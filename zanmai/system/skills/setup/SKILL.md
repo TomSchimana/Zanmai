@@ -96,7 +96,7 @@ Run the script without prefacing it with a status line. The Bash invocation is s
 Run from the vault root, substituting `<python_cmd>` with the invocation that worked in Step 1b Check 0 (often `python3`, on Windows `py -3` or `python`):
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py setup init . --first-name "<first>" --last-name "<last>" --language "<lang>" --python-cmd "<python_cmd>" [--email "<email>"] [--preferred-address "<nickname>"]
+<python_cmd> zanmai/system/scripts/zanmai.py setup init. --first-name "<first>" --last-name "<last>" --language "<lang>" --python-cmd "<python_cmd>" [--email "<email>"] [--preferred-address "<nickname>"]
 ```
 
 Pass `--preferred-address` only if the user gave a value different from `--first-name`. Same value is fine to omit.

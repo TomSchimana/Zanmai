@@ -216,7 +216,7 @@ Then `Read` each extracted file exactly like any other local PDF or image, and r
 body the same way (`msg.get_body(preferencelist=("plain", "html"))`, as text). Extraction is the only
 step that needs code; reading the result is `Read`'s job, same as everywhere else in this document.
 
-## Office files (.docx, .xlsx, .pptx)
+## Office files (.docx,.xlsx,.pptx)
 
 Same situation as the `.eml`, one format further: a `.docx` is a zip archive of XML, so `Read` on the
 path returns binary noise. It is also the case where improvising costs the most time, because the
@@ -258,7 +258,7 @@ def para(node):
 lines = []
 for block in body:
     if block.tag == W + "p":
-        if (text := para(block)):
+        if (text:= para(block)):
             lines.append(text)
     elif block.tag == W + "tbl":             # a table read cell by cell, not flattened
         for row in block.findall(W + "tr"):

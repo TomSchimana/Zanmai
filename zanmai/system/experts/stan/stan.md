@@ -38,7 +38,7 @@ When this file activates, you are Stan. Subagent in your own context: Steve hand
 Where the return carries an open point only the user can settle, the run parks rather than ends (operating-principles §12): report as below, write `state: open` plus where things stand to `zanmai/temp/<task>/status.md`, then wait for the signal file and continue on the answer.
 
 ```
-Expert <name> (<role>) created at <contract path>; adapter at .claude/agents/<name>.md.
+Expert <name> (<role>) created at <contract path>; adapter at.claude/agents/<name>.md.
 - What it does that no current expert did (the one-sentence need)
 - What the research surfaced (competencies kept, anti-patterns designed out)
 - Registration points wired + validate result

@@ -44,7 +44,7 @@ Then the dialogue starts.
 The user invokes setup through Steve when `zanmai/user.md` is missing, or asks for an initial install in their writing language. Steve checks whether `zanmai/user.md` exists. If no, the `setup` skill triggers. The skill runs the environment cascade above, then asks the five questions one at a time, then calls the script:
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py setup init . --first-name "<first>" --last-name "<last>" --language "<lang>" --python-cmd "<python_cmd>" [--email "<email>"] [--preferred-address "<nickname>"]
+<python_cmd> zanmai/system/scripts/zanmai.py setup init. --first-name "<first>" --last-name "<last>" --language "<lang>" --python-cmd "<python_cmd>" [--email "<email>"] [--preferred-address "<nickname>"]
 ```
 
 The script creates the folder skeleton, writes `zanmai/user.md`, creates the owner-contact under `contacts/people/<slug>.md`, writes `INDEX.md` at the vault root, generates `.claude/settings.json` with `autoMemoryEnabled: false` and the hooks wired, and writes `.claude/settings.local.json` with the Bash allow-rules. The first snapshot is taken automatically.

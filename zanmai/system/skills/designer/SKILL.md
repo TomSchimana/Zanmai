@@ -112,8 +112,8 @@ them; where it does not, the element changes. An element docked flush to a strai
 position at all once that edge is rounded, so it moves or is built another way. What counts is what
 the piece says, not how closely it still resembles the pattern.
 
-**What `migrate` reports rather than silently fixing, all three measured 2026-08-26 on a real
-brand:** literal colours that came across (only a person can say which role a `#2E86AB` stood
+**What `migrate` reports rather than silently fixing:** literal colours that came across (only
+a person can say which role a `#2E86AB` stood
 for); a change of body face, because a wider face means every slot holds less (Montserrat runs
 16% wider than Arial, so a slot holds 13% less and text that fitted before does not); and two
 theme roles carrying the same value, which silently removes a distinction the wireframe made.

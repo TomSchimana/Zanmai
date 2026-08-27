@@ -150,7 +150,7 @@ Asked to put something on a list, write it. An obligation you worked out yoursel
 as a sentence, and something you still owe goes on a work object (principle 13). An existing task is
 left as it stands, including the `- [-]` abandoned state.
 
-**There is exactly one route, and it is taken rather than reported.** `zanmai.py task add --text ...
+**There is exactly one route, and it is taken rather than reported.** `zanmai.py task add --text...
 [--file ...] [--due YYYY-MM-DD]` writes a task, `task done` ticks one off, `task list` shows what is
 open. With no file named it goes on today's journal entry. This is the route for an existing checklist
 too: asked to add three points to a file that holds checkboxes, run `task add --file <that file>` three

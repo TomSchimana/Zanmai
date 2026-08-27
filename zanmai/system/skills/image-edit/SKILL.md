@@ -42,5 +42,5 @@ Core editing needs Pillow. `grade --lut` needs numpy; `grade --match` needs colo
 
 ## Field notes, verified vs. designed
 
-- **Core ops (verified 2026-07-20, Pillow 12.3.0):** convert incl. PNG→WebP and alpha-flatten PNG→JPEG, resize (scale / exact / fit), rotate, crop, grayscale, composite, optimize, and batch, all exercised end-to-end on real images, outputs reopen with the right format, mode and dimensions.
+- **Core ops (verified, Pillow 12.3.0):** convert incl. PNG→WebP and alpha-flatten PNG→JPEG, resize (scale / exact / fit), rotate, crop, grayscale, composite, optimize, and batch, all exercised end-to-end on real images, outputs reopen with the right format, mode and dimensions.
 - **Detected tiers (designed, not yet verified on a provisioned host):** LUT application (nearest-neighbour sample, a trilinear blend is the refinement when a real look needs it), reference colour-matching, and RAW develop are coded and dependency-guarded but await a machine that has numpy / color-matcher / rawpy and a real RAW or LUT to prove against. Mark them verified here once that run happens.

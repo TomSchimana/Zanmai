@@ -45,7 +45,7 @@ Across stable AI-assisted PKM systems, the same pattern recurs: discipline lives
 
 The mechanic. A skill file is read into context at the moment it runs. General principles in a separate file are not. Putting the discipline in the skill means the discipline is visible exactly when it matters.
 
-The second half closes a hole that only shows up with dispatched experts. A brief carries context and scope, and it was treated as authority: an expert received an instruction that its own hard rule forbids, and followed the instruction, so a house rule was lifted by a colleague without anyone noticing. An expert now declines that part, does the rest of the job, and names the conflict in what it returns. The same applies to output formats, since a report's parts are fixed by the contract that defines them, not by whoever ordered the work, and an extra part ordered on the side is how a small approval text grows into pages.
+The second half closes a hole that only shows up with dispatched experts. A brief carries context and scope, and it was treated as authority: an expert received an instruction that its own hard rule forbids, and followed the instruction, so a house rule was lifted from outside without anyone noticing. An expert now declines that part, does the rest of the job, and names the conflict in what it returns. The same applies to output formats, since a report's parts are fixed by the contract that defines them, not by whoever ordered the work, and an extra part ordered on the side is how a small approval text grows into pages.
 
 ### Mechanic over memory
 

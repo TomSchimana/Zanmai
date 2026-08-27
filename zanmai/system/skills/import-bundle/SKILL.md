@@ -159,22 +159,22 @@ The TL;DR is the final message of Hank's subagent run. Steve relays it to the us
 The user approved. First action: create the target bundles. They did not exist until now.
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py bundle create <vault> --kind <kind> --slug <slug> [--goal ...] [--status ...]
+<python_cmd> zanmai/system/scripts/zanmai.py bundle create <vault> --kind <kind> --slug <slug> [--goal...] [--status...]
 ```
 
 One `bundle create` call per planned bundle, including sub-bundles via `--slug parent/child`.
 
 Then, for each file in the mapping:
 
-- Markdown source: `zanmai.py bundle add-file ... --source <path> --bundle-slug <slug>`. The script handles body-verbatim, frontmatter migration, INDEX and activity-log.
-- Non-markdown attachment: `zanmai.py asset add ... --source <path> --bundle-slug <slug>`.
+- Markdown source: `zanmai.py bundle add-file... --source <path> --bundle-slug <slug>`. The script handles body-verbatim, frontmatter migration, INDEX and activity-log.
+- Non-markdown attachment: `zanmai.py asset add... --source <path> --bundle-slug <slug>`.
 - Wikilink updates after slug rename: in-place edit via `zanmai.py`, atomic, not via `Write` or `Edit`.
 - Embed-path updates for `![](relative/path)` after attachment move: in-place edit via `zanmai.py`, not via `Write` or `Edit`.
 
 For each entity Hank stubbed by default (Hard Rule 6):
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py contact create ... --kind <person|organization> --slug <slug> [--full-name "..."]
+<python_cmd> zanmai/system/scripts/zanmai.py contact create... --kind <person|organization> --slug <slug> [--full-name "..."]
 ```
 
 Never use `bundle create` for contacts, the script refuses it.

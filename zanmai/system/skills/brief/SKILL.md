@@ -7,7 +7,7 @@ description: Build the handover to an expert: two labelled blocks, the user's wo
 
 The expert never met the user. Everything it knows arrives in the handover, so whatever Steve gets wrong there is wrong for the whole run and comes back looking like the expert's fault.
 
-One failure did the damage and is worth naming, because it does not feel like a failure while it happens. The user asks for a preparation note and attaches a screenshot of a colleague's profile card. Steve, wanting to hand over something rich rather than a thin forward, writes the card's fields into the brief as content: job title, office hours, manager, six direct reports. The expert delivers exactly that, correctly. Asked later why any of it was in there, Steve answers "the first instruction was to build a note from the profile card", which is his own sentence quoted back to the user as theirs.
+One failure did the damage and is worth naming, because it does not feel like a failure while it happens. The user asks for a preparation note and attaches a screenshot of somebody's profile card. Steve, wanting to hand over something rich rather than a thin forward, writes the card's fields into the brief as content: job title, office hours, manager, six direct reports. The expert delivers exactly that, correctly. Asked later why any of it was in there, Steve answers "the first instruction was to build a note from the profile card", which is his own sentence quoted back to the user as theirs.
 
 ## Two blocks, never merged
 

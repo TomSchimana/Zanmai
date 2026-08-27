@@ -18,10 +18,10 @@
     "guide_note": "install_hint.guide points at a per-OS help doc. These docs are STUBS for now (just the target path); the guided-help build is a later step (README/Wiki, plan Teil B).",
     "cross_os": {
       "linux": "DESIGNED, unverified. Invocation is essentially macOS's, both are Unix, so python3/ffmpeg/git/node/yt-dlp/c2patool/pdffonts/magick share binary names; the only real deltas are file-open (xdg-open vs open) and the secret store (secret-tool/libsecret vs Keychain), both already reflected. The venv path is identical (many distro pythons are also PEP-668 externally-managed, so venv is right there too). Provisioning is deliberately NOT automated: too many distros/package managers, and a Linux user installs an app themselves, Linux is a documented prerequisite, no binary auto-fetch.",
-      "windows": "DESIGNED, unverified, first idea, verify on a fresh Windows machine. Deltas: python is `py -3`/`python`, not python3; binaries carry `.exe` (shutil.which still resolves via PATHEXT); no Keychain, Credential Manager (cmdkey/PowerShell) or the .env fallback (likely cleaner for the signer key); file-open via os.startfile/`start`; recommender is winget (built into Win10+/11) or scoop; the venv python lives at Scripts\\python.exe (already handled). The one part that must be Windows-native is the non-Python bootstrap (PowerShell vs Unix shell), pending the fresh-Windows test."
+      "windows": "DESIGNED, unverified, first idea, verify on a fresh Windows machine. Deltas: python is `py -3`/`python`, not python3; binaries carry `.exe` (shutil.which still resolves via PATHEXT); no Keychain, Credential Manager (cmdkey/PowerShell) or the.env fallback (likely cleaner for the signer key); file-open via os.startfile/`start`; recommender is winget (built into Win10+/11) or scoop; the venv python lives at Scripts\\python.exe (already handled). The one part that must be Windows-native is the non-Python bootstrap (PowerShell vs Unix shell), pending the fresh-Windows test."
     },
     "schema_version": 1,
-    "sizes": "size_mb is the installed size measured on macOS 2026-08-27, per Homebrew cellar entry or per venv library including what it pulls in. Libraries share dependencies, so the total of a group is smaller than the sum of its parts: the eight Python libraries add up to 373 but measure 323 together. Shown to the user before anything is fetched, because a number nobody sees is not transparency."
+    "sizes": "size_mb is the installed size measured on macOS per Homebrew cellar entry or per venv library including what it pulls in. Libraries share dependencies, so the total of a group is smaller than the sum of its parts: the eight Python libraries add up to 373 but measure 323 together. Shown to the user before anything is fetched, because a number nobody sees is not transparency."
   },
   "tools": {
     "python": {
@@ -570,7 +570,7 @@
       "detect": {
         "method": "which"
       },
-      "fallback": "gitignored .env outside the vault, chmod 600, masked."
+      "fallback": "gitignored.env outside the vault, chmod 600, masked."
     },
     "mcp_magnific": {
       "purpose": "Loki image/video backend.",
@@ -664,7 +664,7 @@
       "size_mb": 43
     },
     "python_pptx": {
-      "purpose": "Reads and writes a native .pptx without opening PowerPoint: which layout a slide uses, whether its placeholders are filled, whether a run overrides the layout, which faces and colours are actually in the file. The deck's measurable checks run on the file, because no engine but PowerPoint itself renders a .pptx faithfully.",
+      "purpose": "Reads and writes a native.pptx without opening PowerPoint: which layout a slide uses, whether its placeholders are filled, whether a run overrides the layout, which faces and colours are actually in the file. The deck's measurable checks run on the file, because no engine but PowerPoint itself renders a.pptx faithfully.",
       "kind": "python-lib",
       "tier": "on-demand",
       "needed_by": [

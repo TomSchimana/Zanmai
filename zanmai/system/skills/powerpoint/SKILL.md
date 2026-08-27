@@ -13,7 +13,7 @@ The theme can be default Office (Calibri, Office palette) while the brand lives 
 
 ## The library first, composing last
 
-A deck built slide by slide from scratch is the slow way and the drifting way at once: measured on a real run, three slides cost half an hour, and the fourth slide invented what the first had already solved. So the order is fixed, and composing is the exception.
+A deck built slide by slide from scratch is the slow way and the drifting way at once: three slides cost half an hour, and the fourth slide invented what the first had already solved. So the order is fixed, and composing is the exception.
 
 **Every other check asks whether what is there is right. This one asks whether something is missing.** `slide-library.py structure-check <deck> --slide N --against <pattern deck>:<slide>` counts shapes, filled areas and text places against the pattern and reports **any** difference, with no tolerance: a hub without its centre still holds six of eight areas, and the missing one is what all four lines point at. **A difference is not a fault** where it was chosen; `--intended "<why>"` records that and passes. What this catches is the shape that fell out unnoticed. Run it after every migrate and after any hand editing that follows one.
 
@@ -42,7 +42,7 @@ bundle of twenty pieces then comes out as the same two patterns twenty times.
    different shape, the library is the wrong place to look, and the cost of the right route is not
    an argument against it.
 
-0b. **Reuse what is already in this deck.** Before the library is even opened: does a slide in the file being built already carry this shape of content? Then clone that one and swap its text. A deck of thirty battlecards is one built slide and twenty-nine copies of it, not thirty builds. This tier is new on 2026-08-26 and it is the cheapest of all, because the geometry is not just approved, it is the geometry of this very deck. It also grows while the work runs: a slide composed at tier three becomes tier zero for every slide after it. Asked for one more slide after slide 10 in a deck that already holds fifty, the answer is almost never a build.
+0b. **Reuse what is already in this deck.** Before the library is even opened: does a slide in the file being built already carry this shape of content? Then clone that one and swap its text. A deck of thirty battlecards is one built slide and twenty-nine copies of it, not thirty builds. This tier is new and it is the cheapest of all, because the geometry is not just approved, it is the geometry of this very deck. It also grows while the work runs: a slide composed at tier three becomes tier zero for every slide after it. Asked for one more slide after slide 10 in a deck that already holds fifty, the answer is almost never a build.
 
 1. **Match.** Read the library, take the slide that already carries this shape of content, clone it, swap the text. `slide-library.py build <plan.json> <out.pptx> --library <dir>` does exactly that and refuses text that would overflow a slot rather than shrinking type to fit. Seconds per slide, and the look cannot drift because nothing is drawn. **The fastest form of Match does not even deep-copy: `slide-library.py extract <deck> --slides 34,14 --out <new>` lifts the slides that carry the shape out of the source deck, keeps their own XML untouched, and cuts every link into slides that did not come along.** That last part is why it is a command and not three steps by hand: deleting a navigation button's shape leaves its relationship behind, and that one link holds every part of the foreign slide alive (9.9 MB against 4.0 on a real deck, and PowerPoint calls a reference into nothing damage). Nothing is repositioned and no font size is searched, because the geometry stays byte-identical. Finding the right exemplar by eye is then the slow part, which a harvested library removes.
 2. **Adapt.** Nothing fits exactly: clone the closest slide, then multiply or remove an **existing** group inside it. A row of a measures band is its own four shapes; a further row is a copy of those four moved by the step two existing rows already have, measured from the file. A card too many is a deletion. Values that a source slide already carries are looked up, never chosen: the priority colours, for instance, are in that slide's own legend.
@@ -57,7 +57,7 @@ bundle of twenty pieces then comes out as the same two patterns twenty times.
    recoloured and rounded. A tab docked flush to a panel's top edge reads as a label pinned to it
    while the edge is straight; in a brand that rounds its corners the rounding runs underneath and
    it reads as a box stuck askew on a corner, so it becomes a free-standing centred label instead.
-   Verified in the field 2026-08-27 on two slides. What counts is what the slide says, not how
+   What counts is what the slide says, not how
    closely it still resembles the pattern. The content is never bent to fit a pattern; the pattern
    is bent to fit the brand.
    **Every pattern carries the same frame**: a kicker over the title, the title, an optional
@@ -65,18 +65,18 @@ bundle of twenty pieces then comes out as the same two patterns twenty times.
    fills only the content area under it. So slides built from different patterns line up, and the
    kicker is a slot to fill rather than something to remember. A line inside a pattern is there
    because it carries a relation, an axis, a connector, a boundary: what only marked something was
-   taken out 2026-08-27, so a line that comes across in a migrate is one the arrangement needs.
+   taken out so a line that comes across in a migrate is one the arrangement needs.
    It still draws aids to show where things go, ticks, spacers, boxes standing in for a picture,
    and `migrate` brings the arrangement across including them. What comes from the wireframe is where
    things sit and in what hierarchy; what a piece is made of comes from the brand. Migrate lists the
    textless bars and markers it carried over, and each one is kept only where the brand itself uses
-   that element in that role. Verified in the field 2026-08-27: nine 0.04 inch rules ended up in
+   that element in that role. In practice: nine 0.04 inch rules ended up in
    front of every text block in a brand whose own 74 vertical rules only ever sit between an icon
    and its text column. Formally right, wrong in its role, invisible to every geometry check.
    **`--brand-from <deck>` is where a thin or empty target gets its brand measured** (a deck built set by set starts empty, so everything measured in the target finds
    nothing and says nothing). The slide is **appended** to the target, so several patterns can be migrated
    into one deck in a row; `--replace` empties the target first, which is what this used to do
-   unconditionally and what cost a built file in the field. Where the target's own slides paint in
+   unconditionally and what has cost a built file before. Where the target's own slides paint in
    colours its theme palette does not hold, migrate says so: mapping onto theme roles then does not
    adopt that brand, it replaces it with whatever the theme carries.
    `slide-library.py migrate <wireframes.pptx> --slide N --into <brand deck>
@@ -108,19 +108,19 @@ Each pattern in `library.json` states this in its own words under `content_fit`,
 is **not** for. Read that field rather than guessing from the name, show the preview, and let the
 user say yes before the build. Content that fits no pattern is the honest case for Compose.
 
-**A copied slide brings its whole history, and no geometry check sees it.** Cloning keeps the geometry, which is the point, and it also keeps the source's hard formatting, its comments, its speaker notes and its animations. Where the job is to bring content into a brand, that works against it: a real corporate deck measured 1186 hard colour values and 961 hard font settings that the master never asked for, and a colleague's comment reached a finished customer slide that way. `slide-library.py leftover-check <deck.pptx>` reports what a file carries beyond its content, and it removes nothing, because which of it belongs in a handover is a person's call.
+**A copied slide brings its whole history, and no geometry check sees it.** Cloning keeps the geometry, which is the point, and it also keeps the source's hard formatting, its comments, its speaker notes and its animations. Where the job is to bring content into a brand, that works against it: a copied deck can carry over a thousand hard colour values and as many hard font settings the master never asked for, and a comment written during review can reach a finished slide that way. `slide-library.py leftover-check <deck.pptx>` reports what a file carries beyond its content, and it removes nothing, because which of it belongs in a handover is a person's call.
 
 **Where the user has named the route, that decides, not the tier order.** The order below is about cost, and cost never outranks an instruction. Asked for a pattern taken out of the neutral library and put into the brand's master, that is the job even where cloning a finished slide would be faster: the two do not produce the same thing.
 
 **The tier is chosen per slide, never once for the job.** A set of pages is not one decision repeated. Page one may be composed, page two cloned from page one, page three migrated out of the neutral library and recoloured, page four cloned again from page two. Picking one tier at the start and holding it for twenty pages is what makes a run expensive, and it is the failure this list exists to prevent. The question is asked again at every page: what is the cheapest route to this one.
 
-**This order is enforced, not just stated.** `slide-library.py check <library> --task <slug> --shape <pattern> --why "<one sentence>"` prints the library, lists the brand's approved slides, and records both the look and the shape decision for the `doing/<slug>/` bundle a deck belongs to. **Reusing a pattern already used in this bundle is reported, not refused**: fine where the content has the same shape, worth a second look where it does not. Several pieces of a product family legitimately look alike. Verified in the field 2026-08-27, in both directions: first a second piece silently took the first one's shape, then a rule against repeating sent a run looking for a different pattern for every piece whether or not it carried the content; `library-check-guard` (`zanmai.py hook`, PreToolUse Bash) refuses to save a `.pptx` into that bundle until the record exists. Verified on a real deck: this exact order was skipped twice in one afternoon, straight to Compose, before anyone checked, which is where that run's whole cost went. Running the check is cheap even when Compose turns out to be the right call; the guard only proves the library was looked at, it never picks the tier.
+**This order is enforced, not just stated.** `slide-library.py check <library> --task <slug> --shape <pattern> --why "<one sentence>"` prints the library, lists the brand's approved slides, and records both the look and the shape decision for the `doing/<slug>/` bundle a deck belongs to. **Reusing a pattern already used in this bundle is reported, not refused**: fine where the content has the same shape, worth a second look where it does not. Several pieces of a product family legitimately look alike. Both directions have been seen: first a second piece silently took the first one's shape, then a rule against repeating sent a run looking for a different pattern for every piece whether or not it carried the content; `library-check-guard` (`zanmai.py hook`, PreToolUse Bash) refuses to save a `.pptx` into that bundle until the record exists. In practice: this exact order was skipped twice in one afternoon, straight to Compose, before anyone checked, which is where that run's whole cost went. Running the check is cheap even when Compose turns out to be the right call; the guard only proves the library was looked at, it never picks the tier.
 
-Cloning is a deep copy of every shape element into a new slide on the same layout, so fills, connectors, pills and geometry come along exactly. Verified on a real deck: 22 shapes stay 22, with the colour rotation intact.
+Cloning is a deep copy of every shape element into a new slide on the same layout, so fills, connectors, pills and geometry come along exactly. In practice: 22 shapes stay 22, with the colour rotation intact.
 
 **A spacing constant is measured, not eyeballed or invented, and one sample is not enough.** When several existing slides share a layout, read the same corner or edge position off all of them and take the median, not the value from whichever one was opened first: a single slide can carry a one-off nudge that is not the family's real grid. This turns a guessed margin into one line of arithmetic and is the same "measured from the file" standard the library harvest already applies to text slots, extended to geometry.
 
-**A geometry correction is a call, not a rewrite.** Text sitting on other text, or two frames misaligned even though their boxes agree, is not a fresh problem each time: `slide-library.py overlap-check <deck.pptx>` and `align-check <deck.pptx>` find both, measured against the real ink (a real font file's own metrics where one can be found, not a guess), and `nudge <deck.pptx> --shape <name> --dx <in> --dy <in> --into <out.pptx>` moves one shape by a distance with all four position values set explicitly, groups regrown around it. Verified on a real deck: the same correction, worked out from scratch (group-coordinate math, an "is the glyph painting past its box" check, a hand-written overlap scan with its own bugs to find), cost fifteen to nineteen minutes; called through these three, it is one command each. Deriving the geometry math again by hand is the failure this section exists to prevent, not a valid alternative when the deck already exists on disk.
+**A geometry correction is a call, not a rewrite.** Text sitting on other text, or two frames misaligned even though their boxes agree, is not a fresh problem each time: `slide-library.py overlap-check <deck.pptx>` and `align-check <deck.pptx>` find both, measured against the real ink (a real font file's own metrics where one can be found, not a guess), and `nudge <deck.pptx> --shape <name> --dx <in> --dy <in> --into <out.pptx>` moves one shape by a distance with all four position values set explicitly, groups regrown around it. In practice: the same correction, worked out from scratch (group-coordinate math, an "is the glyph painting past its box" check, a hand-written overlap scan with its own bugs to find), cost fifteen to nineteen minutes; called through these three, it is one command each. Deriving the geometry math again by hand is the failure this section exists to prevent, not a valid alternative when the deck already exists on disk.
 
 ## Fill
 
@@ -130,7 +130,7 @@ Unpack the template copy, set text in the placeholders of `slideN.xml` at run le
 
 When tier three is the honest answer, **derive from a copy of a real deck that already carries the brand, never from an empty `Presentation()`.** Open the copy, drop the slides you don't need, and add the new one from that file's own `prs.slide_layouts`, the layout object, not a redrawn look-alike. Master, layouts, theme and fonts come along because nothing was rebuilt. Pick the layout whose purpose and placeholder set fit the content, rather than building free on a blank. What a browser-shaped instinct would draw as a table is usually already a form in the library.
 
-Building a fresh, empty presentation and copying the CI (theme XML, measured positions) into it by hand is a fallback for when no real deck exists at all, not a shortcut when one does. It only *looks* equivalent: positions are re-measured and typed in rather than inherited, so a coordinate can be close but wrong (a placeholder and the fixed logo element next to it are easy to swap), and nothing catches that a value was read from the wrong shape. Verified on a real deck: this technique's own excuse, "the original file's unused media stay attached, bloating the copy," does not hold either. `python-pptx` only serialises parts the surviving tree still references; removing unused slides and layouts drops their exclusive media on save (measured: 486 parts down to 33, 10.4 MB down to 36 kB). There is no real cost trade-off left in favour of the transplant path.
+Building a fresh, empty presentation and copying the CI (theme XML, measured positions) into it by hand is a fallback for when no real deck exists at all, not a shortcut when one does. It only *looks* equivalent: positions are re-measured and typed in rather than inherited, so a coordinate can be close but wrong (a placeholder and the fixed logo element next to it are easy to swap), and nothing catches that a value was read from the wrong shape. In practice: this technique's own excuse, "the original file's unused media stay attached, bloating the copy," does not hold either. `python-pptx` only serialises parts the surviving tree still references; removing unused slides and layouts drops their exclusive media on save (measured: 486 parts down to 33, 10.4 MB down to 36 kB). There is no real cost trade-off left in favour of the transplant path.
 
 **Check the theme fonts before trusting anything.** A master can carry a theme face the machine does not have, and then every inheriting placeholder is silently swapped: verified on a real customer template whose theme was Calibri Light and Calibri, neither installed, which is why its previews came out in a serif nobody chose. Fix the theme in the template once; until then pin the brand face per run.
 
@@ -140,7 +140,7 @@ Building a fresh, empty presentation and copying the CI (theme XML, measured pos
 
 - The master is never modified. Never clone a finished slide (it corrupts the file); one layout per look, add from it, fill. Derived layouts with a `1_` prefix are the copy-and-modify artifact.
 - A new slide is never built in an empty `Presentation()` **while a real deck carrying the brand is available**. Derive from a copy of that deck, see Create. Where there is no brand deck at all (a neutral wireframe, a first template for a vault that has none), the empty presentation is the correct start, and this rule does not apply. Stated because it was read as absolute once and cost a question that had an obvious answer.
-- **Repositioning an inherited placeholder sets all four of `left`, `top`, `width`, `height`, plus `text_frame.vertical_anchor`, together, never just the values that seem to need changing.** Verified on a real deck: setting only `left` and `width` on a placeholder still inheriting its position from the layout left `top`/`height` implicit, and python-pptx wrote an `xfrm` with `off y="0" ext cy="0"`, and the title rendered pinned to the slide's top edge. There is no partial-override state that is safe to leave implicit.
+- **Repositioning an inherited placeholder sets all four of `left`, `top`, `width`, `height`, plus `text_frame.vertical_anchor`, together, never just the values that seem to need changing.** In practice: setting only `left` and `width` on a placeholder still inheriting its position from the layout left `top`/`height` implicit, and python-pptx wrote an `xfrm` with `off y="0" ext cy="0"`, and the title rendered pinned to the slide's top edge. There is no partial-override state that is safe to leave implicit.
 - **A gap between two elements is closed by measuring, the same way a spacing constant is:** step the variable dimension (usually the type size of what sits above the gap) in small increments (0.5pt worked on a real deck) until the box's measured extent fills the space, rather than picking a plausible-looking value.
 - Diagrams are native chart objects with data, never an image. Real photos are images. No imported SVG or EMF for vector content.
 - Animation is not covered by this toolchain, name it, never promise it silently.
@@ -149,7 +149,7 @@ Building a fresh, empty presentation and copying the CI (theme XML, measured pos
 
 Only PowerPoint itself renders a `.pptx` exactly. That was long taken to mean there is no
 useful headless render at all, and the consequence was that a deck went out having been
-described rather than seen. **That consequence was wrong, and it cost the most on 2026-08-26**,
+described rather than seen. **That consequence was wrong, and it cost the most **,
 when ten faults in a freshly built library were found by looking and by nothing else: shapes
 sitting on each other, a two-digit marker breaking over two lines, banding that was white on
 white because the brand had put the same value on two theme roles. None of those wrap, none is
@@ -172,7 +172,7 @@ widths or where a line breaks. `overflow-check` measures the real TTF through Pi
 right where the render is wrong. Neither gap weakens the questions above.
 
 **Hidden slides are skipped by the export unless it is told otherwise, and nothing says so.**
-Measured on a real deck of 27 slides where 16 were hidden and 11 came out. `render` passes the
+Measured on a deck of 27 slides where 16 were hidden and 11 came out. `render` passes the
 flag; anyone exporting by hand has to.
 
 If LibreOffice is not on the machine, `render` says so and names the one command that installs
@@ -201,7 +201,7 @@ empty placeholders left standing, runs that override the layout with their own f
 colour, colours outside the palette, and whether a diagram is a chart object or a flattened
 picture. Red means not finished.
 
-**A structural check passing (renderer, XML diff, `design-check.py`) is not proof PowerPoint will open the file cleanly.** Verified on a real deck: a file that passed all three still triggered PowerPoint's own repair dialog on open. None of the headless checks model everything PowerPoint's loader validates. When a repair dialog fires: let PowerPoint repair and save the result, then diff the repaired file's XML against the pre-repair copy part by part. The diff names the exact invalid element; guessing at the cause from the outside does not.
+**A structural check passing (renderer, XML diff, `design-check.py`) is not proof PowerPoint will open the file cleanly.** In practice: a file that passed all three still triggered PowerPoint's own repair dialog on open. None of the headless checks model everything PowerPoint's loader validates. When a repair dialog fires: let PowerPoint repair and save the result, then diff the repaired file's XML against the pre-repair copy part by part. The diff names the exact invalid element; guessing at the cause from the outside does not.
 
 Two confirmed causes of that same repair dialog, both worth checking directly rather than waiting for the diff: an inherited placeholder repositioned with only some of `left`/`top`/`width`/`height` set (see Create), and a shape whose hyperlink or other relationship points at a `.rels` entry that no longer exists on a deck with slides removed: the relationship, not the visible content, is what PowerPoint's loader rejects. When slides are deleted from a copy, check that no remaining shape's `_rels` reference a target that went with them.
 
