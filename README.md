@@ -10,10 +10,6 @@ already there.
 Everything in it opens in any editor, with or without this. The AI is Claude, through
 [Claude Code](https://claude.com/claude-code).
 
-> **Developer preview, 0.4.7.** Filing, search and the journal are in daily use; design and image
-> generation work but are still being sharpened. A new version can change how things behave, so keep
-> your own backups and read the [changelog](zanmai/system/CHANGELOG.md) before you update.
-
 ## What it does, and where things land
 
 The folders are named after what is going on rather than what stage a file is at, so the right one is
@@ -63,7 +59,11 @@ winget, take Python from [python.org](https://www.python.org/downloads/), tickin
 PATH" on Windows, and install Claude Code with `irm https://claude.ai/install.ps1 | iex` there.
 
 Optional: **Node.js** for connected features such as image generation. Anything else a job needs,
-Zanmai names and installs on your go. [Requirements and installation](zanmai/system/docs/install/index.md).
+Zanmai names with its size and fetches on your go, and `zanmai.py tools list` shows the whole set at
+any time: what each one is for, how big it is, and whether it is already on your machine. Nothing is
+installed from a question you cannot see the contents of.
+[What gets installed](zanmai/system/docs/tools.md) ·
+[requirements and installation](zanmai/system/docs/install/index.md).
 
 ## Install
 

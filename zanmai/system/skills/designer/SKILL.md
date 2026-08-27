@@ -98,13 +98,19 @@ piece, and the next document starts from nothing again. So the kit is written un
 there.
 
 **Between the brand's own pieces and composing from nothing there is a third source: the
-neutral wireframe library** (`zanmai/system/templates/wireframes/`, 58 patterns). Greyscale
+neutral wireframe library** (`zanmai/system/templates/wireframes/`, 57 patterns). Greyscale
 slides that use theme roles and theme fonts only, never a literal value, so taking one into a
 brand is a theme swap rather than a rebuild: `slide-library.py migrate <deck> --slide N --into
 <brand.pptx> --out <new.pptx>` puts the arrangement into a copy of the brand's own file, where
 master, layouts, logo and theme come from. Each pattern carries what it is for in plain words
 (`content_fit`), what may vary and within which bounds (`flex`), and a preview picture, so a
 pattern is chosen by what the content is, not by what a name suggests.
+
+**A pattern is a starting point, and an element may be rebuilt where the brand takes its function
+away.** Colour, type and corner shape come from the target, and the arrangement usually survives
+them; where it does not, the element changes. An element docked flush to a straight edge has no
+position at all once that edge is rounded, so it moves or is built another way. What counts is what
+the piece says, not how closely it still resembles the pattern.
 
 **What `migrate` reports rather than silently fixing, all three measured 2026-08-26 on a real
 brand:** literal colours that came across (only a person can say which role a `#2E86AB` stood

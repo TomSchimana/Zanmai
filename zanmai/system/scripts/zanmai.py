@@ -79,6 +79,12 @@ DOING_DIR = "doing"             # the desk: work that has an end. The one place 
 HABITS_DIR = "habits"           # what has a beat
 KNOWLEDGE_DIR = "knowledge"     # everything gathered, no ranking, and it may contradict itself
 TRUSTED_DIR = "trusted"         # what I have settled on. Small, curated, one answer.
+# The one area inside `trusted/` the system knows by name, because four experts read it by path.
+# Created empty at setup: without the folder there is nowhere for an approved piece to land, and
+# every run starts from nothing again. Measured 2026-08-27: a first build of two slides took 26
+# minutes and 76 tool calls, the correction of the same two 2.5 minutes and 11, and the only
+# difference was that the way was known the second time.
+BRANDS_DIR = f"{TRUSTED_DIR}/brands"
 
 # Inside the system folder.
 SYSTEM_MATERIAL_DIR = f"{SYSTEM_DIR}/system"        # distribution, replaced on update
@@ -89,8 +95,8 @@ DESIGN_DIR = f"{SYSTEM_DIR}/design"   # one folder per brand, update-immune, wri
 LOGS_DIR = f"{SYSTEM_DIR}/logs"
 HISTORY_DIR = f"{SYSTEM_DIR}/history"       # the snapshot repository, a git dir of its own
 RUNTIME_DIR = f"{SYSTEM_DIR}/runtime"
-SCRATCH_DIR = f"{SYSTEM_DIR}/temp"          # what the machine puts down mid-job, 30 days
-TRASH_DIR = f"{SYSTEM_DIR}/trash"           # what was thrown away, 30 days, restorable
+SCRATCH_DIR = f"{SYSTEM_DIR}/temp"          # what the machine puts down mid-job, days
+TRASH_DIR = f"{SYSTEM_DIR}/trash"           # what was thrown away, restorable for a month
 USER_FILE = f"{SYSTEM_DIR}/user.md"
 ACTIVITY_LOG_FILE = f"{MEMORY_DIR}/activity-log.md"
 
@@ -2831,7 +2837,11 @@ def _dated_files_ahead(vault: Path, days: int) -> list[dict]:
         treffer.append({
             "date": m.group(0),
             "days": (wann - heute).days,
-            "label": _human_label_for_slug(pfad.stem[len(m.group(0)):].strip("-_ ") or pfad.stem),
+            # the date comes out wherever it sits. Cutting the first ten characters assumed it
+            # always leads: `UEBERGABE-2026-08-27` then kept the date as its own label and showed
+            # up in a greeting as "2026 08 27", a thing nobody had ever named.
+            "label": _human_label_for_slug(
+                (pfad.stem[:m.start()] + pfad.stem[m.end():]).strip("-_ ") or pfad.stem),
             "path": rel.as_posix(),
         })
     return sorted(treffer, key=lambda e: e["days"])
@@ -5609,6 +5619,7 @@ REQUIRED_FOLDERS_CORE = [
     HABITS_DIR,
     KNOWLEDGE_DIR,
     TRUSTED_DIR,
+    BRANDS_DIR,
     ARCHIVE_DIR,
     # Who it is about.
     PEOPLE_DIR,
@@ -6130,9 +6141,9 @@ the kind of file decides what happens to it, not a sub-folder. It empties itself
 - `{USER_FILE}`: your profile.
 - `{SYSTEM_MATERIAL_DIR}/`: the Zanmai distribution (do not edit, replaced on update).
 - `{MEMORY_DIR}/`: cross-session learnings and activity log.
-- `{HISTORY_DIR}/`: the snapshot history, every version of every file kept once.
-- `{TRASH_DIR}/`: what was thrown away, restorable for 30 days.
-- `{SCRATCH_DIR}/`: what the machine puts down mid-job, cleared after 30 days.
+- `{HISTORY_DIR}/`: the snapshots taken before something risky, kept {SNAPSHOT_RETENTION_DAYS} days.
+- `{TRASH_DIR}/`: what was thrown away, restorable for {TRASH_RETENTION_DAYS} days.
+- `{SCRATCH_DIR}/`: what the machine puts down mid-job, cleared after {SCRATCH_RETENTION_DAYS} days.
 - `{LOGS_DIR}/`: session logs and operation reports.
 """
 
@@ -6527,16 +6538,24 @@ def _write_dist_exclude(vault: Path) -> bool:
     return True
 
 
-# How long the machine keeps what it put aside. One number for both folders, because two numbers
-# would be two things to remember and nobody would remember them. Thirty days is long
-# enough that "I need that back" has already happened by then, and short enough that a vault does not
-# quietly grow a second copy of itself.
+# How long the machine keeps what it put aside.
 #
 # This runs on its own, at session start, and reports what it did. That is deliberate: a cleanup that
-# waits for someone to agree to it is a cleanup that never happens, and both of these folders hold
-# only what the machine itself put there. Nothing the user filed is ever in scope. Snapshots are not
-# in it at all any more: the history keeps every file once by content, so age is not what costs.
-RETENTION_DAYS = 30
+# waits for someone to agree to it is a cleanup that never happens, and every folder it reaches holds
+# only what the machine itself put there. Nothing the user filed is ever in scope.
+#
+# One number for all three was the earlier design, and it was wrong for a reason worth writing down:
+# it read the three folders as one kind of leaving. Snapshots were then left out of the sweep
+# altogether, on the argument that content-addressed storage makes age irrelevant. It does not. A
+# changed video or deck is stored again in full, and one live vault reached 2.6 GB in twenty-five
+# snapshots that way, nearly all of it the user's own binaries carried a second time.
+# Three leavings, three clocks. The trash holds what the user threw away, so it waits a month for
+# them to change their mind. The other two are the machine's own: a scratch folder outlives its job
+# by nothing at all, and a snapshot exists to undo an update or a large edit that went wrong, which
+# is known within days. Keeping those for a month is not caution, it is a pile.
+TRASH_RETENTION_DAYS = 30
+SCRATCH_RETENTION_DAYS = 7
+SNAPSHOT_RETENTION_DAYS = 7
 
 def _lesbare_groesse(bytes_gesamt: float) -> str:
     for einheit in ("B", "KB", "MB", "GB"):
@@ -6555,7 +6574,7 @@ def _trash_days_past_retention(vault: Path) -> list[Path]:
     root = vault / TRASH_DIR
     if not root.is_dir():
         return []
-    grenze = datetime.now() - timedelta(days=RETENTION_DAYS)
+    grenze = datetime.now() - timedelta(days=TRASH_RETENTION_DAYS)
     alt = []
     for tag in sorted(p for p in root.iterdir() if p.is_dir()):
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", tag.name):
@@ -6565,11 +6584,11 @@ def _trash_days_past_retention(vault: Path) -> list[Path]:
     return alt
 
 
-def _past_retention(root: Path) -> list[Path]:
+def _past_retention(root: Path, days: int) -> list[Path]:
     """Top-level entries under a machine folder that are older than the retention window."""
     if not root.is_dir():
         return []
-    grenze = (datetime.now() - timedelta(days=RETENTION_DAYS)).timestamp()
+    grenze = (datetime.now() - timedelta(days=days)).timestamp()
     return sorted(p for p in root.iterdir()
                   if not p.name.startswith(".") and p.stat().st_mtime < grenze)
 
@@ -6592,19 +6611,71 @@ def _sweep_retention(vault: Path) -> list[str]:
         for tag in weg:
             shutil.rmtree(tag)
         notes.append(f"emptied {dateien} file(s) from {TRASH_DIR}/, thrown away more than "
-                     f"{RETENTION_DAYS} days ago ({groesse}).")
+                     f"{TRASH_RETENTION_DAYS} days ago ({groesse}).")
 
-    liegen = _past_retention(vault / SCRATCH_DIR)
+    liegen = _past_retention(vault / SCRATCH_DIR, SCRATCH_RETENTION_DAYS)
     if liegen:
         for p in liegen:
             shutil.rmtree(p) if p.is_dir() else p.unlink()
         notes.append(f"cleared {len(liegen)} leftover(s) from {SCRATCH_DIR}/ older than "
-                     f"{RETENTION_DAYS} days. Scratch space is not meant to hold anything that long, "
-                     f"so each of those is a run that never finished tidying up after itself.")
+                     f"{SCRATCH_RETENTION_DAYS} days. Scratch space is not meant to hold anything "
+                     f"that long, so each of those is a run that never finished tidying up after "
+                     f"itself.")
+
+    notes.extend(_sweep_snapshots(vault))
 
     if notes:
         _append_activity_log(vault, "zanmai.py", "retention sweep: " + " ".join(notes))
     return notes
+
+
+def cmd_gaps(args: argparse.Namespace) -> int:
+    """What the experts wrote into the tooling log recently, and nobody read.
+
+    A dispatched expert has no way to speak while it runs: it returns to whoever called it, once,
+    at the end. `builder-gaps.md` is the one channel it can use in the meantime, and the experts use
+    it without being told to. What was missing is the other half, somebody reading it: measured
+    2026-08-27, a whole day of entries sat there, including one that said the expert cannot send
+    messages at all, and they reached the workshop only where a person happened to relay one.
+    """
+    vault = Path(args.vault).resolve()
+    grenze = datetime.now() - timedelta(hours=args.hours)
+    dateien = sorted((vault / LOGS_DIR).glob("*/*/builder-gaps.md"))
+    if not dateien:
+        print(f"no {LOGS_DIR}/<year>/<month>/builder-gaps.md in this vault")
+        return 0
+    gefunden = 0
+    for datei in dateien:
+        if datetime.fromtimestamp(datei.stat().st_mtime) < grenze:
+            continue
+        text = datei.read_text(encoding="utf-8", errors="replace")
+        # Entries start at a heading. Anything under a heading whose date is inside the window is
+        # new enough to matter; a file without dated headings is printed from its tail instead.
+        bloecke, aktuell = [], []
+        for zeile in text.splitlines():
+            if zeile.startswith("## "):
+                if aktuell:
+                    bloecke.append(aktuell)
+                aktuell = [zeile]
+            elif aktuell:
+                aktuell.append(zeile)
+        if aktuell:
+            bloecke.append(aktuell)
+        for block in bloecke:
+            datum = re.search(r"(\d{4}-\d{2}-\d{2})", block[0])
+            if datum and datetime.strptime(datum.group(1), "%Y-%m-%d") < grenze - timedelta(days=1):
+                continue
+            if not datum:
+                continue
+            gefunden += 1
+            print("\n".join(block[:12]).rstrip())
+            print()
+    if not gefunden:
+        print(f"nothing new in builder-gaps.md in the last {args.hours} hour(s)")
+    else:
+        print(f"{gefunden} entry/entries from the last {args.hours} hour(s). These are the experts' "
+              f"only way to report while they run; act on them or carry them where they belong.")
+    return 0
 
 
 def cmd_housekeeping(args: argparse.Namespace) -> int:
@@ -6612,7 +6683,8 @@ def cmd_housekeeping(args: argparse.Namespace) -> int:
     vault = Path(args.vault).resolve()
     notes = _sweep_retention(vault)
     if not notes:
-        print(f"ok: nothing is past {RETENTION_DAYS} days")
+        print(f"ok: nothing is past its keeping time ({TRASH_RETENTION_DAYS} days in the trash, "
+              f"{SCRATCH_RETENTION_DAYS} for scratch space and snapshots)")
         return 0
     for n in notes:
         print(f"ok: {n}")
@@ -7257,12 +7329,13 @@ def cmd_setup_validate(args: argparse.Namespace) -> int:
     if host:
         present = [rel for rel in MACHINE_LOCAL_PATHS + BULKY_PATHS if (vault / rel).exists()]
         how = next((h for name, h in SYNC_HOSTS if name == host), "")
-        notes.append(f"this vault sits under {host}, which is fine as a backup")
+        notes.append(f"this vault sits under {host}, which is a fine place for it")
         if present:
-            notes.append("keep these out of the copy: " + ", ".join(present))
+            notes.append("these three are worth leaving out of the copy: " + ", ".join(present))
             notes.append(f"  {host}: {how}")
-            notes.append("  runtime/ and work/ describe this machine only, and the snapshots are "
-                         "full copies of the vault, so a backup would contain a backup")
+            notes.append("  runtime/ and temp/ describe this machine only, and the history holds "
+                         "jump-back points that exist for a few days, not a backup worth carrying")
+            notes.append("  it is your call, nothing here depends on it")
         conflicts = sorted(
             str(f.relative_to(vault))
             for f in vault.glob("**/*")
@@ -7433,7 +7506,8 @@ _HISTORY_EXCLUDE = (
 )
 
 
-def _git(vault: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+def _git(vault: Path, *args: str, check: bool = True,
+         env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     """Run git against the history repository: its own git dir, the vault as the working tree.
 
     Two repositories share this folder. The distribution's `.git/` tracks what ships and is how an
@@ -7444,7 +7518,8 @@ def _git(vault: Path, *args: str, check: bool = True) -> subprocess.CompletedPro
     env = {**os.environ,
            "GIT_DIR": str(vault / HISTORY_DIR),
            "GIT_WORK_TREE": str(vault),
-           "GIT_CONFIG_NOSYSTEM": "1"}
+           "GIT_CONFIG_NOSYSTEM": "1",
+           **(env_extra or {})}
     result = subprocess.run(["git", *args], env=env, cwd=str(vault),
                             capture_output=True, text=True)
     if check and result.returncode != 0:
@@ -7545,6 +7620,66 @@ def cmd_snapshot_show(args: argparse.Namespace) -> int:
         return 1
     print(out.stdout, end="")
     return 0
+
+
+def _snapshot_entries(vault: Path) -> list[tuple[str, str, str]]:
+    """Every snapshot, newest first: full hash, committed date in ISO, subject line."""
+    log = _git(vault, "log", "--format=%H%x1f%cI%x1f%s", check=False)
+    if log.returncode != 0 or not log.stdout.strip():
+        return []
+    eintraege = []
+    for zeile in log.stdout.splitlines():
+        teile = zeile.split("\x1f")
+        if len(teile) == 3:
+            eintraege.append((teile[0], teile[1], teile[2]))
+    return eintraege
+
+
+def _sweep_snapshots(vault: Path) -> list[str]:
+    """Cut the snapshot history back to its keeping window.
+
+    A snapshot is a point to jump back to, taken before an update or a large edit, and whether that
+    went wrong is known within days. Kept for a month it stops being a safety line and becomes a
+    pile: measured in one live vault, 25 of them held 2.6 GB, almost all of it the user's own video
+    and slide files carried along a second time.
+
+    The newest one always survives, however old it is. A vault nobody touched for three weeks would
+    otherwise sit with no jump-back point at all, which is the one state this whole mechanism exists
+    to prevent.
+
+    The cut is a rebuild, not a rewrite in place: the surviving snapshots are re-committed onto a
+    fresh root with their trees and dates unchanged, the branch is moved over, and the objects the
+    dropped ones held are then unreachable and go with the prune. Their hashes change, which is why
+    `snapshot list` is the way to name one rather than a hash written down somewhere.
+    """
+    if not _history_ready(vault):
+        return []
+    eintraege = _snapshot_entries(vault)
+    if len(eintraege) < 2:
+        return []
+    grenze = datetime.now().astimezone() - timedelta(days=SNAPSHOT_RETENTION_DAYS)
+    behalten = [e for e in eintraege if datetime.fromisoformat(e[1]) >= grenze] or [eintraege[0]]
+    if len(behalten) == len(eintraege):
+        return []
+    vorher = sum(f.stat().st_size for f in (vault / HISTORY_DIR).rglob("*") if f.is_file())
+    elternteil = ""
+    for commit, datum, betreff in reversed(behalten):   # oldest first, so each gets its parent
+        baum = _git(vault, "rev-parse", f"{commit}^{{tree}}").stdout.strip()
+        args = ["commit-tree", baum, "-m", betreff]
+        if elternteil:
+            args += ["-p", elternteil]
+        elternteil = _git(vault, *args,
+                          env_extra={"GIT_AUTHOR_DATE": datum, "GIT_COMMITTER_DATE": datum}
+                          ).stdout.strip()
+    _git(vault, "update-ref", "refs/heads/main", elternteil)
+    _git(vault, "reflog", "expire", "--expire=now", "--all", check=False)
+    _git(vault, "gc", "--prune=now", "--quiet", check=False)
+    nachher = sum(f.stat().st_size for f in (vault / HISTORY_DIR).rglob("*") if f.is_file())
+    weg = len(eintraege) - len(behalten)
+    return [f"dropped {weg} snapshot(s) older than {SNAPSHOT_RETENTION_DAYS} days, "
+            f"{len(behalten)} left, {_lesbare_groesse(vorher)} -> {_lesbare_groesse(nachher)}. "
+            f"A snapshot is a point to jump back to after an update or a large edit, not a backup, "
+            f"so it is not kept once that is known to have gone well."]
 
 
 def cmd_snapshot_compact(args: argparse.Namespace) -> int:
@@ -10293,7 +10428,7 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
         f"keeps the file and its original path so `zanmai.py file restore` can bring it back. If it "
         f"is your own working material, it does not belong outside the vault: put intermediates in "
         f"`{SCRATCH_DIR}/<task>/`, where clearing up is permitted and the retention sweep clears "
-        f"what is left after {RETENTION_DAYS} days. That sweep is the only thing that really "
+        f"what is left after {SCRATCH_RETENTION_DAYS} days. That sweep is the only thing that really "
         f"deletes. Found: {treffer!r}.",
         file=sys.stderr,
     )
@@ -11101,7 +11236,19 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     lines.append("")
     lines.append("---")
     greeting_rel = f"{SYSTEM_MATERIAL_DIR}/skills/greeting/SKILL.md"
-    if (vault / greeting_rel).exists():
+    # A resumed conversation is not a new one. The host says which it is in the payload, and where
+    # it says resume the session already carries everything a greet exists to establish. Greeting
+    # there reads as amnesia: a user reopened a running build in another terminal on 2026-08-27,
+    # got a full greet with a task list, and answered "I am completely lost about where you are".
+    fortsetzung = str(payload.get("source") or "").lower() in ("resume", "compact")
+    if fortsetzung:
+        lines.append(
+            f"- **This session was resumed, so it is not greeted.** The thread is picked up where "
+            f"it stopped: what is running, what it was waiting for, what comes next, in one or two "
+            f"sentences. The list above is context, not something to read out. Where the thread is "
+            f"genuinely gone, say so in one line and ask, rather than opening with a greeting."
+        )
+    elif (vault / greeting_rel).exists():
         lines.append(
             f"- **Read `{greeting_rel}` and follow it before the first user-facing sentence.** It "
             f"carries the greet shape, the mandatory reads and what a greet must never contain. "
@@ -12030,6 +12177,86 @@ def cmd_tools_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _tools_table(tools: dict) -> str:
+    """The register as a table, so the documentation page cannot drift from the register.
+
+    Generated rather than written: the page a user reads about what gets installed has to say
+    what the machine will actually install, and a hand-kept second copy of a list is how the
+    two stop matching.
+    """
+    who = {"venv-pip": "Zanmai fetches it", "node-package": "Zanmai fetches it",
+           "file-fetch": "Zanmai fetches it", "binary-fetch": "Zanmai fetches it"}
+    lines = ["| Tool | What it is for | Size | Who installs it |", "|---|---|---|---|"]
+    order = {"prerequisite": 0, "on-demand": 1, "recommended": 2, "host-configured": 3}
+    for tid, spec in sorted(tools.items(), key=lambda kv: (order.get(kv[1].get("tier"), 9), kv[0])):
+        if spec.get("tier") == "host-configured":
+            continue
+        mb = spec.get("size_mb")
+        size = "-" if mb is None else ("included" if mb == 0 else
+                                       (f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb} MB"))
+        method = (spec.get("provision") or {}).get("method")
+        wer = ("you, before Zanmai starts" if spec.get("tier") == "prerequisite"
+               else who.get(method, "you, with one command"))
+        purpose = (spec.get("purpose") or "").split(". ")[0].rstrip(".")
+        lines.append(f"| `{tid}` | {purpose} | {size} | {wer} |")
+    return "\n".join(lines)
+
+
+def _size_text(spec: dict) -> str:
+    """What this tool costs in disk, or nothing where it was never measured."""
+    mb = spec.get("size_mb")
+    if mb is None:
+        return ""
+    if mb == 0:
+        return "included"
+    return f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb} MB"
+
+
+def cmd_tools_list(args: argparse.Namespace) -> int:
+    """Every outside program Zanmai can use, with what it is for and what it costs.
+
+    Written because a user was asked whether to fetch a group of tools and could not see
+    which ones they were: the setup skill named their purpose and withheld their names, so
+    the question had no answer. A number nobody sees is not transparency.
+    """
+    vault = Path(args.vault).resolve()
+    tools = _load_register().get("tools", {})
+    osname = _current_os()
+    if getattr(args, "markdown", False):
+        print(_tools_table(tools))
+        return 0
+    tiers = [("prerequisite", "You bring these. Zanmai never installs them behind your back."),
+             ("on-demand", "Fetched the first time a job needs it."),
+             ("recommended", "Makes things easier, never required."),
+             ("host-configured", "Set up at the host, nothing to install here.")]
+    cache = _load_tool_cache(vault)
+    total = 0
+    for tier, what in tiers:
+        rows = sorted((t, sp) for t, sp in tools.items() if sp.get("tier") == tier)
+        if not rows:
+            continue
+        print(f"\n{tier} ({len(rows)}) - {what}")
+        for tid, spec in rows:
+            present = _detect_tool_cached(vault, tid, spec, osname, cache).get("present")
+            mark = "have" if present is True else ("--" if present is False else "??")
+            size = _size_text(spec)
+            if present is not True and spec.get("size_mb"):
+                total += spec["size_mb"]
+            fetches = (spec.get("provision") or {}).get("method") in (
+                "venv-pip", "node-package", "file-fetch", "binary-fetch")
+            who = "Zanmai fetches" if fetches and tier == "on-demand" else "you install"
+            if tier in ("prerequisite", "host-configured"):
+                who = ""
+            purpose = (spec.get("purpose") or "").split(". ")[0]
+            print(f"  [{mark}] {tid:15} {size:>9}  {who:15} {purpose[:70]}")
+    if total:
+        print(f"\nStill missing, added up: about {total} MB. Libraries share dependencies, "
+              f"so the real total is lower.")
+    print("\nSizes measured on macOS; see zanmai/system/docs/tools.md for the same list in prose.")
+    _save_tool_cache(vault, cache)
+    return 0
+
+
 def cmd_tools_check(args: argparse.Namespace) -> int:
     vault = Path(args.vault).resolve()
     spec = (_load_register().get("tools") or {}).get(args.id)
@@ -12236,22 +12463,35 @@ def cmd_tools_ensure_all(args: argparse.Namespace) -> int:
 
     print(f"{len(da)} of {len(tools)} tool(s) already here.")
     if automatisch:
-        print(f"\nZanmai can fetch these itself ({len(automatisch)}):")
+        summe = sum(sp.get("size_mb") or 0 for _t, sp, _m in automatisch)
+        print(f"\nZanmai can fetch these itself ({len(automatisch)}"
+              + (f", about {summe} MB together" if summe else "") + "):")
         for tid, spec, _m in automatisch:
-            print(f"  {tid}: {(spec.get('purpose') or '').split('.')[0]}.")
+            groesse = _size_text(spec)
+            print(f"  {tid:15} {groesse:>9}  {(spec.get('purpose') or '').split('. ')[0]}.")
     if selbst:
         print(f"\nThese are yours to install, each with the one command that does it ({len(selbst)}):")
         for tid, spec, _m in selbst:
             hint = ((spec.get("os") or {}).get(osname) or {}).get("install_hint") or {}
-            print(f"  {tid}: {hint.get('text') or (spec.get('purpose') or '').split('.')[0]}")
+            groesse = _size_text(spec)
+            print(f"  {tid:15} {groesse:>9}  {hint.get('text') or (spec.get('purpose') or '').split('. ')[0]}")
     if extern:
         print(f"\nConfigured at the host, not here: {', '.join(extern)}")
     if not automatisch:
         print("\nNothing left for Zanmai to fetch.")
         return 0
     if not args.yes:
-        print("\nSay the word and Zanmai fetches the first group; the second stays yours.")
+        print("\nSay the word and Zanmai fetches the first group; the second stays yours. "
+              "`--only a,b` fetches just those.")
         return 0
+
+    gewaehlt = [x.strip() for x in (getattr(args, "only", "") or "").split(",") if x.strip()]
+    if gewaehlt:
+        unbekannt = [g for g in gewaehlt if g not in {t for t, _s, _m in automatisch}]
+        if unbekannt:
+            print(f"not on the fetchable list: {', '.join(unbekannt)}")
+            return 1
+        automatisch = [x for x in automatisch if x[0] in gewaehlt]
 
     print("")
     fehler = 0
@@ -12594,6 +12834,10 @@ def main(argv: list[str]) -> int:
     pt_chk.add_argument("id")
     pt_chk.add_argument("vault", nargs="?", default=".")
     pt_chk.set_defaults(func=cmd_tools_check)
+    pt_lst = sub_tools.add_parser("list", help="Every outside program Zanmai can use: what it is for, how big it is, who installs it.")
+    pt_lst.add_argument("vault", nargs="?", default=".")
+    pt_lst.add_argument("--markdown", action="store_true", help="The register as a table, the form the documentation page carries.")
+    pt_lst.set_defaults(func=cmd_tools_list)
     pt_ens = sub_tools.add_parser("ensure", help="Provision an on-demand tool at first use (venv libs now; binaries later).")
     pt_ens.add_argument("id")
     pt_ens.add_argument("vault", nargs="?", default=".")
@@ -12602,6 +12846,7 @@ def main(argv: list[str]) -> int:
     pt_all = sub_tools.add_parser("ensure-all", help="What this vault still needs, in one pass. Reports without --yes; that report is the question the user answers.")
     pt_all.add_argument("vault", nargs="?", default=".")
     pt_all.add_argument("--yes", action="store_true", help="Fetch everything Zanmai can fetch itself. What needs the user, or money, or an account stays theirs.")
+    pt_all.add_argument("--only", default="", help="Comma-separated ids to fetch instead of the whole group, so the answer can be some rather than all.")
     pt_all.set_defaults(func=cmd_tools_ensure_all)
 
     # setup -----
@@ -12698,7 +12943,14 @@ def main(argv: list[str]) -> int:
     pi_scan.set_defaults(func=cmd_import_scan)
 
     # housekeeping -----
-    p_house = sub.add_parser("housekeeping", help=f"Clear what is past {RETENTION_DAYS} days in the trash, the scratch area and the snapshots. Runs itself at session start.")
+    p_gaps = sub.add_parser("gaps", help="what the experts wrote into builder-gaps.md recently. "
+                                        "Read after a dispatch returns; it is their only channel "
+                                        "while they run.")
+    p_gaps.add_argument("vault", nargs="?", default=".")
+    p_gaps.add_argument("--hours", type=int, default=24)
+    p_gaps.set_defaults(func=cmd_gaps)
+
+    p_house = sub.add_parser("housekeeping", help=f"Clear what is past its keeping time: the trash after {TRASH_RETENTION_DAYS} days, the scratch area and the snapshots after {SCRATCH_RETENTION_DAYS}. Runs itself at session start.")
     p_house.add_argument("vault", nargs="?", default=".")
     p_house.set_defaults(func=cmd_housekeeping)
 

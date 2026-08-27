@@ -26,6 +26,13 @@
         "cards without a heading -> plain text columns"
       ],
       "viewing": "screen",
+      "order": "equal",
+      "movement": false,
+      "carrier": "the row of cards",
+      "elements": [
+        2,
+        4
+      ],
       "slide": 1,
       "preview": "previews/cards-row.png",
       "checks": {
@@ -33,45 +40,6 @@
         "overflow": 0,
         "off_slide": 0,
         "overlaps_by_design": 3
-      }
-    },
-    {
-      "id": "cards-row-kicker",
-      "name": "Row of cards with a kicker line",
-      "structure": "Same as the card row, with an optional short line above the title and everything left-aligned.",
-      "content_fit": [
-        "the kicker names the context the slide belongs to - a section, a topic, a client",
-        "use it when a deck has several slides on the same subject",
-        "it is a slot, not decoration: without it the title moves up"
-      ],
-      "flex": {
-        "cards": {
-          "default": 3,
-          "range": [
-            2,
-            4
-          ]
-        },
-        "kicker": {
-          "default": 1,
-          "range": [
-            0,
-            1
-          ]
-        }
-      },
-      "variants": [
-        "centred instead of left-aligned",
-        "kicker removed -> the plain card row"
-      ],
-      "viewing": "screen",
-      "slide": 2,
-      "preview": "previews/cards-row-kicker.png",
-      "checks": {
-        "refs": 0,
-        "overflow": 0,
-        "off_slide": 0,
-        "overlaps_by_design": 0
       }
     },
     {
@@ -97,7 +65,14 @@
         "two cards for a comparison"
       ],
       "viewing": "room",
-      "slide": 3,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the row of cards",
+      "elements": [
+        2,
+        3
+      ],
+      "slide": 2,
       "preview": "previews/cards-row-room.png",
       "checks": {
         "refs": 0,
@@ -131,7 +106,14 @@
         "a date line under each station"
       ],
       "viewing": "screen",
-      "slide": 4,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the line the stations sit on",
+      "elements": [
+        3,
+        6
+      ],
+      "slide": 3,
       "preview": "previews/path-milestones.png",
       "checks": {
         "refs": 0,
@@ -163,7 +145,14 @@
         "the last chevron as a plain arrow head -> emphasises the outcome"
       ],
       "viewing": "screen",
-      "slide": 5,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the chain of chevrons",
+      "elements": [
+        3,
+        6
+      ],
+      "slide": 4,
       "preview": "previews/chevron-stages.png",
       "checks": {
         "refs": 0,
@@ -202,7 +191,14 @@
         "numbering left to right in both rows -> two groups"
       ],
       "viewing": "screen",
-      "slide": 6,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the two rows read in order",
+      "elements": [
+        2,
+        4
+      ],
+      "slide": 5,
       "preview": "previews/snake-cards.png",
       "checks": {
         "refs": 0,
@@ -235,7 +231,14 @@
         "even tones -> the climb alone carries it"
       ],
       "viewing": "screen",
-      "slide": 7,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the climb of the blocks",
+      "elements": [
+        3,
+        5
+      ],
+      "slide": 6,
       "preview": "previews/staircase.png",
       "checks": {
         "refs": 0,
@@ -268,7 +271,14 @@
         "drop the lines"
       ],
       "viewing": "screen",
-      "slide": 8,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the centre shape",
+      "elements": [
+        4,
+        6
+      ],
+      "slide": 7,
       "preview": "previews/hub-satellites.png",
       "checks": {
         "refs": 0,
@@ -301,7 +311,14 @@
         "equal widths -> a plain stack"
       ],
       "viewing": "screen",
-      "slide": 9,
+      "order": "sequence",
+      "movement": false,
+      "carrier": "the stack of levels",
+      "elements": [
+        3,
+        5
+      ],
+      "slide": 8,
       "preview": "previews/pyramid-levels.png",
       "checks": {
         "refs": 0,
@@ -340,7 +357,14 @@
         "turned over -> a pyramid"
       ],
       "viewing": "screen",
-      "slide": 10,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the narrowing stages",
+      "elements": [
+        3,
+        5
+      ],
+      "slide": 9,
       "preview": "previews/funnel-stages.png",
       "checks": {
         "refs": 0,
@@ -379,7 +403,14 @@
         "one tone for all cells"
       ],
       "viewing": "screen",
-      "slide": 11,
+      "order": "matrix",
+      "movement": false,
+      "carrier": "the grid itself",
+      "elements": [
+        2,
+        3
+      ],
+      "slide": 10,
       "preview": "previews/matrix-axes.png",
       "checks": {
         "refs": 0,
@@ -418,7 +449,14 @@
         "markers plotted inside a quadrant"
       ],
       "viewing": "screen",
-      "slide": 12,
+      "order": "matrix",
+      "movement": false,
+      "carrier": "the two axes",
+      "elements": [
+        4,
+        4
+      ],
+      "slide": 11,
       "preview": "previews/quad-matrix.png",
       "checks": {
         "refs": 0,
@@ -450,7 +488,14 @@
         "one panel in a darker tone -> the figure that matters most"
       ],
       "viewing": "room",
-      "slide": 13,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the figures",
+      "elements": [
+        2,
+        5
+      ],
+      "slide": 12,
       "preview": "previews/big-numbers.png",
       "checks": {
         "refs": 0,
@@ -489,7 +534,14 @@
         "one column in a darker tone -> which side wins"
       ],
       "viewing": "screen",
-      "slide": 14,
+      "order": "pairs",
+      "movement": false,
+      "carrier": "the two headed columns",
+      "elements": [
+        3,
+        6
+      ],
+      "slide": 13,
       "preview": "previews/comparison-columns.png",
       "checks": {
         "refs": 0,
@@ -529,7 +581,14 @@
         "two stacked picture areas -> before and after"
       ],
       "viewing": "screen",
-      "slide": 15,
+      "order": "single",
+      "movement": false,
+      "carrier": "the picture area",
+      "elements": [
+        0,
+        4
+      ],
+      "slide": 14,
       "preview": "previews/split-media-text.png",
       "checks": {
         "refs": 0,
@@ -561,7 +620,14 @@
         "a figure above the sentence"
       ],
       "viewing": "room",
-      "slide": 16,
+      "order": "single",
+      "movement": false,
+      "carrier": "the sentence",
+      "elements": [
+        60,
+        240
+      ],
+      "slide": 15,
       "preview": "previews/statement.png",
       "checks": {
         "refs": 0,
@@ -594,7 +660,14 @@
         "drop the spine -> a plain two-column list"
       ],
       "viewing": "screen",
-      "slide": 17,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the spine with its markers",
+      "elements": [
+        3,
+        4
+      ],
+      "slide": 16,
       "preview": "previews/timeline-agenda.png",
       "checks": {
         "refs": 0,
@@ -633,7 +706,14 @@
         "drop the lead"
       ],
       "viewing": "screen",
-      "slide": 18,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the columns of text",
+      "elements": [
+        2,
+        3
+      ],
+      "slide": 17,
       "preview": "previews/text-two-columns.png",
       "checks": {
         "refs": 0,
@@ -689,7 +769,14 @@
         "bars all full width -> presence matrix instead of durations"
       ],
       "viewing": "screen",
-      "slide": 19,
+      "order": "matrix",
+      "movement": true,
+      "carrier": "the table body",
+      "elements": [
+        3,
+        6
+      ],
+      "slide": 18,
       "preview": "previews/status-table-timeline.png",
       "checks": {
         "refs": 0,
@@ -730,7 +817,14 @@
         "legend below instead of cards"
       ],
       "viewing": "screen",
-      "slide": 20,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the chart",
+      "elements": [
+        3,
+        4
+      ],
+      "slide": 19,
       "preview": "previews/pie-callouts.png",
       "checks": {
         "refs": 0,
@@ -777,7 +871,14 @@
         "cards below instead of beside -> a wider chart"
       ],
       "viewing": "screen",
-      "slide": 21,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the chart",
+      "elements": [
+        3,
+        6
+      ],
+      "slide": 20,
       "preview": "previews/bars-compare.png",
       "checks": {
         "refs": 0,
@@ -824,7 +925,14 @@
         "no chips row"
       ],
       "viewing": "screen",
-      "slide": 22,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the boundary between the zones",
+      "elements": [
+        2,
+        3
+      ],
+      "slide": 21,
       "preview": "previews/zones-chain.png",
       "checks": {
         "refs": 0,
@@ -863,7 +971,14 @@
         "one card highlighted -> the area being talked about"
       ],
       "viewing": "screen",
-      "slide": 23,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the row of cards",
+      "elements": [
+        2,
+        4
+      ],
+      "slide": 22,
       "preview": "previews/cards-bullets.png",
       "checks": {
         "refs": 0,
@@ -911,13 +1026,20 @@
         "drop the side labels -> stacked rows"
       ],
       "viewing": "screen",
-      "slide": 24,
+      "order": "matrix",
+      "movement": false,
+      "carrier": "the bands of tiles",
+      "elements": [
+        3,
+        4
+      ],
+      "slide": 23,
       "preview": "previews/capability-matrix.png",
       "checks": {
         "refs": 0,
         "overflow": 0,
         "off_slide": 0,
-        "overlaps_by_design": 5
+        "overlaps_by_design": 0
       }
     },
     {
@@ -957,7 +1079,14 @@
         "no picture -> the claim and figures fill the slide"
       ],
       "viewing": "room",
-      "slide": 25,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the claim",
+      "elements": [
+        2,
+        4
+      ],
+      "slide": 24,
       "preview": "previews/statement-kpi-media.png",
       "checks": {
         "refs": 0,
@@ -996,7 +1125,14 @@
         "a connecting line around them -> emphasises the cycle, but that is a brand call"
       ],
       "viewing": "screen",
-      "slide": 26,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the offset that carries the order",
+      "elements": [
+        3,
+        4
+      ],
+      "slide": 25,
       "preview": "previews/quad-loop.png",
       "checks": {
         "refs": 0,
@@ -1008,7 +1144,7 @@
     {
       "id": "case-study-facts",
       "name": "Case study with a fact card",
-      "structure": "A heading, a lead paragraph and running text on the left; a card on the right holding four labelled facts separated by rules.",
+      "structure": "A heading, a lead paragraph and running text on the left; a card on the right holding four labelled facts.",
       "content_fit": [
         "one customer, one project, one story - with the hard facts beside it",
         "the facts are what a reader scans first: who, what field, where, how big",
@@ -1035,7 +1171,14 @@
         "add a picture area above the fact card"
       ],
       "viewing": "screen",
-      "slide": 27,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the running text",
+      "elements": [
+        3,
+        6
+      ],
+      "slide": 26,
       "preview": "previews/case-study-facts.png",
       "checks": {
         "refs": 0,
@@ -1074,7 +1217,14 @@
         "one wide quote -> a single testimonial"
       ],
       "viewing": "screen",
-      "slide": 28,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the quotations",
+      "elements": [
+        2,
+        4
+      ],
+      "slide": 27,
       "preview": "previews/quote-wall.png",
       "checks": {
         "refs": 0,
@@ -1113,7 +1263,14 @@
         "legend under the picture -> a wider picture area"
       ],
       "viewing": "screen",
-      "slide": 29,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the picture area",
+      "elements": [
+        3,
+        6
+      ],
+      "slide": 28,
       "preview": "previews/media-legend.png",
       "checks": {
         "refs": 0,
@@ -1159,7 +1316,14 @@
         "one column in a darker tone -> the recommended option"
       ],
       "viewing": "screen",
-      "slide": 30,
+      "order": "matrix",
+      "movement": false,
+      "carrier": "the criterion rows",
+      "elements": [
+        2,
+        5
+      ],
+      "slide": 29,
       "preview": "previews/feature-columns.png",
       "checks": {
         "refs": 0,
@@ -1198,7 +1362,14 @@
         "one side shaded lighter -> the reference"
       ],
       "viewing": "screen",
-      "slide": 31,
+      "order": "pairs",
+      "movement": false,
+      "carrier": "the centre column of labels",
+      "elements": [
+        3,
+        7
+      ],
+      "slide": 30,
       "preview": "previews/butterfly-bars.png",
       "checks": {
         "refs": 0,
@@ -1244,7 +1415,14 @@
         "the total block in a lighter tone -> less emphasis on the outcome"
       ],
       "viewing": "screen",
-      "slide": 32,
+      "order": "pairs",
+      "movement": false,
+      "carrier": "the closing total block",
+      "elements": [
+        3,
+        6
+      ],
+      "slide": 31,
       "preview": "previews/two-tables-total.png",
       "checks": {
         "refs": 0,
@@ -1283,7 +1461,14 @@
         "no picture area -> a grid of named blocks"
       ],
       "viewing": "screen",
-      "slide": 33,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the grid of tiles",
+      "elements": [
+        3,
+        5
+      ],
+      "slide": 32,
       "preview": "previews/tile-grid.png",
       "checks": {
         "refs": 0,
@@ -1322,7 +1507,14 @@
         "one row only -> a strip under other content"
       ],
       "viewing": "screen",
-      "slide": 34,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the grid",
+      "elements": [
+        4,
+        8
+      ],
+      "slide": 33,
       "preview": "previews/logo-grid.png",
       "checks": {
         "refs": 0,
@@ -1334,7 +1526,7 @@
     {
       "id": "list-detail",
       "name": "List on the left, one thing spelled out on the right",
-      "structure": "A list of points with a rule beside each on the left, and a bordered panel on the right holding a stack of graded levels.",
+      "structure": "A list of points on the left, and a panel on the right holding a stack of graded levels.",
       "content_fit": [
         "the points of an offer, with one of them broken open beside it",
         "the panel takes anything ordered - levels, tiers, steps, sizes",
@@ -1368,7 +1560,14 @@
         "levels as equal tones -> nothing is ranked"
       ],
       "viewing": "screen",
-      "slide": 35,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the panel beside the list",
+      "elements": [
+        3,
+        5
+      ],
+      "slide": 34,
       "preview": "previews/list-detail.png",
       "checks": {
         "refs": 0,
@@ -1415,7 +1614,14 @@
         "picture on the left -> mirrored"
       ],
       "viewing": "room",
-      "slide": 36,
+      "order": "single",
+      "movement": false,
+      "carrier": "the title",
+      "elements": [
+        1,
+        3
+      ],
+      "slide": 35,
       "preview": "previews/title-slide.png",
       "checks": {
         "refs": 0,
@@ -1427,7 +1633,7 @@
     {
       "id": "agenda-numbered",
       "name": "Agenda with numbers",
-      "structure": "A heading and a line of context on the left; a numbered list of chapters on the right, separated by rules.",
+      "structure": "A heading and a line of context on the left; a numbered list of chapters on the right.",
       "content_fit": [
         "the agenda of a deck, or a summary of what was covered",
         "chapter names, never sentences",
@@ -1454,13 +1660,20 @@
         "one chapter marked -> shows where in the deck you are"
       ],
       "viewing": "room",
-      "slide": 37,
+      "order": "sequence",
+      "movement": false,
+      "carrier": "the numbered list",
+      "elements": [
+        3,
+        7
+      ],
+      "slide": 36,
       "preview": "previews/agenda-numbered.png",
       "checks": {
         "refs": 0,
         "overflow": 0,
         "off_slide": 0,
-        "overlaps_by_design": 2
+        "overlaps_by_design": 0
       }
     },
     {
@@ -1500,7 +1713,14 @@
         "the whole slide in a dark tone -> a harder break"
       ],
       "viewing": "room",
-      "slide": 38,
+      "order": "single",
+      "movement": false,
+      "carrier": "the chapter number",
+      "elements": [
+        0,
+        1
+      ],
+      "slide": 37,
       "preview": "previews/section-divider.png",
       "checks": {
         "refs": 0,
@@ -1546,7 +1766,14 @@
         "centred on the whole slide -> a plain thank-you"
       ],
       "viewing": "room",
-      "slide": 39,
+      "order": "single",
+      "movement": false,
+      "carrier": "the closing statement",
+      "elements": [
+        2,
+        5
+      ],
+      "slide": 38,
       "preview": "previews/closing-contact.png",
       "checks": {
         "refs": 0,
@@ -1585,7 +1812,14 @@
         "two people side by side -> half the facts each"
       ],
       "viewing": "screen",
-      "slide": 40,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the portrait area",
+      "elements": [
+        2,
+        6
+      ],
+      "slide": 39,
       "preview": "previews/person-profile.png",
       "checks": {
         "refs": 0,
@@ -1624,7 +1858,14 @@
         "no description -> a tighter row of six"
       ],
       "viewing": "screen",
-      "slide": 41,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the row of portraits",
+      "elements": [
+        2,
+        5
+      ],
+      "slide": 40,
       "preview": "previews/team-row.png",
       "checks": {
         "refs": 0,
@@ -1677,7 +1918,14 @@
         "findings under the table -> a wider table"
       ],
       "viewing": "screen",
-      "slide": 42,
+      "order": "matrix",
+      "movement": false,
+      "carrier": "the table",
+      "elements": [
+        4,
+        8
+      ],
+      "slide": 41,
       "preview": "previews/table-findings.png",
       "checks": {
         "refs": 0,
@@ -1724,7 +1972,14 @@
         "no band -> the chart has to speak for itself"
       ],
       "viewing": "screen",
-      "slide": 43,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the chart",
+      "elements": [
+        1,
+        3
+      ],
+      "slide": 42,
       "preview": "previews/chart-findings.png",
       "checks": {
         "refs": 0,
@@ -1770,7 +2025,14 @@
         "all blocks one tone -> nothing is grouped"
       ],
       "viewing": "screen",
-      "slide": 44,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the split blocks",
+      "elements": [
+        2,
+        8
+      ],
+      "slide": 43,
       "preview": "previews/label-value-blocks.png",
       "checks": {
         "refs": 0,
@@ -1782,7 +2044,7 @@
     {
       "id": "statement-tiles",
       "name": "Claim beside a group of tiles",
-      "structure": "A claim in a panel on the left, a bordered group of icon tiles on the right, and a tab over the group naming it.",
+      "structure": "A claim in a panel on the left, a group of tiles on the right, each tile one surface carrying a marker, a heading and a line of text, and a tab over the group naming it.",
       "content_fit": [
         "one sentence that holds for everything in the group",
         "a range of services, all of which share a property",
@@ -1790,9 +2052,9 @@
       ],
       "flex": {
         "tiles": {
-          "default": 5,
+          "default": 4,
           "range": [
-            3,
+            2,
             6
           ]
         },
@@ -1813,10 +2075,19 @@
       },
       "variants": [
         "claim on the right -> mirrored",
-        "no tab -> a plainer group"
+        "no tab -> a plainer group",
+        "marker and heading only -> six tiles instead of four",
+        "no marker -> the heading starts at the tile's edge"
       ],
       "viewing": "screen",
-      "slide": 45,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the claim panel",
+      "elements": [
+        2,
+        6
+      ],
+      "slide": 44,
       "preview": "previews/statement-tiles.png",
       "checks": {
         "refs": 0,
@@ -1856,7 +2127,14 @@
         "no ring, just the markers -> a lighter read"
       ],
       "viewing": "screen",
-      "slide": 46,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the ring",
+      "elements": [
+        4,
+        8
+      ],
+      "slide": 45,
       "preview": "previews/cycle-segments.png",
       "checks": {
         "refs": 0,
@@ -1895,7 +2173,14 @@
         "the top box in a light tone -> a question rather than a claim"
       ],
       "viewing": "screen",
-      "slide": 47,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the statement box on top",
+      "elements": [
+        2,
+        5
+      ],
+      "slide": 46,
       "preview": "previews/claim-tree.png",
       "checks": {
         "refs": 0,
@@ -1949,7 +2234,14 @@
         "drop the legend -> the marks have to be self-explaining"
       ],
       "viewing": "screen",
-      "slide": 48,
+      "order": "matrix",
+      "movement": false,
+      "carrier": "the grouped bands",
+      "elements": [
+        2,
+        5
+      ],
+      "slide": 47,
       "preview": "previews/grouped-measures.png",
       "checks": {
         "refs": 0,
@@ -1990,7 +2282,14 @@
         "numbers instead of markers -> an ordered list"
       ],
       "viewing": "screen",
-      "slide": 49,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the points",
+      "elements": [
+        3,
+        6
+      ],
+      "slide": 48,
       "preview": "previews/bullet-list.png",
       "checks": {
         "refs": 0,
@@ -2036,7 +2335,14 @@
         "one column -> more room per point"
       ],
       "viewing": "screen",
-      "slide": 50,
+      "order": "equal",
+      "movement": false,
+      "carrier": "the points",
+      "elements": [
+        3,
+        5
+      ],
+      "slide": 49,
       "preview": "previews/bullet-list-two-columns.png",
       "checks": {
         "refs": 0,
@@ -2076,7 +2382,14 @@
         "a total row in a darker tone at the bottom"
       ],
       "viewing": "screen",
-      "slide": 51,
+      "order": "matrix",
+      "movement": false,
+      "carrier": "the table",
+      "elements": [
+        3,
+        7
+      ],
+      "slide": 50,
       "preview": "previews/title-and-table.png",
       "checks": {
         "refs": 0,
@@ -2115,7 +2428,14 @@
         "two pictures side by side -> a comparison"
       ],
       "viewing": "room",
-      "slide": 52,
+      "order": "single",
+      "movement": false,
+      "carrier": "the picture area",
+      "elements": [
+        0,
+        1
+      ],
+      "slide": 51,
       "preview": "previews/image-full.png",
       "checks": {
         "refs": 0,
@@ -2147,7 +2467,14 @@
         "the area split in two -> a rough two-column layout"
       ],
       "viewing": "screen",
-      "slide": 53,
+      "order": "single",
+      "movement": false,
+      "carrier": "the open area",
+      "elements": [
+        0,
+        1
+      ],
+      "slide": 52,
       "preview": "previews/title-only.png",
       "checks": {
         "refs": 0,
@@ -2186,7 +2513,14 @@
         "answers as a numbered list -> a ranking rather than options"
       ],
       "viewing": "screen",
-      "slide": 54,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the question",
+      "elements": [
+        2,
+        4
+      ],
+      "slide": 53,
       "preview": "previews/question-answer.png",
       "checks": {
         "refs": 0,
@@ -2240,7 +2574,14 @@
         "results as a row of cards -> more room per result"
       ],
       "viewing": "screen",
-      "slide": 55,
+      "order": "pairs",
+      "movement": false,
+      "carrier": "the two blocks",
+      "elements": [
+        2,
+        3
+      ],
+      "slide": 54,
       "preview": "previews/offer-two-blocks.png",
       "checks": {
         "refs": 0,
@@ -2286,7 +2627,14 @@
         "no line -> four columns of text under headings"
       ],
       "viewing": "screen",
-      "slide": 56,
+      "order": "sequence",
+      "movement": true,
+      "carrier": "the line the phases sit on",
+      "elements": [
+        3,
+        5
+      ],
+      "slide": 55,
       "preview": "previews/timeline-phases.png",
       "checks": {
         "refs": 0,
@@ -2325,13 +2673,20 @@
         "one section in a darker tone -> the one that matters"
       ],
       "viewing": "screen",
-      "slide": 57,
+      "order": "sequence",
+      "movement": false,
+      "carrier": "the stacked bands",
+      "elements": [
+        2,
+        4
+      ],
+      "slide": 56,
       "preview": "previews/numbered-sections.png",
       "checks": {
         "refs": 0,
         "overflow": 0,
         "off_slide": 0,
-        "overlaps_by_design": 1
+        "overlaps_by_design": 0
       }
     },
     {
@@ -2372,7 +2727,14 @@
         "no icon areas -> a plain text grid"
       ],
       "viewing": "screen",
-      "slide": 58,
+      "order": "one-over-many",
+      "movement": false,
+      "carrier": "the picture area",
+      "elements": [
+        2,
+        6
+      ],
+      "slide": 57,
       "preview": "previews/media-feature-grid.png",
       "checks": {
         "refs": 0,

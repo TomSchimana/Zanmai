@@ -203,34 +203,34 @@ the file, and give the visual judgement to the user (principle 10).
 
 A run that comes back with something only the user can settle has not finished. It parks and continues
 in the same context it built. First it asks: is anyone here to wake me? A scheduled run answers no,
-writes the open point to the work object (principle 13), and ends.
+writes the open point to the work object (principle 13) and ends.
 
 **How a run parks**, in this order:
 
 1. **Report first**, in the return shape the contract defines. They need it whether or not parking works.
-2. **Write where it stands** to `zanmai/temp/<task>/status.md`: `state: open`, what this is, what the
-   open point is, where the material and the kit are, what must not be lost. Written now, because the
-   one case it exists for is the one where there is no later.
+2. **Write where it stands** to `zanmai/temp/<task>/status.md`: `state: open`, the open point, where
+   the material and the kit are, what must not be lost. Written now, because the one case it exists
+   for is the one where there is no later. **The file is kept alive from the run's first minute, not
+   only at a park**, one line per step with the time: that is how whoever waits sees where the work
+   stands without a round trip, and a run that writes it once and goes quiet looks from outside
+   exactly like one that hung.
 3. **Wait in one blocking call** on a signal file, bounded so it returns on its own:
    `W=zanmai/temp/<task>/wake; i=0; until [ -f "$W" ] || [ $i -ge 118 ]; do sleep 5; i=$((i+1)); done; echo "cycles=$i"`
-   Ten minutes in five-second steps, plain shell, same on every machine. No model turn runs while it
-   blocks, so the wait costs nothing.
+   Ten minutes in five-second steps, plain shell, same everywhere; no model turn runs while it blocks.
 
    **Set the host's own timeout on this call, at its maximum**, because a shell call carries a host
-   limit whether or not the command asks for one, often two minutes. In Claude Code that is
+   limit whether or not the command asks for one, often two minutes; in Claude Code that is
    `timeout: 600000`, exactly one block. Read the outcomes apart: signal file present means woken;
-   absent with `cycles=118` means the block elapsed; absent with a lower count means the host cut the
-   call short, so fix the timeout and wait again rather than reading it as silence.
+   absent with `cycles=118` means the block elapsed; a lower count means the host cut the call short,
+   so fix the timeout and wait again rather than reading it as silence.
 4. **On the signal**, read `zanmai/temp/<task>/instruction.md`, delete the signal file, carry on.
 5. **On the user's word that it is finished**, write `state: done` and return.
 
-**Whoever dispatched it wakes it:** put the answer in `instruction.md`, then create `wake`. No
-re-briefing; the run still has everything.
+**Whoever dispatched it wakes it:** put the answer in `instruction.md`, then create `wake`. No re-briefing; the run still has everything.
 
-**Wait one hour, then write the state and end.** One block is ten minutes, so an hour is six turns.
-The user has to look at a result before answering, and looking takes longer than typing. After the
-hour the work object plus the workshop's `status.md` carries the work to the next run. One parked
-expert per piece of work.
+**Wait one hour, then write the state and end.** One block is ten minutes, so an hour is six turns;
+looking at a result takes longer than typing. After that the work object plus the workshop's
+`status.md` carries the work to the next run. One parked expert per piece of work.
 
 For a run that has already ended, reaching it afterwards is the fallback; when it fails, say so plainly
 and re-dispatch from the workshop's `status.md`.
@@ -291,9 +291,9 @@ refers to, goes through `zanmai.py`, because those operations have a second half
 activity-log entry, a path that has to stay reconstructible.
 
 - **Discarding is `zanmai.py file trash --path <path>`**, filed under the trash by the day it went,
-  whole path kept, so `zanmai.py file restore` puts it back. This is the route for anything that looks
-  like junk too. `delete-guard` and `permission-guard` refuse the alternatives. The only real deletion
-  is the thirty-day sweep, and it reaches only what the machine itself put aside.
+  whole path kept, so `zanmai.py file restore` puts it back, junk included. `delete-guard` and
+  `permission-guard` refuse the alternatives. The only real deletion is the retention sweep (trash
+  30 days, scratch and snapshots 7), reaching only what the machine put aside.
 - **`zanmai.py file archive <path>`** for something finished, same shape, same restore.
 - **`zanmai.py bundle remove-file`** for a bundle member: trashes and removes the index line in one act.
 - **`zanmai.py task add` / `task done`** for a task the user asked for (principle 8), the only route.

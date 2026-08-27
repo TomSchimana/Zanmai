@@ -1,6 +1,6 @@
 ---
 name: brief
-description: Build the handover to an expert: two labelled blocks, the user's words and Steve's conclusion. Before any dispatch with thin inputs, and on "grill me".
+description: Build the handover to an expert: two labelled blocks, the user's words and Steve's conclusion. Before EVERY dispatch, without exception, and on "grill me".
 ---
 
 # brief

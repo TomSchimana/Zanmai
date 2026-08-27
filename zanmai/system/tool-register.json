@@ -20,7 +20,8 @@
       "linux": "DESIGNED, unverified. Invocation is essentially macOS's, both are Unix, so python3/ffmpeg/git/node/yt-dlp/c2patool/pdffonts/magick share binary names; the only real deltas are file-open (xdg-open vs open) and the secret store (secret-tool/libsecret vs Keychain), both already reflected. The venv path is identical (many distro pythons are also PEP-668 externally-managed, so venv is right there too). Provisioning is deliberately NOT automated: too many distros/package managers, and a Linux user installs an app themselves, Linux is a documented prerequisite, no binary auto-fetch.",
       "windows": "DESIGNED, unverified, first idea, verify on a fresh Windows machine. Deltas: python is `py -3`/`python`, not python3; binaries carry `.exe` (shutil.which still resolves via PATHEXT); no Keychain, Credential Manager (cmdkey/PowerShell) or the .env fallback (likely cleaner for the signer key); file-open via os.startfile/`start`; recommender is winget (built into Win10+/11) or scoop; the venv python lives at Scripts\\python.exe (already handled). The one part that must be Windows-native is the non-Python bootstrap (PowerShell vs Unix shell), pending the fresh-Windows test."
     },
-    "schema_version": 1
+    "schema_version": 1,
+    "sizes": "size_mb is the installed size measured on macOS 2026-08-27, per Homebrew cellar entry or per venv library including what it pulls in. Libraries share dependencies, so the total of a group is smaller than the sum of its parts: the eight Python libraries add up to 373 but measure 323 together. Shown to the user before anything is fetched, because a number nobody sees is not transparency."
   },
   "tools": {
     "python": {
@@ -101,7 +102,8 @@
       "detect": {
         "method": "which",
         "version_flag": "--version"
-      }
+      },
+      "size_mb": 90
     },
     "git": {
       "purpose": "Distribution update (ff-merge, version check).",
@@ -144,7 +146,8 @@
       "provision": {
         "method": "venv-pip",
         "pip": "Pillow"
-      }
+      },
+      "size_mb": 15
     },
     "c2pa": {
       "purpose": "media-mark machine-readable credential (read/preserve/re-seal).",
@@ -161,7 +164,8 @@
         "method": "venv-pip",
         "pip": "c2pa-python",
         "note": "PyPI name is c2pa-python (imports as c2pa); the bare 'c2pa' package is a DIFFERENT project, never install that."
-      }
+      },
+      "size_mb": 13
     },
     "numpy": {
       "purpose": "image-edit grade --lut.",
@@ -177,7 +181,8 @@
       "provision": {
         "method": "venv-pip",
         "pip": "numpy"
-      }
+      },
+      "size_mb": 34
     },
     "color_matcher": {
       "purpose": "image-edit grade --match.",
@@ -194,7 +199,8 @@
         "method": "venv-pip",
         "pip": "color-matcher"
       },
-      "fallback": "scikit-image match_histograms"
+      "fallback": "scikit-image match_histograms",
+      "size_mb": 117
     },
     "scikit_image": {
       "purpose": "image-edit grade --match fallback.",
@@ -210,7 +216,8 @@
       "provision": {
         "method": "venv-pip",
         "pip": "scikit-image"
-      }
+      },
+      "size_mb": 148
     },
     "rawpy": {
       "purpose": "image-edit raw develop.",
@@ -226,7 +233,8 @@
       "provision": {
         "method": "venv-pip",
         "pip": "rawpy"
-      }
+      },
+      "size_mb": 6
     },
     "cryptography": {
       "purpose": "Generate the self-managed C2PA signing identity (P-256 cert + key) when none exists.",
@@ -243,7 +251,8 @@
       "provision": {
         "method": "venv-pip",
         "pip": "cryptography"
-      }
+      },
+      "size_mb": 15
     },
     "ffmpeg": {
       "purpose": "Video frames (Reed), video label burn and assembly (Loki), and converting a dropped voice note from whatever a phone recorded (m4a, aac, mp3, ogg) into the 16 kHz mono the transcriber needs.",
@@ -279,7 +288,8 @@
       },
       "companions": [
         "ffprobe"
-      ]
+      ],
+      "size_mb": 52
     },
     "c2patool": {
       "purpose": "C2PA via CLI (alternative to the python lib).",
@@ -339,7 +349,8 @@
       },
       "provision": {
         "method": "binary-fetch"
-      }
+      },
+      "size_mb": 29
     },
     "whisper": {
       "purpose": "Turns speech into text on this machine, with no network and no key, which is what a spoken journal entry needs. Used for a dropped voice note and for Reed's video and audio pipeline. Takes an initial prompt, which is how the vault's own names bias the recognition.",
@@ -442,7 +453,8 @@
       },
       "provision": {
         "method": "message"
-      }
+      },
+      "size_mb": 33
     },
     "ghostscript": {
       "purpose": "Converts the final PDF to CMYK for a real press run (html skill). Only needed when the job is print production, not for a screen or RGB flyer.",
@@ -475,7 +487,8 @@
       },
       "provision": {
         "method": "message"
-      }
+      },
+      "size_mb": 128
     },
     "imagemagick": {
       "purpose": "image-edit format fallback beyond Pillow.",
@@ -508,7 +521,8 @@
       },
       "provision": {
         "method": "message"
-      }
+      },
+      "size_mb": 60
     },
     "c2pa_signer": {
       "purpose": "Self-managed signing identity for the fallback / re-seal case (valid, not trust-listed).",
@@ -646,7 +660,8 @@
         "into": "zanmai/runtime/bin",
         "canary": "zanmai/system/scripts/typst-canary.typ",
         "note": "One self-contained binary per platform, which is why this tier fits it at all. A host copy that meets the pin is used as it stands; nothing is installed beside it. Identity is proven by running the binary and matching the pinned version, then by compiling the canary, so a half-unpacked archive fails at provisioning rather than during real work."
-      }
+      },
+      "size_mb": 43
     },
     "python_pptx": {
       "purpose": "Reads and writes a native .pptx without opening PowerPoint: which layout a slide uses, whether its placeholders are filled, whether a run overrides the layout, which faces and colours are actually in the file. The deck's measurable checks run on the file, because no engine but PowerPoint itself renders a .pptx faithfully.",
@@ -662,7 +677,8 @@
       "provision": {
         "method": "venv-pip",
         "pip": "python-pptx"
-      }
+      },
+      "size_mb": 25
     },
     "whisper-model": {
       "purpose": "The weights whisper runs on. Nothing transcribes without one, so this is the first-use step for voice notes. `large-v3-turbo` is the default: strong on German and fast enough that a two-minute note is seconds rather than minutes. About 1.6 GB, fetched once, and it lives in the machine-local runtime folder so it never travels in a backup.",
@@ -707,7 +723,8 @@
           },
           "verified": false
         }
-      }
+      },
+      "size_mb": 1550
     },
     "ffprobe": {
       "purpose": "Reads how long a recording is, and whether a media file is what its name claims. Ships with ffmpeg; listed separately because it is invoked separately.",
@@ -747,7 +764,8 @@
           },
           "verified": false
         }
-      }
+      },
+      "size_mb": 0
     },
     "hyperframes": {
       "purpose": "Builds a motion graphic from markup and renders it frame by frame in a headless browser, which is what lets a cut carry graphics at all. Fetched on first use of the motion skill and pinned to one version, because every graphic is tuned against one version's behaviour and a silent upgrade breaks renders that were already signed off.",
@@ -781,6 +799,53 @@
         "root": "zanmai/runtime/node",
         "into": "zanmai/runtime/node/node_modules/.bin",
         "note": "Needs node 22 or newer. Installed into the vault's runtime tree, not globally."
+      }
+    },
+    "libreoffice": {
+      "purpose": "Renders a deck without opening PowerPoint: one picture per slide, and the PDF export of a finished deck. The only way a run can look at a slide it built instead of trusting its own description of it.",
+      "kind": "binary",
+      "tier": "on-demand",
+      "size_mb": 804,
+      "needed_by": [
+        "carol"
+      ],
+      "os": {
+        "macos": {
+          "invoke": "soffice",
+          "install_hint": {
+            "text": "brew install --cask libreoffice, or download from libreoffice.org",
+            "guide": "docs/install/index.md"
+          },
+          "verified": true
+        },
+        "linux": {
+          "invoke": "soffice",
+          "install_hint": {
+            "text": "apt install libreoffice-impress, or the distro package",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        },
+        "windows": {
+          "invoke": "soffice.exe",
+          "install_hint": {
+            "text": "winget install TheDocumentFoundation.LibreOffice",
+            "guide": "docs/install/index.md"
+          },
+          "verified": false
+        }
+      },
+      "detect": {
+        "method": "which",
+        "also_look_in": [
+          "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+          "C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+          "C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe"
+        ]
+      },
+      "provision": {
+        "method": "message",
+        "note": "804 MB and a full office suite: too big to fetch behind the user's back, and there is no single-binary build. Named with its size at the first render that needs it, and at setup as one of the ones they install."
       }
     }
   },

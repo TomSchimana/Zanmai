@@ -4,6 +4,145 @@ All notable changes to Zanmai. Format: <https://keepachangelog.com>. Versioning:
 series is pre-stable, which means a folder name or a command can still change between versions, and
 when it does, it will say so here.
 
+## [0.4.8] - 2026-08-27
+
+**Everything the day's real work needed.** Two sessions built customer slides in a live vault all
+day and reported what was missing while they built; most of this version is that list, worked off.
+
+### Added
+
+- **`slide-library.py structure-check`**, the one question none of the other checks asks: is what
+  should be there still there. Every other check asks whether what is on the slide is right. A hub
+  with four satellites and no hub passes all of them. `--intended` allows a deliberate difference,
+  because a pattern may be rebuilt on purpose.
+- **`slide-library.py leftover-check`**, what a file carries beyond its content: comments, speaker
+  notes, animations, authors. A cloned slide brings its whole history along and none of it shows in
+  a render. A colleague's comment reached a finished customer slide that way, found only by opening
+  the file.
+- **`slide-library.py suggest`**, a shortlist of the patterns that carry a content of this shape,
+  from measurable traits rather than from reading 57 prose descriptions and taking the first that
+  sounds plausible. It narrows, it does not decide.
+- **`slide-library.py keep`**, an approved slide into the brand's own library, so the next one of
+  its kind is a copy. Measured on the same two slides: first build 26 minutes and 76 tool calls,
+  the rebuild 2.5 minutes and 11. The difference was that the way was already known.
+- **`slide-library.py extract`**, whole slides lifted out of a deck with their XML byte-identical
+  and every link into slides that did not come along cut. By hand this is three steps and the third
+  is easy to miss: a deleted shape leaves its relationship behind, and that one link holds the whole
+  foreign slide alive (9.9 MB against 4.0 on a real deck).
+- **`slide-library.py swap-image`**, one picture replaced by another whole, keeping the target's
+  position and its own crop. Swapping only the image source leaves the old `a:srcRect` on the new
+  artwork, and the icon slides out of its field.
+- **`zanmai.py gaps`**, what the experts wrote into the tooling log while they ran. A dispatched
+  expert cannot speak until it returns; that file is its only channel, and nobody was reading it.
+- **`zanmai.py housekeeping`**, and **snapshots are now cleared after seven days**, newest one
+  always. Whether an update went wrong is known within days; kept for a month they turn a safety
+  line into a pile. Measured in one live vault: 25 of them held 2.6 GB, nearly all of it the user's
+  own video carried a second time.
+
+### Changed
+
+- **`migrate` appends instead of replacing**, and carries the brand's own corner shape, fill, line
+  and formatting across with `--brand-from`. Before, a migrate overwrote the target deck and the
+  arrangement arrived in wireframe grey.
+- **`slots` and `fill` descend into groups.** A corporate template that draws its rubrics as groups
+  inside groups showed 6 slots where the deck has about 30, and one banded slide reported a single
+  slot while five labelled bands sat on it. The whole chain, harvest, slots and fill, saw nothing.
+- **`align-check` reads the left inset**, and found 16 cases on the first run that were invisible
+  before. **`overflow-check` measures the type size that is actually set** rather than the frame's
+  largest.
+- **The brief goes to every dispatch**, not only to one with thin inputs.
+
+
+**The wireframe library got a frame.** What sits above a slide's content, the kicker, the title, an
+emphasised claim line and the intro, was every pattern's own decision, and 58 patterns decided it 58
+times. The result was a library that does not line up: the title was centred on 21 of them because a
+parameter was left out, sat at twelve different sizes, and only four carried a kicker at all. A deck
+built from several patterns showed it, and the brand it was migrated into inherited it.
+
+### Changed
+
+- **One frame for every pattern** (`wf_kit.frame`). Kicker, title, claim and intro sit in the same
+  place on all 57 patterns; a pattern receives the content area and sets nothing above it. Title
+  alignment is no longer a parameter a pattern can forget: it was `CENTER` by default, which is how
+  21 centred titles came about. Slides for a wall keep their larger type, since that is the viewing
+  distance and not a per-pattern choice.
+- **The kicker is a slot on every slide**, the line naming the subject a slide belongs to. It costs
+  0.30 inch of content area. One pattern was dense enough to feel it: the status table's row height
+  goes from 0.68 to 0.60 inch and keeps all four rows and eight columns.
+- **A claim line is part of the frame.** Two patterns built their own emphasised line under the
+  title; it is now one slot, in one place, available to every pattern.
+- **`cards-row-kicker` is gone**, 58 patterns become 57. Its only distinguishing feature is now on
+  every slide, which made it a duplicate of `cards-row`.
+- **`statement-tiles` tiles carry their own surface.** The tile was an icon placeholder plus a
+  single caption line; filled with a heading and a description in a brand, the surface covered the
+  heading alone and the text stood beside it. One surface per tile now carries marker, heading and
+  text together, four tiles instead of five.
+- **Four decorative rules removed.** A line that carries a relation stays, an axis, a connector, a
+  boundary; a line that only marks does not: the rule at the slide edge in front of every block in
+  `list-detail`, the rule under every fact in `case-study-facts`, the rule under every chapter in
+  `agenda-numbered`. Thirteen rules that carry a relation are untouched.
+
+### Added
+
+- **`zanmai.py tools list`**, every outside program Zanmai can use with what it is for, how big it
+  is and who installs it, plus a mark against what is already on the machine. `--markdown` prints
+  the table that `docs/tools.md` carries, so the page a user reads cannot drift from the register
+  the machine acts on.
+- **Measured sizes in the tool register.** LibreOffice is 804 MB, the whisper model 1.55 GB, the
+  eight Python libraries 323 MB together. Measured on macOS rather than estimated.
+- **LibreOffice is registered**, as `on-demand` and as one the user installs. It renders every deck
+  the system looks at, and until now it was in no tier at all, in a register that requires an entry
+  for every external tool.
+- **`tools ensure-all --only a,b`**, so the answer to what should be fetched can be some rather than
+  all or nothing.
+
+### Changed
+
+- **What gets installed is named before it is installed.** The setup skill used to say to give the
+  purpose and "never their package names", which left a user approving a download whose contents
+  they could not see. A question nobody can answer is not consent. Names, sizes and the total are
+  shown, and anything much larger than the rest is asked on its own.
+- **Naming a fault is no longer an alternative to fixing it** (Hard Rule 10). "Fixed or flagged
+  honestly" put the two side by side, and both halves of a bad day were formally correct under it:
+  a file shown with its own list of what was wrong with it, and a slide reported as "stays thin"
+  rather than made to work. What misses its purpose is fixed; what provably cannot be fixed goes
+  back as a question **before** the piece is shown.
+
+- **`slide-library.py schema-check`**, for a shape PowerPoint will not draw at all. Six slides of a
+  finished deck were empty in PowerPoint on 2026-08-27 while the file carried everything and every
+  render looked right: the position had ended up behind the geometry inside `a:spPr`, and PowerPoint
+  answers that by dropping the position. LibreOffice is tolerant there, so no render and no other
+  check could see it.
+- **A pattern may be rebuilt where the brand takes an element's function away.** A tab docked flush
+  to a panel's top edge reads as a label pinned to it while that edge is straight; where the brand
+  rounds its corners the rounding runs underneath and it reads as a box stuck askew. It becomes a
+  free-standing centred label. What counts is what the slide says, not how closely it still
+  resembles the pattern. The content is never bent to fit a pattern; the pattern is bent to fit the
+  brand.
+
+### Fixed
+
+- **A second run could quietly overwrite the first.** Two runs on one deck is the normal case here:
+  an expert holds it open for minutes while a single slide is corrected beside it. Nothing noticed,
+  and the later save took the earlier correction away in silence. Every tool write now leaves a note
+  of what it left behind; a save into a file that no longer matches that note reports and writes
+  nothing. Running the same command again writes, because the warning has been given.
+- **A resumed session was greeted like a new one.** The host says which it is; the greet now only
+  runs on a fresh start, and a resume picks the thread up instead. A user reopened a running build
+  in another terminal, got a full greeting with a task list, and said he was completely lost about
+  where things stood.
+- **A file whose name ends in a date lost its name to the date.** The greet cut the first ten
+  characters, which assumed the date always leads: `UEBERGABE-2026-08-27` was listed as an item
+  called "2026 08 27". The date now comes out wherever it sits.
+
+### Fixed
+
+- **The pattern build lost the four matching attributes `suggest` reads.** `order`, `movement`,
+  `carrier` and `elements` had been written straight into `library.json`, so the next rebuild would
+  have silently dropped them. They live in the pattern source now.
+- **`feature-columns` measured a label box 0.06 inch taller than it is**, which overfilled it as soon
+  as the row height changed.
+
 ## [0.4.7] - 2026-08-26
 
 ### Changed

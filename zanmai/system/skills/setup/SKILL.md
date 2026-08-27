@@ -121,13 +121,21 @@ Init writes the owner-contact at `contacts/people/<slug>.md` with an English bod
 Run `zanmai.py tools ensure-all <vault>` and read what it prints. It reports three groups: what is
 already here, what Zanmai can fetch by itself, and what the user installs with one command each.
 
-Put the first group in front of them in their own language, in a few lines: how many are already
-there, what the fetchable ones are for (their purpose, never their package names), and the question
-whether to fetch them now. On a yes, run the same command with `--yes` and report per item what came
-of it. On a no or a later, say nothing further about it; the offer is not repeated.
+Put the first group in front of them in their own language: how many are already there, then one
+line per tool with **its name, what it is for and how big it is**, then the total, then the question
+whether to fetch them now. The names are not withheld. An earlier version of this step said to give
+the purpose and never the package name, which left a user asked to approve a download they could
+not see the contents of; a question nobody can answer is not consent. Sizes come from the register
+and the command prints them.
 
-The ones they install themselves are named afterwards, each with the one command that does it, as
-information rather than as a task. Anything host-configured is not mentioned at all here.
+Where one item is much larger than the rest, name it separately and let it be answered on its own:
+`zanmai.py tools ensure-all <vault> --yes --only a,b` fetches a selection rather than the group. On
+a yes, run the command and report per item what came of it. On a no or a later, say nothing further
+about it; the offer is not repeated. `zanmai.py tools list <vault>` gives the same overview at any
+time, and `zanmai/system/docs/tools.md` carries it in prose.
+
+The ones they install themselves are named afterwards, each with its size and the one command that
+does it, as information rather than as a task. Anything host-configured is not mentioned at all here.
 
 Why this sits in setup: without it, a missing prerequisite is met for the first time in the middle
 of a job that is already running, which is where it is most expensive and least welcome. Asking once,

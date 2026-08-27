@@ -9,8 +9,8 @@ Your vault is a folder. Putting it inside iCloud Drive, OneDrive, Dropbox, Nextc
 Most of the vault should travel. Three parts should not.
 
 - **`runtime`**, inside the system folder. This is a Python environment Zanmai installs on demand, plus a record of which tools this particular computer has. Copied to a second machine it claims tools that are not installed there, and restored onto a different platform it is an environment built for the wrong one.
-- **`work`**, also inside the system folder. Scratch space for a job in progress. It belongs to the machine doing the job.
-- **`history`**. The record of every snapshot ever taken. It is a repository, and a repository being written by two machines through a sync client is a known way to break one. It is also the one part of the vault that can be rebuilt from nothing, so leaving it out of the sync costs you the old states and no current material.
+- **`temp`**, also inside the system folder. Scratch space for a job in progress, cleared after seven days. It belongs to the machine doing the job.
+- **`history`**. The snapshots, which are jump-back points for the last seven days rather than a backup. It is a repository, and a repository being written by two machines through a sync client is a known way to break one. Leaving it out of the copy costs you those few days of jump-back points and no current material.
 
 Everything else, your notes, your profile, your memory, your design values, your logs, is worth having in the copy.
 
@@ -24,7 +24,7 @@ How you exclude them depends on the service, and only two of the five let you do
 | Nextcloud | Settings → General → Edit ignored files |
 | Google Drive | Preferences, and untick the folders |
 
-`setup validate` tells you which service it found and which of the three paths currently exist, so you can go and exclude exactly those.
+`setup validate` tells you which service it found and which of the three paths currently exist, so you can go and exclude exactly those. It is a note, not a requirement: Zanmai works either way, and which of your folders reach a company tenant is your decision, not its.
 
 ## Two: conflict copies
 
@@ -36,7 +36,7 @@ A duplicate like that inside your notes is a real problem: Zanmai's first rule i
 
 A synced folder protects you from a dead disk. It does not protect you from a bad edit, because that syncs too, immediately.
 
-That is what snapshots are for, and it is why the history is worth keeping out of the sync: a record taken before anything risky, sitting on the machine, restorable one file at a time. [Snapshots and going back](snapshots.md) covers them.
+That is what snapshots are for: a picture taken before anything risky, sitting on the machine, restorable one file at a time. They are not the second copy, though. They live inside the vault and go when it goes, and they are cleared after seven days, so the copy you keep yourself is still the thing that survives a dead disk. [Snapshots and going back](snapshots.md) covers them.
 
 ## And who can read it
 

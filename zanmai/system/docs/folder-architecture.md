@@ -174,12 +174,12 @@ Two halves matter, because updates treat them differently:
 That split is what makes an update safe: one half is replaced wholesale, the other is left alone.
 Machine-local means `runtime/` is not meant to travel to another computer.
 
-Three of those clear themselves out, on one shared rule of **30 days**, so there is only ever one
-number to remember:
+Three of those clear themselves out by themselves. What differs is how long each one waits, and each
+number comes from what the folder is actually for:
 
-- **`trash/`** holds what was thrown away. It exists because Zanmai deletes things and that has to be reversible; until the 30 days are up, anything in there can be put back exactly where it came from.
-- **`temp/`** is where Zanmai puts things down mid-job: a render preview, an unpacked archive, a download before it is read. Anything still sitting there after 30 days is a fault rather than rubbish, so it is deleted **and said out loud**.
-- **`history/`** keeps the snapshots. Every version of every file is stored once by its content, so an unchanged file costs nothing the second time and a changed line costs the line.
+- **`trash/`** holds what was thrown away, for **30 days**. It exists because Zanmai deletes things and that has to be reversible; until the 30 days are up, anything in there can be put back exactly where it came from. It is the user's own change of mind, so it gets the long window.
+- **`temp/`** is where Zanmai puts things down mid-job: a render preview, an unpacked archive, a download before it is read. It is cleared after **7 days**. Anything still sitting there is a fault rather than rubbish, so it is deleted **and said out loud**.
+- **`history/`** keeps the snapshots, for **7 days**, and the newest one always stays whatever its age. A snapshot is a point to jump back to after an update or a large edit, not a backup, and whether one of those went wrong is known within days. Every version of every file is stored once by its content, but a changed video or deck is stored again in full, which is the other reason the window is short.
 
 ## The briefing
 
