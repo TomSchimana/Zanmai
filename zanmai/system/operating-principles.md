@@ -205,6 +205,11 @@ A run that comes back with something only the user can settle has not finished. 
 in the same context it built. First it asks: is anyone here to wake me? A scheduled run answers no,
 writes the open point to the work object (principle 13) and ends.
 
+**A background expert answers no as well.** Its report reaches nobody until it returns, so it
+writes the open point down and **returns**; whoever dispatched it puts the question to the user.
+Waiting there is invisible: a blocked run and a working one look the same. `park-guard` refuses the
+wait block inside one. Parking is for the conversation itself, which is what follows.
+
 **How a run parks**, in this order:
 
 1. **Report first**, in the return shape the contract defines. They need it whether or not parking works.
@@ -214,15 +219,9 @@ writes the open point to the work object (principle 13) and ends.
    only at a park**, one line per step with the time: that is how whoever waits sees where the work
    stands without a round trip, and a run that writes it once and goes quiet looks from outside
    exactly like one that hung.
-3. **Wait in one blocking call** on a signal file, bounded so it returns on its own:
-   `W=zanmai/temp/<task>/wake; i=0; until [ -f "$W" ] || [ $i -ge 118 ]; do sleep 5; i=$((i+1)); done; echo "cycles=$i"`
-   Ten minutes in five-second steps, plain shell, same everywhere; no model turn runs while it blocks.
+3. **Wait in one blocking call** on a signal file, bounded so it returns on its own: `W=zanmai/temp/<task>/wake; i=0; until [ -f "$W" ] || [ $i -ge 118 ]; do sleep 5; i=$((i+1)); done; echo "cycles=$i"` Ten minutes in five-second steps, plain shell, same everywhere; no model turn runs while it blocks.
 
-   **Set the host's own timeout on this call, at its maximum**, because a shell call carries a host
-   limit whether or not the command asks for one, often two minutes; in Claude Code that is
-   `timeout: 600000`, exactly one block. Read the outcomes apart: signal file present means woken;
-   absent with `cycles=118` means the block elapsed; a lower count means the host cut the call short,
-   so fix the timeout and wait again rather than reading it as silence.
+   **Set the host's own timeout on this call, at its maximum**, because a shell call carries a host limit whether or not the command asks for one, often two minutes; in Claude Code that is `timeout: 600000`, exactly one block. Read the outcomes apart: signal file present means woken; absent with `cycles=118` means the block elapsed; a lower count means the host cut the call short, so fix the timeout and wait again rather than reading it as silence.
 4. **On the signal**, read `zanmai/temp/<task>/instruction.md`, delete the signal file, carry on.
 5. **On the user's word that it is finished**, write `state: done` and return.
 
@@ -230,20 +229,20 @@ writes the open point to the work object (principle 13) and ends.
 
 **Wait one hour, then write the state and end.** One block is ten minutes, so an hour is six turns;
 looking at a result takes longer than typing. After that the work object plus the workshop's
-`status.md` carries the work to the next run. One parked expert per piece of work.
-
-For a run that has already ended, reaching it afterwards is the fallback; when it fails, say so plainly
-and re-dispatch from the workshop's `status.md`.
+`status.md` carries the work to the next run. One parked expert per piece of work. For a run that
+has already ended, reaching it afterwards is the fallback; when that fails, say so and re-dispatch
+from `status.md`.
 
 **Where parking is not enough:** an open point bound to a live connection on an outside server, a
 pending OAuth login waiting on a browser callback, is state the source holds against this run's own
-process, and a parked run is still its own process. There, whoever needs the user's browser answer
-makes both calls itself, in the conversation already running, with no agent boundary in between. See
-`manage-connections/SKILL.md`.
+process, and a parked run is still its own process. There, whoever needs the browser answer makes
+both calls itself, in the conversation already running. See `manage-connections/SKILL.md`.
+
+**Driving a visible application is the last resort, never the method.** A window opens on the screen of the person working there, and once per file it makes their machine unusable. Where a headless route exists it is taken, even where it takes more setting up: a font path handed to a renderer costs one configuration file. Where none exists, say so and why before reaching for the visible one.
 
 ## 13. A piece of work is an object, and that object owns the work
 
-**Anything dispatched to an expert gets an object**, in `zanmai/open.base/`: one row plus one page. So
+**Anything dispatched to an expert gets an object**, in `zanmai/open/`: one entry plus one page. So
 does everything a run produced with nobody in the chat, because there the object is the only place a
 result or a question can land. `zanmai.py work open` creates it and returns an id; `work log`,
 `work ask`, `work answer`, `work done`, `work show` and `work list` are the whole vocabulary. The trigger is the
@@ -290,11 +289,12 @@ The vault is plain files, so the tools are the ordinary ones. Reading, copying a
 refers to, goes through `zanmai.py`, because those operations have a second half: an index line, an
 activity-log entry, a path that has to stay reconstructible.
 
-- **Discarding is `zanmai.py file trash --path <path>`**, filed under the trash by the day it went,
-  whole path kept, so `zanmai.py file restore` puts it back, junk included. `delete-guard` and
-  `permission-guard` refuse the alternatives. The only real deletion is the retention sweep (trash
-  30 days, scratch and snapshots 7), reaching only what the machine put aside.
-- **`zanmai.py file archive <path>`** for something finished, same shape, same restore.
+- **Discarding is `zanmai.py file trash --path <path>`**, kept whole-path under the day it went so
+  `file restore` puts it back; `delete-guard` refuses the alternatives. The sweep empties it after 30
+  days (scratch and snapshots 7), so **to the user this is deletion, never a reassurance**. Out of
+  `import/` it refuses without `--filed-to <path the content reached>` or the user's own override
+  `--user-said "<their words>"`.
+- **`zanmai.py file archive <path>`** for something finished, same shape, same restore, not gated.
 - **`zanmai.py bundle remove-file`** for a bundle member: trashes and removes the index line in one act.
 - **`zanmai.py task add` / `task done`** for a task the user asked for (principle 8), the only route.
 - **Opening a file uses the platform default** (`open`, `xdg-open`, `start`) for every type, Markdown

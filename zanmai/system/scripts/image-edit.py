@@ -328,6 +328,63 @@ def cmd_detect(a):
     print(f"  imagemagick (fallback) : {'yes' if caps['imagemagick'] else 'no'}")
 
 
+def op_rasterise(source: Path, width: int | None, height: int | None, scale: float | None):
+    """An SVG or one PDF page as pixels, transparency intact.
+
+    Every icon set arrives as SVG and nothing puts one on a slide or a page until it has been
+    turned into pixels. Without this, each run improvises: the usual improvisation is LibreOffice
+    in headless mode, which renders it but hands back RGB with no alpha, so the transparency has to
+    be reconstructed from brightness. That takes a quarter of an hour to get right and is wrong at
+    every soft edge.
+
+    Rendered at the size it will be used at rather than at a default and resized afterwards. That
+    is the whole reason for using a vector: scaling a bitmap up softens every edge, and an icon is
+    mostly edges.
+    """
+    # `pymupdf` is the module name; `fitz` was the old one and still works, with a deprecation
+    # warning that would otherwise show up in every run's output. Both are tried so a machine with
+    # an older install is not turned away.
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        import fitz
+
+    Image = _need_pillow()
+    doc = fitz.open(str(source))
+    try:
+        page = doc[0]
+        rect = page.rect
+        if scale:
+            zoom_x = zoom_y = scale
+        elif width or height:
+            # Aspect kept where only one side is given, which is the normal case for an icon.
+            zoom_x = (width / rect.width) if width else None
+            zoom_y = (height / rect.height) if height else None
+            zoom_x = zoom_x if zoom_x is not None else zoom_y
+            zoom_y = zoom_y if zoom_y is not None else zoom_x
+        else:
+            zoom_x = zoom_y = 1.0
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom_x, zoom_y), alpha=True)
+        return Image.frombytes("RGBA", (pix.width, pix.height), pix.samples)
+    finally:
+        doc.close()
+
+
+def cmd_rasterise(a):
+    # `_fail` rather than a return code, because `main` here does not read return codes: every
+    # other command in this file exits through it, and a lone `return 1` would report success.
+    if not a.width and not a.height and not a.scale:
+        _fail("give --width, --height or --scale. An icon is rendered at the size it is used at; "
+              "scaling a bitmap up afterwards softens every edge.")
+    try:
+        bild = op_rasterise(Path(a.input), a.width, a.height, a.scale)
+    except ImportError:
+        _fail("pymupdf is missing, and nothing is improvised in its place. "
+              "`zanmai.py tools ensure pymupdf` reports what it costs and fetches it on a yes.")
+    _save(bild, a.output, quality=a.quality)
+    print(f"ok: {a.input} -> {a.output} at {bild.width}x{bild.height}, transparency kept")
+
+
 def cmd_convert(a):
     _save(_open(a.input), a.output, quality=a.quality, optimize=a.optimize)
 
@@ -414,6 +471,13 @@ def build_parser():
         sp.add_argument("--quality", type=int, help="JPEG/WebP quality 1-100")
 
     sub.add_parser("detect", help="report what this host can do").set_defaults(func=cmd_detect)
+
+    sp = sub.add_parser("rasterise", aliases=["svg"], help="an SVG or one PDF page as pixels, transparency kept")
+    sp.add_argument("input"); sp.add_argument("output")
+    sp.add_argument("--width", type=int, help="target width in pixels; height follows the aspect")
+    sp.add_argument("--height", type=int, help="target height in pixels; width follows the aspect")
+    sp.add_argument("--scale", type=float, help="multiplier on the source's own size")
+    q(sp); sp.set_defaults(func=cmd_rasterise)
 
     sp = sub.add_parser("convert", help="change format (extension of output), incl. WebP")
     sp.add_argument("input"); sp.add_argument("output"); q(sp)

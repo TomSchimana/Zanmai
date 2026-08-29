@@ -16,12 +16,32 @@ it turns up, where it takes shape, where it gathers, where it settles.
 - **`knowledge`** is everything you have gathered, with nothing ranked and nothing decided.
 - **`trusted`** is the small set of things you have settled on.
 - **`archive`** is what is finished and kept: the document from outside, and your own completed piece.
+- **`records`** is what has to be kept, or is worth keeping: contracts, policies, tax papers, certificates, receipts you would need if something broke.
 - **`contacts`** is people and organisations, split into `people` and `organisations`.
 - **`import`** is where you drop things. It empties itself.
 - **`zanmai`** is Zanmai's own area, and the only rule about it is that you never open it by hand.
 
 Any Markdown editor opens this vault, Obsidian included, and none of the folder names depend on
 which one you use.
+
+### Why records is not a folder inside the archive
+
+The two look alike from outside: both hold things that are done with. The difference is what you
+are allowed to do with them, and it runs the other way round from what the names suggest.
+
+The archive holds what answers no question any more. You may clear it out, and one day you will.
+`records` holds what a law, a contract or a later need says has to stay: the tax papers for as long
+as the tax office may ask, the policy for as long as a claim can be made on it, the certificate for
+good. Each piece carries a term, and throwing one away is a decision with a date attached rather
+than tidying up.
+
+Putting `records` inside `archive` would inherit exactly the wrong permission. Anything that clears
+out the archive would reach into it, and the folder that must not be cleared out would sit inside
+the one that may. So it is a root of its own, beside the archive rather than under it.
+
+The other difference is pace. In the rest of the vault something happens every day. Here a document
+arrives, and then nothing happens to it for years. What moves it is a term running out, not a
+change of mind.
 
 ### Nothing has to move
 

@@ -25,7 +25,19 @@ The session's first reply. Steve runs this; it is not dispatched.
 6. **Take the greet list from the hook output.** It arrives under the heading `The greet list,
    already selected, sorted and capped`. Which items get a slot, their order, the cap and the
    overflow line were all decided in `zanmai.py`. Render those lines, do not rebuild them.
-7. **Write the greet** in the shape below.
+7. **Read the finished list once, as a whole, before writing it out.** Not to rebuild it and not to
+   open anything: the lines are already in front of you, and the only question is whether they sit
+   together. It is not a search for a pattern and there is no list of pairs to look for. Two things
+   claiming the same days, two purchases that answer the same need, a decision still open whose
+   answer is two lines below it, a step whose prerequisite another line already reports as done, a
+   plan and its replacement side by side. Whatever it is, it comes from reading these lines as a
+   person would, not from matching a shape.
+
+   Where something does not sit, one line after the list says so and names the numbers: "3 and 5
+   want the same week, does that still hold?" One line, a question, no analysis, and none where
+   everything fits. Reading both out without noticing is how a decision that had already been taken
+   was put back in front of the user as still open.
+8. **Write the greet** in the shape below.
 
 These reads run whether the turn opens with a greeting or with a direct request. Skipping the greet
 on a direct request is not skipping the reads.
@@ -39,7 +51,12 @@ Render the printed greet-list lines in the order given, keeping the printed numb
 group headings and the wording into the user's writing language, keep the item's own words, and turn
 each line into a readable sentence: the human label plus what is actually open about it. **Add
 nothing.** Not an extra item, not a sub-bullet under a line, not a path, not an id, not a category
-the list does not contain.
+the list does not contain. The three exceptions are listed under "Never in a greet" below, and
+nothing outside them is added.
+
+The list arrives in two blocks, what carries a day and what does not, and the numbers run straight
+through both. Each block is at most ten lines and is as long as the vault leaves it: a block of
+three is a correct answer, and a block with no lines is simply absent. Never pad one to reach ten.
 
 ```
 Hello <preferred-address>.
@@ -68,8 +85,9 @@ runtime, so a greet that expects one while the hook sends the other reads plausi
 until somebody notices.
 
 **If the greet list is not in the hook output at all**, the hook did not run. Compose from
-`zanmai/memory/briefing.md` in the same shape: the same time groups in the same order, six lines
-including the overflow, nearest first. Say in one line that the session started without its hook.
+`zanmai/memory/briefing.md` in the same shape: the same time groups in the same order, nearest
+first, at most ten lines including the overflow line. Say in one line that the session started
+without its hook.
 
 ## Shape: first session after setup
 
@@ -136,13 +154,34 @@ there. The user fills the void.
 - **No path.**
 - **No system-internal housekeeping as an item.** Vault mechanics run silently. Anything the user
   genuinely has to know is handled before the greeting or named in one short line at the top.
+
+**Three lines are the exception to "add nothing", and only these three.** They are not items and
+they never take a number:
+
+- **Material in `import/`**, where the hook names it: one line, present tense, saying what is
+  there and that it is being read. **The run starts in this turn, before the greet is written**,
+  and **the hook prints the two handover blocks for it**, so they are pasted rather than composed.
+  Composing them here means writing a sentence the user never said, and `dispatch-guard` refuses
+  the dispatch without them, which is exactly what happened the first time this ran.
+  "I will look at it" and "let me have a look shortly" are both wrong, and not for their wording:
+  the next turn belongs to the user, so a greet that promises a look is a greet that never takes
+  one. Either the dispatch went out or the line is not written. This is not housekeeping either.
+  It is the user's own material, they put it there, and the rule against extra lines used to
+  swallow the hook's notice about it whole, so files sat in the folder for days while the greet
+  said nothing.
+- **The second block's heading**, where the list carries one. The list has two blocks now, what has
+  a day and what does not, and the numbers run straight through both.
+- **The contradiction line** from step 7, where there is one.
 - **No dash as sentence punctuation.** Finish the thought or split it into two sentences. The house
   style in `zanmai/system/operating-principles.md` applies to the reply itself, not only to what
   gets written into a file.
-- **No re-reading, no rebuild, no dispatch.** Bundles are not opened one by one before naming an
-  item, `zanmai.py memory briefing` is never run to rebuild the briefing fresh, and none of this
-  goes to an Agent or Explore dispatch. All three turn a few-second greet into a vault-wide scan,
-  for a staleness case a real run found zero times in fifteen checks. Where a named item turns out
+- **No re-reading, no rebuild, no foreground dispatch.** Bundles are not opened one by one before
+  naming an item, `zanmai.py memory briefing` is never run to rebuild the briefing fresh, and
+  nothing the greet needs goes to an Agent or Explore dispatch. All three turn a few-second greet
+  into a vault-wide scan, for a staleness case a real run found zero times in fifteen checks.
+  **The one background dispatch the hook asks for is the exception**: material in `import/` is sent
+  off with `run_in_background: true` before the greet is written, and it costs the greet nothing
+  because nothing waits on it. Where a named item turns out
   stale, that is a write-path defect, a checkbox that should have gone through `zanmai.py task
   done`, not something the greet re-derives at every start.
 

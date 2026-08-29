@@ -6,7 +6,7 @@ Bringing a folder, an export or a pile of loose files into the vault and having 
 
 ## Getting material in
 
-Drop it into `import`, or just say where it is. Then ask for it to be imported. Anything works: notes from another app, PDFs, screenshots, tickets, calendar files, a folder of mixed material from a project.
+Drop it into `import`, or just say where it is. Dropping it is the instruction: at the next session start what is lying there gets opened, worked out and brought in, and you are told what it was and where it went. You do not have to ask for it a second time. Anything works: notes from another app, PDFs, screenshots, tickets, calendar files, a folder of mixed material from a project.
 
 `import` is for material that still needs sorting out. If you already know it belongs to a piece of work you are on, it can go straight into that piece's own folder under `doing` instead, see [Folder architecture](folder-architecture.md).
 
@@ -38,7 +38,24 @@ You are asked the questions the material actually leaves open, not a fixed set. 
 
 Imported files keep their body exactly as it was. Only the metadata at the top is brought in line with the vault's schema, and anything from the source that does not fit is preserved in the file rather than discarded. Templates apply to newly created themes, never to your existing content. It holds afterwards too: a sentence you wrote is not reworded or tidied up later, in an edit any more than in an import.
 
-At the end you are asked once whether the source files in `import` should be moved to trash or left where they are. Leaving them is the default.
+The `import` folder empties, but never before its content is somewhere in the vault. Once something has been filed, the original goes with what was made from it where it still carries something the result does not, a recording next to its transcript for instance, and to the trash where it does not. Throwing something away is throwing it away: the trash is swept, and a file in it is gone as far as your vault is concerned.
+
+That is a condition on the command rather than a promise. Throwing a file away out of `import` has to name the place in the vault its content reached, or quote you saying it can go without one, and a summary in the conversation is neither: the conversation is gone tomorrow and the file is not. Your own words are the override, so nothing here can lock you out of your own vault. Moving something into the archive is not affected, because the archive is a place in the vault and what goes there stays findable. A file only stays lying there for a named reason, because otherwise every later session start reads it again.
+
+## Saying what a sort of thing is, once
+
+The first time something arrives that Zanmai has no rule for, you are asked what it is and where it belongs. The answer is written down, and the next one of its sort answers itself. The rules live in `zanmai/routing.json`, one line each, yours to change:
+
+```
+zanmai.py routing set "nightly backup report" journal/daily \
+  --when-text "/mnt/backup" \
+  --about "the homeserver's nightly status, one file a day" \
+  --do "judge it, add one line to the day, say so where anything is irregular"
+```
+
+A rule keys on what something **is**, never on the file it arrived as. A file type tells you how to read something and nothing at all about what it is for: two `.txt` files are a shopping list and a server's nightly report, and a rule that caught one would catch the other. So the condition is a word in the content, or a pattern in the name where the name is genuinely part of what the thing is. The same report routes the same whether it arrives as text, as markdown or as a saved web page.
+
+`zanmai.py routing show` prints what stands. `zanmai.py import scan` prints what is waiting, how each file will be read, and which rule covers it, so anything without one is visible before it is touched.
 
 ## Related
 

@@ -67,6 +67,7 @@ from pathlib import Path
 
 try:
     from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
     from pptx.enum.text import MSO_AUTO_SIZE
     from pptx.oxml.ns import qn
     from pptx.util import Emu
@@ -535,6 +536,18 @@ def schema_check(deck_path: Path, slide_no: int | None = None) -> int:
     return 1 if probleme else 0
 
 
+def _nichts_geprueft(anzahl: int) -> str:
+    """The sentence a check adds when it compared nothing at all.
+
+    Zero faults out of zero comparisons is not a pass and reads exactly like one. It happened on an
+    approved piece: a correction had shifted every text frame by its own side bearing, so no two
+    frames shared an edge any more, the alignment check's own precondition never fired, and the
+    line said `0 groups checked, 0 misalignments`. The file was fine and the check was right, and
+    the line still told the reader something it had not established.
+    """
+    return "" if anzahl else "  NOTE: nothing matched this check's precondition, so this is not a pass, it is silence."
+
+
 def _soffice() -> str | None:
     """LibreOffice on this machine, whatever it is called here."""
     import shutil
@@ -550,7 +563,66 @@ def _soffice() -> str | None:
     return None
 
 
-def render(deck_path: Path, into: Path, dpi: int = 110) -> int:
+# Where a machine keeps its typefaces, and where a run may add its own. LibreOffice on macOS reads
+# fontconfig, and fontconfig's own defaults there do not include the per-user folder: a deck set in
+# a face installed for the user alone came out of a headless convert in a serif nobody chose, while
+# the same file opened in PowerPoint was correct. Measured on this machine: the PDF carried
+# `LinuxLibertineG` where it should have carried the brand face.
+#
+# The fix is a configuration file of our own, pointed at with `FONTCONFIG_FILE`, listing the
+# folders that actually hold fonts here plus any the caller names. Nothing is installed and nothing
+# on the machine changes, which matters: the alternative that was being used instead is driving the
+# real application by remote control, and that throws a window open on the screen of whoever is
+# working there. A tool that interrupts the person at the keyboard is a last resort, not a method.
+_FONT_DIRS = ("~/Library/Fonts", "/Library/Fonts", "/System/Library/Fonts",
+              "~/.fonts", "~/.local/share/fonts", "/usr/share/fonts", "/usr/local/share/fonts",
+              "C:/Windows/Fonts")
+
+
+def _fontconfig_for(extra_dirs: list[Path] | None, workdir: Path) -> dict:
+    """Environment for a headless office run that can see the fonts this piece is set in.
+
+    Returns the variables to add. Extra folders come first, so a brand's own copy of a face wins
+    over an older one that happens to be installed.
+    """
+    dirs: list[str] = []
+    for d in (extra_dirs or []):
+        if d and Path(d).is_dir():
+            dirs.append(str(Path(d).resolve()))
+    for d in _FONT_DIRS:
+        pfad = Path(d).expanduser()
+        if pfad.is_dir():
+            dirs.append(str(pfad))
+    if not dirs:
+        return {}
+    cache = workdir / "fccache"
+    cache.mkdir(parents=True, exist_ok=True)
+    conf = workdir / "fonts.conf"
+    zeilen = ['<?xml version="1.0"?>', '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">', "<fontconfig>"]
+    zeilen += [f"  <dir>{d}</dir>" for d in dirs]
+    zeilen += [f"  <cachedir>{cache}</cachedir>", "</fontconfig>", ""]
+    conf.write_text("\n".join(zeilen), encoding="utf-8")
+    return {"FONTCONFIG_FILE": str(conf)}
+
+
+def _soffice_env(extra_font_dirs: list[Path] | None, workdir: Path) -> dict:
+    """The full environment for one headless run: fonts plus a profile of its own.
+
+    The separate profile is not cosmetic. A headless run against the user's own LibreOffice profile
+    refuses to start while they have LibreOffice open, and it also writes into settings they own.
+    """
+    import os
+    env = dict(os.environ)
+    env.update(_fontconfig_for(extra_font_dirs, workdir))
+    profil = (workdir / "loprofile").resolve()
+    profil.mkdir(parents=True, exist_ok=True)
+    # Resolved, because a path through a symlink is a different string for the same place and this
+    # one is handed to another process as a URL.
+    env["_ZANMAI_LO_PROFILE"] = f"-env:UserInstallation=file://{profil}"
+    return env
+
+
+def render(deck_path: Path, into: Path, dpi: int = 110, font_dirs: list[Path] | None = None) -> int:
     """A picture of every slide, headless, on any platform.
 
     This exists because the alternative was nothing. `qlmanage` renders the first slide only,
@@ -582,8 +654,10 @@ def render(deck_path: Path, into: Path, dpi: int = 110) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         # Hidden slides are skipped by the export by default and nothing says so: measured on a
         # real deck of 27 slides where 16 were hidden and 11 came out, with no warning at all.
-        lauf = subprocess.run([exe, "--headless", "--convert-to", filter_arg, "--outdir", tmp,
-                               str(deck_path)], capture_output=True, text=True)
+        env = _soffice_env(font_dirs, Path(tmp))
+        lauf = subprocess.run([exe, "--headless", env["_ZANMAI_LO_PROFILE"],
+                               "--convert-to", filter_arg, "--outdir", tmp,
+                               str(deck_path)], capture_output=True, text=True, env=env)
         pdfs = list(Path(tmp).glob("*.pdf"))
         if not pdfs:
             print(f"slide-library: LibreOffice produced no PDF for {deck_path.name}. "
@@ -1223,6 +1297,85 @@ def dangling_refs(deck_path: Path) -> list[str]:
     return problems
 
 
+# What the first bytes of a picture look like, per format. A part that is present, correctly
+# referenced and empty passes every other check here: the reference resolves, the XML is valid, and
+# a render looks right because the renderer quietly substitutes. PowerPoint is the only thing that
+# notices, and it notices by offering to repair the file. That happened on a finished deck, and the
+# only way anyone found out was by opening it, which is exactly the thing that must not be the way.
+_MAGIC = {
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    "jpg": (b"\xff\xd8\xff",),
+    "jpeg": (b"\xff\xd8\xff",),
+    "gif": (b"GIF87a", b"GIF89a"),
+    "bmp": (b"BM",),
+    "tif": (b"II*\x00", b"MM\x00*"),
+    "tiff": (b"II*\x00", b"MM\x00*"),
+    "emf": (b"\x01\x00\x00\x00",),
+    "wmf": (b"\xd7\xcd\xc6\x9a", b"\x01\x00\x09\x00"),
+    "svg": (b"<svg", b"<?xml"),
+    "webp": (b"RIFF",),
+}
+
+
+def media_check(deck_path: Path, verbose: bool = False) -> int:
+    """Every picture a deck points at, checked for being an actual file.
+
+    Three questions, and only the first two were ever asked. `refs-check` answers "does the
+    reference point somewhere". The schema check answers "is the order of elements legal". Nobody
+    answered "is the thing pointed at a real picture", and that is the one that reached a user: a
+    media part correctly referenced and zero bytes long, valid XML, a render that looked right, and
+    PowerPoint offering to repair the file on open.
+
+    Reading the first bytes rather than trusting the extension, because that is the difference
+    between a file named `.png` and a PNG.
+    """
+    import zipfile
+
+    problems: list[str] = []
+    geprueft = 0
+    with zipfile.ZipFile(deck_path) as z:
+        namen = set(z.namelist())
+        groessen = {i.filename: i.file_size for i in z.infolist()}
+        rels = [n for n in namen if re.match(r"ppt/(slides|slideLayouts|slideMasters)/_rels/.*\.rels$", n)]
+        gesehen: set[str] = set()
+        for rel in sorted(rels):
+            xml = z.read(rel).decode("utf-8", "ignore")
+            for rid, ziel in re.findall(r'Id="([^"]+)"[^>]*Type="[^"]*/image"[^>]*Target="([^"]+)"', xml):
+                # A target is relative to the part's own folder, `../media/image1.png` from a slide.
+                basis = Path(rel).parent.parent
+                teil = str((basis / ziel).as_posix()).replace("/./", "/")
+                while "/../" in teil:
+                    teil = re.sub(r"[^/]+/\.\./", "", teil, count=1)
+                quelle = Path(rel).name.replace(".rels", "")
+                if teil in gesehen:
+                    continue
+                gesehen.add(teil)
+                geprueft += 1
+                if teil not in namen:
+                    problems.append(f"{quelle} points at {teil}, which is not in the file at all")
+                    continue
+                groesse = groessen.get(teil, 0)
+                if groesse == 0:
+                    problems.append(f"{teil} is in the file and is empty (0 bytes); "
+                                    f"a render substitutes and PowerPoint offers to repair")
+                    continue
+                endung = Path(teil).suffix.lstrip(".").lower()
+                erwartet = _MAGIC.get(endung)
+                if erwartet:
+                    kopf = z.read(teil)[:16]
+                    if not any(kopf.startswith(m) for m in erwartet):
+                        problems.append(f"{teil} calls itself {endung} and does not start like one "
+                                        f"({kopf[:4]!r}, {groesse} bytes)")
+                        continue
+                if verbose:
+                    print(f"  ok {teil}  {groesse} bytes  {endung or 'no extension'}")
+    for problem in problems:
+        print(f"FAIL: {problem}")
+    print(f"{geprueft} picture(s) checked, {len(problems)} unusable"
+          + _nichts_geprueft(geprueft))
+    return 1 if problems else 0
+
+
 _TABLE_SLOT = re.compile(r"^table(\d+)\.r(\d+)c(\d+)$")
 
 
@@ -1796,18 +1949,47 @@ def _real_ink_bbox(text: str, family: str | None, size_pt: float, bold: bool):
     path = _font_file(family, bold)
     if path is None:
         return None
+    # Rendered rather than asked for, and rendered large. `getbbox` reports the ink box measured
+    # from the pen position, so its left value is zero for every string in every face: the side
+    # bearing it is supposed to carry has already been folded into the layout. Measuring the drawn
+    # mask is what actually finds the bearing, and drawing at eight times the size is what stops
+    # the answer from snapping to whole pixels, which at 11 pt is a third of a millimetre of
+    # quantisation on a quantity of the same order.
+    #
+    # This is why a title and its body could sit visibly apart while the check called them level:
+    # it was comparing two zeroes. On a page with six sizes down one edge that is the difference
+    # anybody sees at a glance.
+    ueber = 8
     try:
-        font = ImageFont.truetype(str(path), size=max(1, round(size_pt)))
-        left, _top, right, _bottom = font.getbbox(text)
+        font = ImageFont.truetype(str(path), size=max(1, round(size_pt * ueber)))
+        layout_left, _t, layout_right, _b = font.getbbox(text)
+        maske = font.getmask(text).getbbox()
     except Exception:  # noqa: BLE001 -- a font file that fails to parse falls back, it does not crash the check
         return None
-    return left / 72.0, (right - left) / 72.0
+    # Two measurements, because each one is blind to the case the other catches. `getbbox` gives
+    # the box the layout occupies, widened where ink hangs past the pen on the left, so it reports
+    # a negative for a letter that overhangs and a flat zero for one that simply starts inset.
+    # The rendered mask gives that inset, but it is clipped at zero and cannot see an overhang.
+    # A face is one or the other per string, never both, so whichever is non-zero is the answer.
+    if layout_left < 0:
+        left, right = layout_left, layout_right
+    elif maske is not None:
+        left, right = maske[0], maske[2]
+    else:                   # a string that paints nothing, a space for instance
+        return None
+    return (left / ueber) / 72.0, ((right - left) / ueber) / 72.0
 
 
-def _leaf_rects(shapes, tf=(1.0, 0.0, 1.0, 0.0)):
-    """(shape, (left, top, width, height) in slide EMU) for every text-bearing leaf, groups
-    resolved through their own scale and offset so a card's children compare against a
-    sibling card's in one shared coordinate space, not each in its own group's raw units."""
+def _leaf_rects(shapes, tf=(1.0, 0.0, 1.0, 0.0), mit_text=True):
+    """(shape, (left, top, width, height) in slide EMU) for every leaf, groups resolved through
+    their own scale and offset so a card's children compare against a sibling card's in one shared
+    coordinate space, not each in its own group's raw units.
+
+    `mit_text=True` keeps only leaves that carry text, which is what every check that measures
+    wording wants. Pass False where the question is about the surface rather than the words: a card
+    is often a filled shape with no text at all, and the words sit in separate boxes over it, so a
+    walk that skips empty shapes cannot see the card.
+    """
     ax, bx, ay, by = tf
     out = []
     for sh in shapes:
@@ -1817,9 +1999,11 @@ def _leaf_rects(shapes, tf=(1.0, 0.0, 1.0, 0.0)):
             off, chOff = xfrm.find(qn("a:off")), xfrm.find(qn("a:chOff"))
             nested = (ax * sx, ax * (int(off.get("x")) - int(chOff.get("x")) * sx) + bx,
                       ay * sy, ay * (int(off.get("y")) - int(chOff.get("y")) * sy) + by)
-            out += _leaf_rects(sh.shapes, nested)
+            out += _leaf_rects(sh.shapes, nested, mit_text)
             continue
-        if sh.left is None or not sh.has_text_frame or not text_of(sh):
+        if sh.left is None or sh.width is None or sh.height is None:
+            continue
+        if mit_text and (not sh.has_text_frame or not text_of(sh)):
             continue
         out.append((sh, (ax * sh.left + bx, ay * sh.top + by, ax * sh.width, ay * sh.height)))
     return out
@@ -1895,7 +2079,13 @@ def align_check(deck_path: Path, slide_no: int | None) -> int:
     silently counted as aligned."""
     deck = Presentation(str(deck_path))
     slides = [(slide_no, deck.slides[slide_no - 1])] if slide_no else list(enumerate(deck.slides, start=1))
-    tolerance = round(0.02 * EMU_PER_INCH)
+    # Half a millimetre is invisible on a wall and plain on a sheet held at arm's length, so the
+    # tolerance follows the page like the layout floors do. Grouping stays at the coarse value:
+    # that answers "were these meant to line up", which is a question about intent, while the
+    # comparison answers "do they", which is a question about the eye.
+    druck = _ist_druckstueck(inches(deck.slide_width), inches(deck.slide_height))
+    gruppen_tol = round(0.02 * EMU_PER_INCH)
+    tolerance = round((ALIGN_TOL_PRINT if druck else ALIGN_TOL_SCREEN) * EMU_PER_INCH)
     problems = []
     groups_checked = 0
     for index, slide in slides:
@@ -1904,7 +2094,7 @@ def align_check(deck_path: Path, slide_no: int | None) -> int:
         groups: list[list] = []
         for sh, rect in leaves:
             for group in groups:
-                if abs(group[0][1][0] - rect[0]) <= tolerance:
+                if abs(group[0][1][0] - rect[0]) <= gruppen_tol:
                     group.append((sh, rect))
                     break
             else:
@@ -1922,13 +2112,205 @@ def align_check(deck_path: Path, slide_no: int | None) -> int:
                 for j in range(i + 1, len(measured)):
                     sh_b, left_b = measured[j]
                     if abs(left_a - left_b) > tolerance:
+                        # The number to move by, not just the number that is wrong. Whoever fixes
+                        # this has to shift one box left by exactly this much, so saying how far
+                        # apart they are and leaving the direction to be worked out again is half
+                        # an answer.
+                        weiter, zurueck = ((sh_a, sh_b) if left_a > left_b else (sh_b, sh_a))
+                        versatz = Emu(abs(left_a - left_b)).inches
                         problems.append(
                             "slide %d: '%s' and '%s' share a box-left edge but their ink starts "
-                            "%.3f inch apart"
-                            % (index, text_of(sh_a)[:20], text_of(sh_b)[:20], Emu(abs(left_a - left_b)).inches))
+                            "%.3f inch apart: move '%s' left by %.3f inch (%.2f mm)"
+                            % (index, text_of(sh_a)[:20], text_of(sh_b)[:20], versatz,
+                               text_of(weiter)[:20], versatz, versatz * 25.4))
     for problem in problems:
         print(f"FAIL: {problem}")
-    print(f"{groups_checked} shared-edge group(s) checked, {len(problems)} misalignment(s)")
+    art = "print" if druck else "screen"
+    print(f"{groups_checked} shared-edge group(s) checked, {len(problems)} misalignment(s) "
+          f"[{art}, ink apart over {Emu(tolerance).inches:.3f}in]"
+          + _nichts_geprueft(groups_checked))
+    return 1 if problems else 0
+
+
+# What page furniture may drift between pages. Nothing, in effect: a footer, a logo, a page number
+# or a contact strip that moves a quarter of a millimetre between two pages was never meant to, and
+# where it genuinely was, the piece says so by not repeating the element. Every other check in this
+# file reads one page at a time, so this whole class of fault went past all of them green.
+FURNITURE_TOL = 0.01         # inch; a hard floor, because drift here is never intentional
+_GENERIC_NAME = re.compile(r"^(TextBox|Rectangle|Oval|Picture|Freeform|Group|Content Placeholder|"
+                           r"Title|Subtitle|Text Placeholder)\s*\d*$", re.IGNORECASE)
+
+
+# How much of the page counts as its edge. Page furniture lives there and content does not: a
+# kicker and a logo at the top, a footer, a page number and a contact strip at the bottom. Text
+# repeated in the middle of a page is a sentence the piece makes twice, which is a normal thing for
+# a piece to do and none of this check's business. Without this, a flyer that carries its core
+# sentence on both pages had it reported three times as furniture that had moved.
+FURNITURE_ZONE = 0.125       # top and bottom eighth of the page
+# How far apart two things may sit and still be the same slot on two pages. A quarter inch: wide
+# enough that a slot which slipped is recognised as that slot and then reported, narrow enough that
+# the next piece of furniture down is never taken for it. Paired loosely, compared tightly, and the
+# gap between two slots is what sets the ceiling: a kicker and the title under it sit half an inch
+# apart, so half an inch as the window made every such pair ambiguous and stopped the pairing.
+_ZONEN_FENSTER = round(0.25 * EMU_PER_INCH)
+
+
+def _in_furniture_zone(rect, seitenhoehe: int, zone: float) -> bool:
+    """Whether this shape sits wholly in the top or bottom band of the page."""
+    oben, hoehe = rect[1], rect[3]
+    band = seitenhoehe * zone
+    return (oben + hoehe) <= band or oben >= (seitenhoehe - band)
+
+
+def _furniture_key(shape) -> str | None:
+    """What makes this shape the same element as one on another page, or None.
+
+    The text first, because a footer carries the same words on every page and that is the thing a
+    reader recognises it by. The shape name second, and only where the builder gave it one: the
+    default names carry a counter that restarts per page, so `TextBox 3` on page one and
+    `TextBox 3` on page two are not the same element and matching on them would invent faults.
+    """
+    text = text_of(shape).strip() if shape.has_text_frame else ""
+    if text:
+        return "text:" + re.sub(r"\s+", " ", text.lower())[:80]
+    name = (shape.name or "").strip()
+    if name and not _GENERIC_NAME.match(name):
+        return "name:" + name.lower()
+    return None
+
+
+def furniture_check(deck_path: Path, tol_in: float = None, zone: float = None) -> int:
+    """An element that repeats across pages, sitting somewhere else on one of them.
+
+    A footer at the same distance from the bottom on page one and two millimetres higher on page
+    two passes `align-check`, `overlap-check`, `overflow-check` and every render, because each of
+    those reads a single page and on each single page nothing is wrong. What is wrong is only
+    visible with both pages side by side, which until now was a person's job on every piece.
+
+    An element appearing twice on the same page is skipped rather than guessed at: two cards
+    carrying the same word are not one element in two places.
+    """
+    tol = FURNITURE_TOL if tol_in is None else tol_in
+    band = FURNITURE_ZONE if zone is None else zone
+    deck = Presentation(str(deck_path))
+    seiten = list(enumerate(deck.slides, start=1))
+    if len(seiten) < 2:
+        print("1 page, nothing to compare across pages")
+        return 0
+
+    vorkommen: dict[str, dict[int, tuple]] = {}
+    mehrfach: dict[str, set[int]] = {}
+    nach_zone: dict[str, dict[int, list]] = {}
+    for index, slide in seiten:
+        # A logo is page furniture and carries no text, so a walk over text-bearing shapes
+        # could never pair one: the element most likely to wander between pages was the
+        # one this check could not see.
+        for shape, rect in _leaf_rects(slide.shapes, mit_text=False):
+            if shape.left is None or shape.top is None:
+                continue
+            if not _in_furniture_zone(rect, deck.slide_height, band):
+                continue
+            key = _furniture_key(shape)
+            # The label is cut to 24 characters for reading; the full key travels with it. Deciding
+            # anything on the cut version compares two prefixes and calls them identical: two
+            # kickers reading "NIS-2 UND CYBER-COMPLIANCE" and "NIS-2 UND CYBER-COMPLIANCE ·
+            # MANAGED FIREWALL" are the same string for the first 24 characters, so the height pass
+            # concluded the wording had not changed and left the pair to a content pass that could
+            # not take it either. The same file with a shorter kicker paired correctly, which is
+            # what made it look like a geometry problem.
+            eintrag = (rect[0], rect[1], rect[2], rect[3],
+                       text_of(shape)[:24] if shape.has_text_frame else shape.name,
+                       key or f"shape:{shape.name}")
+            # A second key, for the same slot carrying different words: a kicker reading
+            # "Campaign" on page one and "Campaign, Product" on page two is one piece of
+            # furniture, and matching on the words cannot see that. Collected by zone here,
+            # paired by height below.
+            zone_name = "top" if (rect[1] + rect[3]) <= deck.slide_height * band else "bottom"
+            nach_zone.setdefault(zone_name, {}).setdefault(index, []).append((rect, eintrag))
+            if key is None:
+                continue
+            if index in vorkommen.get(key, {}):
+                mehrfach.setdefault(key, set()).add(index)
+                continue
+            vorkommen.setdefault(key, {})[index] = eintrag
+
+    problems, geprueft = [], 0
+    gepaart: set[str] = set()
+    grenze = round(tol * EMU_PER_INCH)
+    for key, je_seite in sorted(vorkommen.items()):
+        seiten_mit = {s for s in je_seite if s not in mehrfach.get(key, set())}
+        if len(seiten_mit) < 2:
+            continue
+        geprueft += 1
+        basis_seite = min(seiten_mit)
+        links, oben, breite, hoehe, label, _schluessel = je_seite[basis_seite]
+        gepaart.add(f"{label} ({len(seiten_mit)} pages)")
+        for seite in sorted(seiten_mit - {basis_seite}):
+            l2, o2, b2, h2, _label2, _key2 = je_seite[seite]
+            for wert_a, wert_b, was in ((links, l2, "left"), (oben, o2, "top"),
+                                        (breite, b2, "width"), (hoehe, h2, "height")):
+                if abs(wert_a - wert_b) > grenze:
+                    problems.append(
+                        "'%s' sits at a different %s on page %d than on page %d: %.3f inch apart "
+                        "(move it to %.3f in)"
+                        % (label, was, seite, basis_seite, Emu(abs(wert_a - wert_b)).inches,
+                           Emu(wert_a).inches))
+    # The height pass, for what the content pass could not pair. Nearest neighbour inside the zone
+    # rather than a grid: a bucket edge is arbitrary, and two slots either side of one are never
+    # compared at all. That is what the column key kept producing, in both directions. The frame's
+    # left edge separated slots that belong together, because alignment shifts every frame by its
+    # own first glyph's side bearing; measuring the ink edge instead then merged everything,
+    # because a piece that aligns its ink properly has all of its left-aligned furniture on exactly
+    # one line. A key that gets worse the more carefully a piece is set is the wrong key.
+    #
+    # Height works because furniture is laid out by height: the kicker at the top, the footer at
+    # the bottom, and nothing else at either. Paired loosely and compared tightly, so a slot that
+    # slipped a tenth of an inch is still recognised as that slot and then reported for slipping.
+    for zone_name, je_seite in sorted(nach_zone.items()):
+        if len(je_seite) < 2:
+            continue
+        basis_seite = min(je_seite)
+        for rect, eintrag in je_seite[basis_seite]:
+            oben, breite = rect[1], rect[2]
+            partner: dict[int, tuple] = {}
+            eindeutig = True
+            for seite, kandidaten in je_seite.items():
+                if seite == basis_seite:
+                    continue
+                nah = [(r, e) for r, e in kandidaten
+                       if abs(r[1] - oben) <= _ZONEN_FENSTER
+                       and abs(r[2] - breite) <= _ZONEN_FENSTER]
+                if len(nah) > 1:
+                    eindeutig = False   # two candidates at this height: not readable, not guessed
+                    break
+                if nah:
+                    partner[seite] = nah[0]
+            if not eindeutig or not partner:
+                continue
+            label, schluessel = eintrag[4], eintrag[5]
+            if all(e[5] == schluessel for _r, e in partner.values()):
+                continue      # same wording throughout: the content pass already had this one
+            geprueft += 1
+            gepaart.add(f"{label} and the same slot with other wording ({len(partner) + 1} pages)")
+            for seite in sorted(partner):
+                r2, e2 = partner[seite]
+                if abs(oben - r2[1]) > grenze:
+                    problems.append(
+                        "'%s' on page %d and '%s' on page %d are the same slot and sit %.3f inch "
+                        "apart vertically (move it to %.3f in)"
+                        % (e2[4], seite, label, basis_seite, Emu(abs(oben - r2[1])).inches,
+                           Emu(oben).inches))
+    for problem in problems:
+        print(f"FAIL: {problem}")
+    # Named, not counted. "1 element checked" reads like full coverage and is not checkable against
+    # any expectation: on a real flyer the kicker was silently left out, because it carried the
+    # product name on page two and the strings stopped matching. Whoever reads this can only notice
+    # that if the list says what was paired.
+    for label in sorted(gepaart):
+        print(f"  paired across pages: {label}")
+    print(f"{geprueft} repeating element(s) checked across {len(seiten)} page(s), "
+          f"{len(problems)} drift(s) [top and bottom {band:g} of the page, over {tol:g}in]"
+          + _nichts_geprueft(geprueft))
     return 1 if problems else 0
 
 
@@ -1985,7 +2367,8 @@ def overlap_check(deck_path: Path, slide_no: int | None, baseline: Path | None =
     for problem in problems:
         print(f"FAIL: {problem}")
     print(f"{pairs} pair(s) checked on {len(slides)} slide(s), {len(problems)} overlap(s)"
-          + (f", {geerbt} already in {baseline.name}" if baseline else ""))
+          + (f", {geerbt} already in {baseline.name}" if baseline else "")
+          + _nichts_geprueft(pairs))
     return 1 if problems else 0
 
 
@@ -2008,6 +2391,42 @@ LAYOUT_MIN_MARGIN = 0.5      # inch from the slide edge; a deck may hold itself 
 LAYOUT_MIN_PT = 12.0         # the lowest size still readable on a shared screen
 LAYOUT_MIN_PAD = 0.08        # inch between text and the edge of the filled box it sits in
 
+# The same three floors for a page somebody holds in their hand. A shared screen is read from four
+# metres away and a sheet of paper from forty centimetres, so the screen numbers applied to print
+# turn a check into something that has to be waved through: 10.5 pt body text and a 9 pt caption
+# are ordinary on A4 and would be reported as faults on every single page. A check that gets
+# overridden as routine has stopped checking, and the run where it is right goes past unnoticed
+# with all the others.
+#
+# The margin is not simply smaller: an office laser cannot print to the edge and clips roughly a
+# third of an inch, so this floor is about the machine rather than about taste.
+PRINT_MIN_MARGIN = 0.35      # inch from the page edge, near what a desktop printer refuses to reach
+PRINT_MIN_PT = 8.0           # a caption, a footnote, a legal line; under this nobody meant it
+PRINT_MIN_PAD = 0.05         # inch between text and the edge of the box it sits in
+
+# How far two ink edges may sit apart before somebody sees it. A slide is read across a room, a
+# sheet at arm's length, and between a 24 pt bold and a 10.5 pt regular the side bearings differ by
+# about a quarter of a millimetre: invisible on the wall, plain on paper with six sizes down one
+# edge, and under the screen tolerance either way, which is why it was never reported.
+ALIGN_TOL_SCREEN = 0.02
+ALIGN_TOL_PRINT = 0.006
+
+# Paper, in inches, both ways round. A deck is 13.33 x 7.5 or 10 x 7.5 and matches none of these.
+_PAPIER = ((8.268, 11.693), (5.827, 8.268), (8.5, 11.0), (11.693, 16.535), (7.165, 10.118))
+
+
+def _ist_druckstueck(breite: float, hoehe: float) -> bool:
+    """Whether these page dimensions are a sheet of paper rather than a slide.
+
+    Read off the size itself, because that is what is true regardless of how the file was made:
+    the same PowerPoint writes both, and nothing else in the file says which one was meant.
+    """
+    for w, h in _PAPIER:
+        for a, b in ((w, h), (h, w)):
+            if abs(breite - a) < 0.12 and abs(hoehe - b) < 0.12:
+                return True
+    return False
+
 
 def layout_check(deck_path: Path, slide_no: int | None = None, min_margin: float = None,
                  min_pt: float = None, min_pad: float = None) -> int:
@@ -2022,17 +2441,29 @@ def layout_check(deck_path: Path, slide_no: int | None = None, min_margin: float
 
     The floors are deliberately low. This says "nobody meant that", not "this is the house
     style": a deck that holds itself to wider margins passes its own numbers in.
+
+    **Which floors, though, follows from the page.** A4 or A5 gets the print set, anything else the
+    screen set, because a sheet held at arm's length and a slide read across a room are not the same
+    piece of work. Passing `--min-pt` and its siblings still overrides both, and the line the check
+    prints says which set it used, so a surprising result is traceable rather than mysterious.
     """
-    min_margin = LAYOUT_MIN_MARGIN if min_margin is None else min_margin
-    min_pt = LAYOUT_MIN_PT if min_pt is None else min_pt
-    min_pad = LAYOUT_MIN_PAD if min_pad is None else min_pad
     deck = Presentation(str(deck_path))
     breite, hoehe = inches(deck.slide_width), inches(deck.slide_height)
+    druck = _ist_druckstueck(breite, hoehe)
+    vorgabe = ((PRINT_MIN_MARGIN, PRINT_MIN_PT, PRINT_MIN_PAD) if druck
+               else (LAYOUT_MIN_MARGIN, LAYOUT_MIN_PT, LAYOUT_MIN_PAD))
+    min_margin = vorgabe[0] if min_margin is None else min_margin
+    min_pt = vorgabe[1] if min_pt is None else min_pt
+    min_pad = vorgabe[2] if min_pad is None else min_pad
     slides = ([(slide_no, deck.slides[slide_no - 1])] if slide_no
               else list(enumerate(deck.slides, start=1)))
     problems, geprueft = [], 0
     for index, slide in slides:
-        for shape, _rect in _leaf_rects(slide.shapes):
+        # Every leaf, not only the ones with words. Running off the page and sitting under
+        # the margin are questions about a shape: a card, a logo or a rule carries no
+        # text, and all three were invisible here, so a filled card hanging over the
+        # edge passed clean.
+        for shape, _rect in _leaf_rects(slide.shapes, mit_text=False):
             if shape.left is None or shape.width is None:
                 continue
             geprueft += 1
@@ -2068,9 +2499,11 @@ def layout_check(deck_path: Path, slide_no: int | None = None, min_margin: float
                     "%.2f floor" % (index, shape.name, rand, min_pad))
     for problem in problems:
         print(f"FAIL: {problem}")
+    art = "print" if druck else "screen"
     print(f"{geprueft} shape(s) checked on {len(slides)} slide(s), {len(problems)} layout fault(s) "
-          f"[off slide, margin under {min_margin:g}in, type under {min_pt:g}pt, "
-          f"padding under {min_pad:g}in]")
+          f"[{breite:.2f} x {hoehe:.2f}in, {art} floors: margin under {min_margin:g}in, "
+          f"type under {min_pt:g}pt, padding under {min_pad:g}in]"
+          + _nichts_geprueft(geprueft))
     return 1 if problems else 0
 
 
@@ -2370,12 +2803,30 @@ def _frame_lines(rahmen, breite_emu, groessen, fallback_family: dict | None = No
         real = _real_ink_bbox(text, family, size, bold)
         if real is None:
             return None
-        # A line breaks between words, never inside one. Without this a single wide glyph, a "2" at
-        # 54 pt in a narrow box, counted as two lines and was reported as an overflow. It cannot
-        # wrap; it paints past its box sideways, which is what `_painted_rect` handles.
-        woerter = len(text.split())
+        # A line breaks between words, and a word that fits stays whole: without the cap below, a
+        # single wide glyph, a "2" at 54 pt in a narrow box, counted as two lines and was reported
+        # as an overflow it cannot have, since one character cannot wrap.
+        #
+        # But a *word* wider than its own column does wrap, in the middle, and renderers do it. The
+        # cap on the word count then hid the case entirely: "Systemaufnahme" at 20 pt bold measures
+        # 2.28 inch in a 2.05 inch column, was counted as one line, the box was sized for one, and
+        # the second line landed on whatever sat below with every check reporting clean. German
+        # compounds in narrow columns are the normal case for a flyer, not an edge case.
+        #
+        # So the cap is the word count plus the breaks that happen inside over-wide words. Measured
+        # per word only where the totals disagree, because that measurement is the expensive part
+        # and it is pointless where nothing is too wide.
+        woerter = text.split()
         gebrochen = math.ceil(real[1] / breite_in)
-        dieser = max(1.0, min(float(gebrochen), float(woerter)))
+        deckel = float(len(woerter))
+        if gebrochen > len(woerter):
+            for wort in woerter:
+                if len(wort) < 2:
+                    continue      # one character cannot break; it paints past the edge instead
+                masse = _real_ink_bbox(wort, family, size, bold)
+                if masse and masse[1] > breite_in:
+                    deckel += math.ceil(masse[1] / breite_in) - 1
+        dieser = max(1.0, min(float(gebrochen), deckel))
         zeilen += dieser
         hoehe += dieser * size * _line_spacing(paragraph) / 72.0 + abstand[0] + abstand[1]
     if hoehe_aus is not None:
@@ -2437,6 +2888,113 @@ def _lines_needed(shape, fallback_family: dict | None = None) -> float | None:
     # 6.89, so it wrapped. Ignoring the insets makes the check agree with the geometry and disagree
     # with the render, which is the failure it exists to catch.
     return _frame_lines(shape.text_frame, shape.width, sizes_in(shape), fallback_family)
+
+
+# How much of a filled shape its own text has to occupy before it stops looking like a mistake.
+# Seventy per cent is where a card reads as set rather than as half-filled: measured on a real
+# piece, a results card of 4.15 cm carried text needing 2.93 cm and left a visible hole under the
+# second row, and every check passed it, because nothing overflowed, nothing overlapped and nothing
+# sat outside the page. All of them ask whether what is there is wrong. None asks whether something
+# is missing.
+FILL_MIN = 0.70
+
+
+def fill_check(deck_path: Path, slide_no: int | None = None, minimum: float = None) -> int:
+    """A filled shape using far less of itself than it has, which is either a fault or a pause.
+
+    The mirror image of `overflow_check`, and the half nobody built. That one asks whether the text
+    is too big for the box; this asks whether the box is too big for the text. The second is harder
+    to see, because nothing about it is broken: the file is valid, the render is clean, and it
+    simply looks unfinished.
+
+    **The text of a card is rarely inside the card.** A first version asked each filled shape about
+    its own text frame and found nothing at all across nine finished flyers: the cards were filled
+    auto shapes with no text, and the text sat in separate boxes laid over them, which themselves
+    carry no fill. Each card fell through both meshes. That layout is not exotic either, it is what
+    comes out of following the rules in `design.md` about setting colour explicitly. So the
+    question is asked geometrically instead: what stands inside this shape, whether or not it is
+    part of it.
+
+    Only filled shapes are looked at. The same empty space around a free-standing line is the white
+    space the piece is made of, not a hole in something. A shape whose text cannot be measured is
+    left out rather than called clean.
+    """
+    grenze = FILL_MIN if minimum is None else minimum
+    deck = Presentation(str(deck_path))
+    slides = ([(slide_no, deck.slides[slide_no - 1])] if slide_no
+              else list(enumerate(deck.slides, start=1)))
+    theme = _theme_fonts(deck_path)
+    problems, geprueft = [], 0
+    rand = round(0.02 * EMU_PER_INCH)   # a hairline of slack, so a box on the edge still counts
+
+    for index, slide in slides:
+        # Every leaf, not only the ones carrying words: the card is the shape with no text in it.
+        blaetter = list(_leaf_rects(slide.shapes, mit_text=False))
+        for shape, (links, oben, breite, hoehe_emu) in blaetter:
+            try:
+                gefuellt = shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE or shape.fill.type == 1
+                if shape.fill.type == 5:      # background fill: deliberately not a card
+                    gefuellt = False
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if not gefuellt:
+                continue
+            hoch = inches(hoehe_emu)
+            if hoch < 0.4:                    # a strip or a label, not something with room in it
+                continue
+            # The inset is not emptiness. A card that a kit gives half a centimetre of padding top
+            # and bottom has that much less room by design, and measuring the text against the
+            # outer height reports the padding as missing content. On a 3.4 cm card two 0.5 cm
+            # insets are a third of it, so every small card came out at about two thirds full and
+            # the check fired systematically on exactly the ones that were correct.
+            innen = 0.0
+            if shape.has_text_frame:
+                rahmen = shape.text_frame
+                oben_in = rahmen.margin_top if rahmen.margin_top is not None else 45720
+                unten_in = rahmen.margin_bottom if rahmen.margin_bottom is not None else 45720
+                innen = inches(oben_in) + inches(unten_in)
+            nutzbar = max(hoch - innen, 0.05)
+
+            eigener = _frame_height(shape.text_frame, breite, sizes_in(shape), theme) \
+                if shape.has_text_frame and text_of(shape) else None
+            if eigener is not None:
+                belegt = eigener
+            else:
+                # What stands inside this shape's box. Measured from the top of the highest thing
+                # in it to the bottom of what the lowest thing's text actually needs, because a box
+                # is often taller than its own text and the gap between two of them is part of the
+                # card rather than empty space at its end.
+                oberkante, unterkante = None, None
+                for andere, (l2, o2, b2, h2) in blaetter:
+                    if andere is shape or not andere.has_text_frame or not text_of(andere):
+                        continue
+                    if not (l2 >= links - rand and o2 >= oben - rand
+                            and l2 + b2 <= links + breite + rand
+                            and o2 + h2 <= oben + hoehe_emu + rand):
+                        continue
+                    noetig = _frame_height(andere.text_frame, b2, sizes_in(andere), theme)
+                    if noetig is None:
+                        continue
+                    o_in = inches(o2)
+                    oberkante = o_in if oberkante is None else min(oberkante, o_in)
+                    unterkante = max(unterkante or 0.0, o_in + noetig)
+                if oberkante is None:
+                    continue
+                belegt = (unterkante - oberkante) + (oberkante - inches(oben))
+            geprueft += 1
+            anteil = belegt / nutzbar if nutzbar else 1.0
+            if anteil < grenze:
+                was = text_of(shape)[:24] if (shape.has_text_frame and text_of(shape)) else shape.name
+                problems.append(
+                    "slide %d: '%s' is filled to %.0f%% of the room it has (%.2f of %.2f inch, "
+                    "%.2f of that inset). Either content is missing or the breathing room is "
+                    "meant; say which."
+                    % (index, was, anteil * 100, belegt, nutzbar, innen))
+    for problem in problems:
+        print(f"FAIL: {problem}")
+    print(f"{geprueft} filled shape(s) checked on {len(slides)} slide(s), {len(problems)} "
+          f"under {grenze:.0%} full" + _nichts_geprueft(geprueft))
+    return 1 if problems else 0
 
 
 def overflow_check(deck_path: Path, slide_no: int | None, baseline: Path | None = None,
@@ -2670,6 +3228,16 @@ def main(argv: list[str]) -> int:
     pr = sub.add_parser("refs-check", help="relationship ids a slide points at that its rels do not carry")
     pr.add_argument("deck", type=Path)
 
+    pfc = sub.add_parser("fill-check", help="a filled shape using far less of its own height than it has: content missing, or breathing room meant")
+    pfc.add_argument("deck", type=Path)
+    pfc.add_argument("--slide", type=int, help="1-based; default checks every slide")
+    pfc.add_argument("--min-fill", type=float, dest="min_fill",
+                     help=f"fraction of its own height a filled shape should use; default {FILL_MIN}")
+
+    pmc = sub.add_parser("media-check", help="every picture the deck points at, checked for being a real file")
+    pmc.add_argument("deck", type=Path)
+    pmc.add_argument("--verbose", action="store_true", help="name every picture, not only the broken ones")
+
     psc = sub.add_parser("schema-check", help="shapes PowerPoint will not draw, though a render shows them: "
                                              "a:spPr out of schema order, or a shape with no position")
     psc.add_argument("deck", type=Path)
@@ -2691,9 +3259,17 @@ def main(argv: list[str]) -> int:
     pa.add_argument("deck", type=Path)
     pa.add_argument("--slide", type=int, help="1-based; default checks every slide")
 
+    pf = sub.add_parser("furniture-check", help="an element that repeats across pages sitting somewhere else on one of them")
+    pf.add_argument("deck", type=Path)
+    pf.add_argument("--tol", type=float, help=f"inch of drift allowed; default {FURNITURE_TOL}")
+    pf.add_argument("--zone", type=float, help=f"fraction of page height at top and bottom that counts as furniture; default {FURNITURE_ZONE}")
+
     pr = sub.add_parser("render", help="a picture of every slide, headless, any platform")
     pr.add_argument("deck", type=Path)
     pr.add_argument("--into", type=Path, required=True, help="directory for the pictures")
+    pr.add_argument("--font-dir", type=Path, action="append", dest="font_dirs",
+                    help="a folder of typefaces this piece is set in, repeatable. Use it where the "
+                         "face lives with the brand rather than being installed on the machine.")
     pr.add_argument("--dpi", type=int, default=110)
 
     pst = sub.add_parser("structure-check", help="is the built slide still carrying the structure "
@@ -2789,6 +3365,10 @@ def main(argv: list[str]) -> int:
         return slots(args.deck, args.slide)
     if args.command == "fill":
         return fill(args.deck, args.texts, args.out, strict=not args.loose)
+    if args.command == "fill-check":
+        return fill_check(args.deck, args.slide, args.min_fill)
+    if args.command == "media-check":
+        return media_check(args.deck, args.verbose)
     if args.command == "refs-check":
         lose = dangling_refs(args.deck)
         for eintrag in lose:
@@ -2840,13 +3420,15 @@ def main(argv: list[str]) -> int:
         return overflow_check(args.deck, args.slide, args.baseline)
     if args.command == "overlap-check":
         return overlap_check(args.deck, args.slide, args.baseline)
+    if args.command == "furniture-check":
+        return furniture_check(args.deck, args.tol, args.zone)
     if args.command == "align-check":
         return align_check(args.deck, args.slide)
     if args.command == "render":
         if not args.deck.is_file():
             print(f"slide-library: {args.deck} is not a file", file=sys.stderr)
             return 1
-        return render(args.deck, args.into, args.dpi)
+        return render(args.deck, args.into, args.dpi, args.font_dirs)
     if args.command == "migrate":
         for pfad in [args.deck, args.into] + ([args.brand_from] if args.brand_from else []):
             if not pfad.is_file():

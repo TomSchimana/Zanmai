@@ -27,7 +27,7 @@ None of this is a requirement. Get it wrong and nothing breaks; you just end up 
 
 Some editors keep a table or a board as a folder ending in `.base`, holding the columns and one page per row. Every one you build is untouched: nothing read, nothing written, left out of every scan, wherever you put it.
 
-The single exception is Zanmai's own, `zanmai/open.base/`, which is where work that outlives one sitting is tracked. It sits inside the system folder because it is Zanmai's list of what it still owes you, not your filing. The line runs by who owns the folder, not by the file type, because a rule that stopped at the file type would either lock Zanmai out of its own bookkeeping or let it into yours. The rows there are plain CSV and the pages plain Markdown, so it opens anywhere, in an editor or a spreadsheet.
+There is no exception any more: every folder ending in `.base` is yours. Zanmai's own list of what it still owes you lives in `zanmai/open/`, one JSON file and one Markdown page per piece of work, inside the system folder where the things you never touch by hand belong.
 
 ## Why it is built this way
 

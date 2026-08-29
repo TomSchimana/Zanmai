@@ -1,0 +1,24 @@
+{
+  "_comment": "How long things are kept. Three buckets, because the only question anyone actually asks a document is whether it can go yet, and disks are cheap while a missing paper is not. Anything a real rule would put at one or two years goes in the four-year bucket, anything above ten years is kept for good. Zanmai puts this in front of the user once and what they confirm lands in zanmai/retention.json, which is the file Zanmai reads.",
+  "_checked": "2026-08-28",
+  "terms": [
+    {
+      "category": "forever",
+      "label": "Kept for good",
+      "years": null,
+      "why": "Cannot be reissued, or proves something with no end date: certificates, diplomas, medical findings, proof of ownership, payslips, court decisions"
+    },
+    {
+      "category": "ten-years",
+      "label": "Ten years",
+      "years": 10,
+      "why": "Money and contracts: invoices, bank statements, anything behind a tax return, insurance, tenancy, work on the property"
+    },
+    {
+      "category": "four-years",
+      "label": "Four years",
+      "years": 4,
+      "why": "Everyday proof with no contract behind it: receipts, orders, warranties on small things"
+    }
+  ]
+}

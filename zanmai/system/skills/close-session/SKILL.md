@@ -76,9 +76,21 @@ Create the `YYYY/MM/` folder if missing.
 
 ### Step 3: graduate insights (optional)
 
-If a realignment is a permanent rule, not a one-off correction, append a bullet to `zanmai/memory/general.md` under the appropriate section (`## Preferences`, `## Lessons`, `## Decisions`). Link back to the session log with a wikilink.
+If a realignment is a permanent rule, not a one-off correction, put it into `zanmai/memory/general.md` under the appropriate section (`## Preferences`, `## Lessons`, `## Decisions`). Link back to the session log with a wikilink.
 
-**Then keep those files to their rules.** Anything appended to memory is read at the start of a later run, so its size is paid for on every dispatch: on a real vault after three days, one specialist's lessons had reached 678 lines and all of it went into that specialist's context each time. So the close runs `zanmai.py memory curate --file <the file just written to>`, which moves struck entries and long reasoning into a dated archive beside the file and leaves the rule and its bounds in place. What it cannot decide it reports: an entry still marked provisional from an earlier month is put to the user, because dropping a lesson nobody ever checked would lose exactly the ones that were never checked. A standing rule is never rotated out by date; a rule has no expiry, and "do not suggest that again" retired after two months means it gets suggested again.
+**Three questions before anything goes in, and a no to any of them means it does not.**
+
+1. **Does it still hold in three months?** What the user said about this run, this machine, this afternoon is a situation, not a rule. "Send findings over there today" turns into a standing rule about where findings always go, and the word "today" was in the sentence. Where it is genuinely unclear, ask in one line rather than writing it down: an unnecessary question costs a sentence, a wrong standing rule costs every session after it.
+2. **Does it change what somebody does?** A rule nobody can act differently on is a note about the past. Those live in the session log, which is what the session log is for.
+3. **Is it already there?** Read the section first. Where an entry says the same thing, the new wording either **replaces** it or is dropped. It never stands beside it.
+
+**Refining an existing rule means rewriting that rule, not adding one under it.** One vault held four entries saying "do not act unasked" in four vocabularies, and the fourth stated in its own text that it refined the first while standing next to it. That is not memory growing, it is the same rule paid for four times on every dispatch that reads the file.
+
+Everything appended here is read at the start of a later run, so its size is paid for on every dispatch. This is the high-signal layer: what is written down has to earn the whole file being longer.
+
+**Then keep those files to their rules.** On a real vault after three days, one specialist's lessons had reached 678 lines and all of it went into that specialist's context each time. So the close runs `zanmai.py memory curate --file <the file just written to>`, which moves struck entries and long reasoning into a dated archive beside the file and leaves the rule and its bounds in place. What it cannot decide it reports: an entry still marked provisional from an earlier month is put to the user, because dropping a lesson nobody ever checked would lose exactly the ones that were never checked. A standing rule is never rotated out by date; a rule has no expiry, and "do not suggest that again" retired after two months means it gets suggested again.
+
+`curate` also counts the rules in the file and names repeated wording and time words where it finds them. Past its mark it says the file is worth reading through, and then it is read through: two rules saying one thing in different words are found by reading, never by counting, and the count exists to trigger that reading rather than to stand in for it. What is merged is merged in this step, not left for a later one.
 
 The chronological log is the other case and takes the other treatment: `zanmai.py memory rotate` moves its older months into an archive beside it, leaving one index line. It is searched, not read, so nothing is lost by moving it.
 

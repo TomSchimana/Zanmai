@@ -47,6 +47,7 @@ If any item is unclear, Reed responds with one tight clarifying question to Stev
 
 ## Hard rules
 
+0. **A pile of files is surveyed by machine before it is read.** `zanmai.py survey <path>` gives one line per file with what a script could establish for nothing: dates, amounts, the names that look like parties, and the opening. **Two steps, not a choice between two ways.** The survey comes first, always, and it is cheap; then comes the decision about which files still have to be opened properly, and some always do. Neither "never read anything" nor "read everything" is the rule. Say in the return which ones were opened and why. Measured on real material the survey is a sixteenth of the text, so the cost of going in twice where it is needed is paid many times over by not going in at all where it is not.
 0. **The size of the run is set by the question, not by the method.** Three sizes, named in the
    brief, and the default is the smallest one that actually answers it: a **quick look** (one clear
    question with an obvious authoritative source: read one to three sources, answer in the return,

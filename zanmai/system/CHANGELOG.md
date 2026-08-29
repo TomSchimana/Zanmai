@@ -3,6 +3,90 @@
 All notable changes to Zanmai. Versions follow semver; the 0.x series is pre-stable, so a folder
 name or a command can still change between versions.
 
+## [0.5.0] - 2026-08-29
+
+- Added `records/`, a root of its own for what has to be kept, with a term on each piece and no sweep that reaches it
+- Added Marcus, the curator: files what is kept, says whether a contract still runs, assembles a matter, proposes what may go
+- Added `records index` and `records search`: every kept document readable in seconds, scans included, without a note per document
+- Added `routing`: what a sort of incoming material is and where it goes, as a file you can open and change
+- Added `retention`: keeping terms as suggestions with their source, confirmed once and then yours
+- Added the `record` kind, with its states, terms and the ways one document relates to another
+- Added `records matter`: the thing documents belong to, with its history, and a document is hung on it in both directions at once
+- Added `records who`: one name per counterparty however many ways it was written, and never merged without asking
+- Changed the import to read your routing table and follow it, instead of asking again what you already decided
+- Added `survey`: what a pile of files is, established by machine, so a run reads short lines instead of whole documents
+- Fixed the records area being filed into before it was set up, by settling it in the conversation instead of expecting a background run to ask
+- Changed keeping terms to three buckets, four years, ten years and for good, with no legal area attached to them
+- Fixed a matter being created in a folder next to the records area instead of inside it
+- Fixed any write path built from data being able to create a folder the vault does not have
+- Changed contacts on the records path to follow a matter rather than every sender on every document
+- Added `records file`: a whole pile of documents into the records area at once, read as they land
+- Fixed documents being skipped by the index because of their file name, by reading what a file is from the file
+- Fixed a search for a date, an amount or a case number failing instead of answering
+- Fixed the index still answering for documents that had been moved or deleted
+- Fixed a document being unfindable by the name it carries, by searching the name along with the text
+- Added hanging a whole folder of documents on a matter, with dates, amounts and counterparties taken from what was read
+- Fixed a matter note being written with English headings in a vault kept in another language
+- Fixed the records area missing from the master index
+- Changed routing rules to key on what something is rather than on its file type, so the same report routes the same however it arrives
+- Fixed a file being thrown away out of `import/` while its content had reached nowhere in the vault
+- Fixed that check being avoidable by moving the file out of `import/` by hand
+- Changed the work objects to one JSON file in `zanmai/open/`, replacing a table format no editor here draws any more
+- Fixed the page listing what ships: it named a command that does not exist and left out twelve that do, two skills, a specialist and two hooks
+- Changed the slash-command menu to hold only what you would ask for by name, so a specialist's working method is reached through that specialist instead of sitting in your list
+- Removed fifteen entries from that menu that nobody types, which also gives every session start less to carry
+- Fixed two pieces of work opened under the same name in the same minute sharing one id, which made the second unreachable and closed the wrong one
+- Fixed a version change being able to lock the vault out of itself, where a guard the installed version does not have refused every command
+- Added `setup upgrade --to <version>`: go to a named published version, backwards included, with a snapshot taken first
+- Changed filing and research to survey a pile first and open only what the survey could not answer
+- Fixed a word wider than its column counting as one line, so text that wrapped into the paragraph below passed every check
+- Fixed `fill-check` counting a card's padding as missing content, which reported every small card as two thirds full
+
+- Added `file status`: a file can record that it is done or cancelled, and its open points and dates stop being offered
+- Changed the session-start list to two blocks, what carries a day and what does not, ten lines each at most and numbered straight through
+- Changed the open-task list to reach every folder, not only the journal and the focus bundles
+- Fixed a due date written without brackets not being read as a date
+- Changed `tools ensure`: it reports what a download or install would cost and fetches only with `--yes`
+- Changed the session start: what lies in `import` is read straight away in the background, and the questions come after the reading
+- Changed `import` to empty: the original follows what was made from it or goes to the trash, and stays lying only for a named reason
+- Changed the session-start list to fold several loose ends from one bundle into a single line, named as the bundle names itself
+- Added `park-guard`: a background run cannot wait for an answer where nobody can see the question
+- Fixed `layout-check` holding a printed page to the type size a slide needs, which made every ordinary caption a fault
+- Fixed `align-check` reading no side bearing at all, so text that visibly started at different points was reported as level
+- Changed `align-check` to name the shape to move and how far, and to measure a printed page more finely than a slide
+- Added `furniture-check`: a footer, logo or page number that sits somewhere else on the next page, which no single-page check could see
+- Fixed a session picked up again running its session start a second time, which read material the first run was still working on
+- Fixed `furniture-check` reporting a sentence repeated in the middle of a page as furniture that had moved
+- Changed a blocked command: it is tried before it is reported, and a line for you to type is a last resort rather than a working method
+- Changed filing: material that a synced folder keeps putting back is settled at its source instead of left lying
+- Added `rasterise`: an SVG or a PDF page becomes pixels at the size it will be used at, transparency kept
+- Added a renderer for vector files to the tool register, so icons no longer need a workaround per piece
+- Added `fact`: what a run established about this machine, install or piece of work, so the next one does not establish it again
+- Changed the readiness checks before building a deck to read what was already established instead of measuring it afresh
+- Added a sentence at session start about what has been sitting on the desk untouched for more than two weeks
+- Added `waiting` as a status: a piece parked on something outside stays quiet until the date it comes back
+- Fixed the library check refusing any command that merely mentioned a piece of work, down to ticking a task off in a text file
+- Fixed a headless render setting a deck in the wrong typeface where the right one was installed for you alone
+- Added `--font-dir` to the render, for a typeface that lives with the brand instead of on the machine
+- Changed the rule on driving a visible application: it opens a window on your screen, so it is the last resort and never the method
+- Changed a task line: it stays one line and carries `--see` to where the detail lives, rather than repeating it or cutting it away
+- Changed the checks to say when they compared nothing at all, so an empty run no longer reads like a pass
+- Changed `furniture-check` to name what it paired across pages instead of only counting it
+- Changed an instruction to report: it ends with the reporting and carries no permission to change what was reported
+- Added `media-check`: a picture the file points at that is empty or is not the format it claims, which only opening the file used to reveal
+- Added `fill-check`: a card holding far less than it has room for, measured from whatever stands inside it
+- Fixed `layout-check` never seeing a shape without text, so a card hanging over the page edge passed as clean
+- Fixed `furniture-check` never seeing a logo, which carries no text and is the thing most likely to wander between pages
+- Changed `furniture-check` to recognise a slot by its height in the zone as well, so a kicker whose wording differs per page is still checked
+- Fixed `furniture-check` comparing shortened labels, so two wordings sharing their first characters counted as one
+- Fixed the library check reading prose inside a heredoc as a command, which blocked writing a report about the check itself
+- Changed the `work` commands to take the same flags throughout, with `--text` accepted for `--note`
+- Fixed an interrupted model download starting over instead of continuing where it stopped
+- Fixed a handover being refused for carrying its two labelled blocks in the user's own language
+- Fixed a command being refused for tidying up `.DS_Store` alongside what it created
+- Fixed the memory curation not seeing rules written as bullets, which is most of them
+- Changed the session close: a rule is only written down if it still holds in three months, and one that refines an earlier rule replaces it
+
 ## [0.4.9] - 2026-08-27
 
 - Changed the changelog to one line per change, and dropped the reasoning from it

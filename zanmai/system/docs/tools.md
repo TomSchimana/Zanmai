@@ -51,6 +51,7 @@ less than its parts added up: the eight Python libraries come to 373 apart and 3
 | `numpy` | image-edit grade --lut | 34 MB | Zanmai fetches it |
 | `pillow` | image-edit core, the visible label on generated media, and measuring a document render per column | 15 MB | Zanmai fetches it |
 | `poppler` | Turns a render into pixels and text so it can be measured rather than assumed (pdftoppm for coverage, bleed and the contact sheet; pdftotext to check the text arrived complete; pdffonts to check the fonts are embedded) | 33 MB | you, with one command |
+| `pymupdf` | Turns an SVG or a PDF page into pixels, with transparency kept | 24 MB | Zanmai fetches it |
 | `python_pptx` | Reads and writes a native.pptx without opening PowerPoint: which layout a slide uses, whether its placeholders are filled, whether a run overrides the layout, which faces and colours are actually in the file | 25 MB | Zanmai fetches it |
 | `rawpy` | image-edit raw develop | 6 MB | Zanmai fetches it |
 | `scikit_image` | image-edit grade --match fallback | 148 MB | Zanmai fetches it |

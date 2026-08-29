@@ -18,6 +18,19 @@ common:
     - tags         # array of strings
     - mentioned_in # array of source slugs where an auto-stubbed entity surfaced (set by `contact create --mentioned-in <slug>`).
 
+# What `status:` may say. Set it with `zanmai.py file status --path <p> --set <value>`, never by
+# hand: the value has a vocabulary and a typo silences nothing while looking as if it did.
+#
+#   active     runs, and its open points are current
+#   waiting    parked on purpose, on something outside; add `due:` for when it comes back
+#   done       finished; open points on it are history, not work
+#   cancelled  does not happen any more; open points on it are void
+#   unclear    seen but not settled; somebody has to look at it
+#
+# `done` and `cancelled` take the file's open task lines and its dates out of what the session
+# start offers. The kind-specific values below (planning, wrap-up, awaiting-archive) say where
+# inside `active` something sits and are treated as active.
+
 kinds:
 
   focus:
@@ -27,7 +40,7 @@ kinds:
     # need their own goal/status. They are material, not separate focus instances.
     required_for_hub_only:
       - goal       # one-line statement of the outcome
-      - status     # enum: planning, active, wrap-up
+      - status     # planning, active, wrap-up, plus the shared lifecycle values above
     required: []
     optional:
       - goal
@@ -40,7 +53,7 @@ kinds:
     # off the desk is read from the file dates, not from a field that has to be kept true by hand.
     required: []
     optional:
-      - status     # free text, for the user's own sense of where the piece stands
+      - status     # the shared lifecycle values above
       - due        # YYYY-MM-DD when the piece has a real deadline
 
   habit:
@@ -52,13 +65,31 @@ kinds:
     optional:
       - cadence
       - last_done  # YYYY-MM-DD
+      - status     # a routine that stopped says so here rather than being deleted
 
   knowledge:
     description: persistent reference. default class for unsure material.
     required: []
     optional:
       - topic      # one-line topic descriptor
-      - status     # only for a read-once briefing on the desk: awaiting-archive until it is filed away
+      - status     # awaiting-archive for a read-once briefing on the desk, plus the shared lifecycle values above
+
+  record:
+    description: a document kept because it has to be, or because it would be needed again.
+    # Nothing beyond the common fields is required. A scan that arrives before anyone has worked
+    # out what it is still has to be filable; what turns it into a record with a term on it is
+    # `retention_policy`, set once somebody knows.
+    required: []
+    optional:
+      - doc_type          # what it is: invoice, policy, contract, certificate, pay slip, notice
+      - lifecycle         # active, retention-bound, evidence-only, expired
+      - retention_policy  # forever, ten-years, four-years
+      - retention_until   # YYYY-MM-DD, where the policy resolves to a day
+      - relates_to        # slug of the document or matter this belongs to
+      - relates_via       # pays, cancels, confirms, amends, replaces, references, part-of
+      - source_path       # where the original file lies, if not beside this note
+      - status            # the shared lifecycle values above
+      - due               # YYYY-MM-DD, where something has to happen by a date
 
   contact/person:
     description: people the user knows.

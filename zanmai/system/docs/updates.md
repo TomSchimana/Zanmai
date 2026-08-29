@@ -35,7 +35,19 @@ Once a day at most, at session start, Zanmai quietly checks whether a newer vers
 
 The snapshot taken before the update is the way back. A failed check after applying triggers a restore from it, and every update, restore and deletion is recorded in `zanmai/update-history.md`.
 
-Two cases stop an update instead of forcing it. A clone with local edits to Zanmai's own files refuses to fast-forward, and you are told which files those are. And a vault that is ahead of the source is never rolled back to an older version.
+Two cases stop an update instead of forcing it. A clone with local edits to Zanmai's own files refuses to fast-forward, and you are told which files those are. And a vault that is ahead of the source is never *offered* an older version.
+
+## Going to a particular version
+
+Never offered is not the same as impossible. When a version turns out to be wrong for you, say which one you want:
+
+```
+zanmai.py setup upgrade --to <version>
+```
+
+It goes there whether that is forwards or backwards, takes a snapshot first, and says out loud when it is going back. The version you are leaving is reachable the same way, so this is a step you can undo. The automatic offer keeps its rule and never moves you backwards on its own.
+
+Nothing about a version change can leave the vault unable to help you with it. A guard named in the host config but missing from the version now installed is treated as silence rather than as a refusal, and what gets wired in is read from what the installed script can actually run. Without that pair, a step backwards would refuse every command, including the one that would undo it.
 
 ---
 

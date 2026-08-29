@@ -7,7 +7,7 @@
 # distribution_paths get overwritten on update.
 # user_immune_paths are never touched on update.
 
-distribution_version: "0.4.9"
+distribution_version: "0.5.0"
 phase: "phase-1"
 schema_version: "0.1.0"
 
@@ -104,6 +104,7 @@ distribution_paths:
   - "zanmai/system/experts/luis/luis.md"
   - "zanmai/system/experts/shuri/shuri.md"
   - "zanmai/system/experts/ben/ben.md"
+  - "zanmai/system/experts/marcus/marcus.md"
   - "zanmai/system/templates/focus-bundle.md"
   - "zanmai/system/templates/doing-bundle.md"
   - "zanmai/system/templates/habit-bundle.md"
@@ -168,9 +169,9 @@ user_immune_paths:
   - "zanmai/history/**"
   - "zanmai/temp/**"
   - "zanmai/trash/**"
-  - "zanmai/open.base/**"
+  - "zanmai/open/**"
   - "zanmai/runtime/**"
-  # The user's own roots, all ten minus the system folder.
+  # The user's own roots, all eleven minus the system folder.
   - "journal/**"
   - "focus/**"
   - "doing/**"
@@ -178,6 +179,7 @@ user_immune_paths:
   - "knowledge/**"
   - "trusted/**"
   - "archive/**"
+  - "records/**"
   - "contacts/**"
   - "import/**"
   - "INDEX.md"

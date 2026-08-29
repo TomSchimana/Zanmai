@@ -25,6 +25,7 @@ This is the documentation. You do not have to read it: ask Zanmai instead, in yo
 - [Designing documents](design.md)
 - [Generating images and video](images.md)
 - [Editing video](video.md)
+- [What you keep](records.md)
 - [Finding things again](finding.md)
 - [Contacts](contacts.md)
 - [Connecting outside tools](connections.md)

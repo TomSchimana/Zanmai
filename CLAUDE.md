@@ -29,7 +29,7 @@ Leave out: the request repeated back, an announcement of what is about to happen
 ## Folder map
 
 The vault root is flat, and the names come from two families that never mix: what is going on in a
-head (`focus`, `doing`, `habits`, `knowledge`, `trusted`, `archive`) and what the machine runs on
+head (`focus`, `doing`, `habits`, `knowledge`, `trusted`, `archive`, `records`) and what the machine runs on
 (`zanmai`, `import`), with `journal` and `contacts` beside them as time and people. A name that falls
 between two families is the wrong name.
 
@@ -46,8 +46,9 @@ empties.
 | `knowledge/` | Everything gathered, nothing ranked. The default class for unsure material and the place contradictions may stand. `kind: knowledge` |
 | `trusted/` | What the user settled on **and** that cannot be worked out from the files. Small, curated, one answer per question. Trust is withdrawable, which is why it is not called truth. |
 | `archive/` | Finished and kept, answering no question any more. A matter stays whole: current document, superseded one and correspondence in one bundle. |
+| `records/` | What has to be kept, or is worth keeping: contracts, policies, tax papers, certificates, receipts under warranty. **The difference to the archive is duty, not age.** The archive may be cleared out; here every piece carries a term, and discarding one is a decision with a date on it. `kind: record` |
 | `contacts/` | `people/` and `organisations/`. |
-| `import/` | Where things are dropped. **The folder is the automation**: the file type decides the route, never a sub-folder. Read oldest-first and in full before anything is processed, because the later item can withdraw the earlier. Always a second copy, never the only one. |
+| `import/` | Where things are dropped. **The folder is the automation**: what something *is* decides the route, never its file type and never a sub-folder, and the rules for that are the user's in `zanmai/routing.json`. Read oldest-first and in full before anything is processed, because the later item can withdraw the earlier. **Nothing is thrown away before its content is in the vault**: `file trash` refuses a file from here without `--filed-to` or the user's own words in `--user-said`, and a hand-rolled `mv` out of it is refused too. `file archive` is unaffected, because the archive is a place in the vault. Always a second copy, never the only one. |
 | `zanmai/` | The system folder. The test is **"what the user never touches by hand"**. |
 
 `zanmai/system/` is replaced by an update; `user.md`, `extensions/`, `connections/`, `memory/`,
@@ -62,9 +63,9 @@ what each one is for: `zanmai/system/docs/folder-architecture.md`.
 - **A script that stays the way to reproduce or change the deliverable is not an intermediate.** It
   goes beside the deliverable in its bundle, never in `temp/`, or the sweep takes the one thing the
   result still depends on after seven days.
-- **`zanmai/open.base/` holds the work objects** (operating-principles §13): one row plus one page
+- **`zanmai/open/` holds the work objects** (operating-principles §13): one entry plus one page
   per piece of work, driven by `zanmai.py work`. It is the AI's own list, not the user's filing. This
-  is the one database Zanmai owns and writes; every other `.base` folder in the vault is the user's.
+  is the one list Zanmai owns and writes; every `.base` folder in the vault is the user's, untouched.
 - **`trusted/brands/` is created at setup**, the one area inside `trusted/` the system knows by
   name, because four experts read it by path: `design.md` for what does not change from piece to
   piece, `<format>.md` per format, `slides/` for approved slides. It arrives empty and fills up as
@@ -97,9 +98,11 @@ carries its own trigger in its frontmatter `description`.** That description is 
 when it is deciding what a job needs, so the triggers are not repeated here: a second copy in this
 file would be the same truth twice, and it would grow the one file every session start pays for.
 
-Registering a skill also gives it a `/zanmai-<name>` command. The command is the convenience; the
-description is the mechanism. A skill without an adapter is invisible to the host and gets found only
-if someone happens to remember a contract line, which is how fifteen of them went unused for months.
+Registering a skill also gives it a `/zanmai-<name>` command, and that command menu belongs to the
+user: it answers "what can I ask for". **So only what the user would ask for by name is registered.**
+A specialist's working method is not; it is named with its full path in the contract of the expert who
+runs it, and that expert reads it when the job needs it. What is registered is in
+`_SKILL_SYMLINK_MAP`; everything else is reached through the contract that names it.
 
 Read the skill at the moment the job needs it, not in advance. **Anything longer than a line that
 gets written for the user runs through the `write` skill, whoever runs it**, and the greet runs
@@ -116,7 +119,7 @@ move; it is whether the operation decides something on the user's behalf.
 
 - `zanmai/system/experts/steve/steve.md`: Steve's full contract, routing and the delegation protocol.
 - `zanmai/system/operating-principles.md`: the principle layer. `zanmai/system/docs/operating-principles.md` carries the reasoning, read when a principle is disputed.
-- `zanmai/system/experts/<name>/<name>.md`: one contract per expert. **Who they are and when each one is dispatched is in their own `description`**, which the host shows at dispatch time, so the roster is not copied here. The eleven: Steve, Hank, Reed, Wong, Pepper, Carol, Loki, Luis, Shuri, Ben, Stan.
+- `zanmai/system/experts/<name>/<name>.md`: one contract per expert. **Who they are and when each one is dispatched is in their own `description`**, which the host shows at dispatch time, so the roster is not copied here. The twelve: Steve, Hank, Reed, Wong, Pepper, Carol, Loki, Luis, Shuri, Ben, Stan, Marcus.
 - `zanmai/system/skills/<name>/SKILL.md`: one procedure per skill.
 - `zanmai/system/docs/`: background, why a feature exists. `zanmai/system/manifest.yaml`: what ships.
 

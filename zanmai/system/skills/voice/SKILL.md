@@ -76,11 +76,19 @@ The report is short and has three parts: how many notes and how long, what each 
 
 ## What runs automatically, and what does not
 
-The session-start hook says how many recordings are waiting; it does not transcribe, because a hook that takes a minute is a session that starts in a minute. On the next turn Steve dispatches Reed in the background (`subagent_type: reed`, `run_in_background: true`) for the reading legs, so the user can carry on while it runs, and acts on what comes back.
+The session-start hook says how many recordings are waiting; it does not transcribe, because a hook that takes a minute is a session that starts in a minute.
+
+**Whether the recording gets read is not the question.** The user put it in a folder called import; they know what they dropped and why. Asking "shall I read this out" asks them to say again what dropping the file already said, and it reads as if the machine had found the note on an answering machine rather than been handed it. It gets read, and the question comes afterwards, once, about what the recording itself left open.
+
+**Check the prerequisites first**, with `zanmai.py tools check whisper-model`. This is the one thing that has to be settled before anything starts, because the model is a 1.6 GB download and that is the user's call, not a step. Where it is missing, Steve says so in one line with the size and waits for the answer. Where it is there, Reed goes out in the background (`subagent_type: reed`, `run_in_background: true`) for the reading legs and the user carries on.
+
+Sending an expert out without checking is what cost a five-second note twelve minutes: it met the missing model, wrote its question onto a work object nobody was looking at, and waited there.
 
 **The prompt carries the two labelled blocks** (`brief`), headed exactly `What the user said:` and `What I concluded:`. `dispatch-guard` checks for the first heading literally and refuses the dispatch without it.
 
-Everything up to the report happens without asking: transcribing, correcting, filing a journal entry, carrying out an instruction that was actually given. What waits is money nobody asked for, a missing tool or model to fetch, and a correction that changes what a sentence means.
+Once the run is under way, everything up to the report happens without asking: correcting, filing a journal entry, carrying out an instruction that was actually given. What waits is money nobody asked for, a missing tool or model to fetch, and a correction that changes what a sentence means.
+
+**A missing prerequisite ends the run, it does not park it.** The expert returns and says what is missing; it never waits in a loop for an answer, because it runs in the background and nobody is watching where its question lands. Waiting there once turned a five-second job into twelve minutes of nothing.
 
 **When nobody is at the keyboard.** The run can be started on a schedule, and then the invocation says so. Nothing about the reading changes; three things about the ending do. Open points go to `zanmai.py work ask` instead of a question, because a question asked into an empty room stops the run for a day. The run does not park (operating-principles §12): nobody is there to wake it. And it closes itself through the `close-session` skill, which writes the log with `session_type: unattended`, so the next real session is told in one line what happened and what is waiting. Decisions are taken rather than deferred, in the knowledge that the report makes them easy to undo.
 

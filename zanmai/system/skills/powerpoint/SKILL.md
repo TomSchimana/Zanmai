@@ -86,7 +86,10 @@ bundle of twenty pieces then comes out as the same two patterns twenty times.
    vary and within which bounds; the preview pictures are what to show the user before building.
    **After a migrate, always `overflow-check` and `layout-check`**: a change of typeface changes
    how much every slot holds, and the target brand may have collapsed two theme roles into one
-   value.
+   value. `layout-check` reads the page size and holds a sheet of paper to print floors rather
+   than screen ones, so a 10.5 pt body and a 9 pt caption on A4 pass on their own; where a piece
+   genuinely needs different numbers, `--min-pt`, `--min-margin` and `--min-pad` set them, and
+   the reason belongs in the format kit, not in a note beside a red result.
 4. **Compose.** Only when nothing in the library and nothing in the wireframes carries it. This is the expensive tier, so it is named before the work starts, not discovered afterwards, and whatever comes out and is approved is harvested back into the library so tier one grows and tier three gets rarer.
 
 **Changing the wording of a deck that already exists is not a build at all, and never a script.** `slide-library.py slots <deck.pptx>` prints every fillable place in a finished file, by the role its geometry gives it (`hub.lines2`, `card1.title`, `table1.r2c3`), with what stands there now and how much each holds. `slide-library.py fill <deck.pptx> --texts <texts.json> --out <new.pptx>` writes the new wording into those places and refuses text that does not fit rather than shrinking type. The texts file is `{"1": {"hub.lines": "..."}}` by slide number, flat for a one-slide deck. A table cell is a place like any other, addressed as `table1.r2c3`. A value can be one string, a list of strings for several paragraphs, or a list of `{"text": "...", "bold": true}` pieces for one paragraph made of several runs, which is how a rubric carries a bold objection and its plain answer together. Nothing is redrawn and nothing is cloned, so the geometry stays byte-identical. This exists because the alternative kept happening: a wording change on a finished deck was written as a purpose-built python-pptx script, twice in one bundle, and each of those is a new place for the layout to drift and a new thing to maintain. A one-off script for filling text is now a sign that the wrong route was taken.
@@ -131,6 +134,10 @@ Unpack the template copy, set text in the placeholders of `slideN.xml` at run le
 When tier three is the honest answer, **derive from a copy of a real deck that already carries the brand, never from an empty `Presentation()`.** Open the copy, drop the slides you don't need, and add the new one from that file's own `prs.slide_layouts`, the layout object, not a redrawn look-alike. Master, layouts, theme and fonts come along because nothing was rebuilt. Pick the layout whose purpose and placeholder set fit the content, rather than building free on a blank. What a browser-shaped instinct would draw as a table is usually already a form in the library.
 
 Building a fresh, empty presentation and copying the CI (theme XML, measured positions) into it by hand is a fallback for when no real deck exists at all, not a shortcut when one does. It only *looks* equivalent: positions are re-measured and typed in rather than inherited, so a coordinate can be close but wrong (a placeholder and the fixed logo element next to it are easy to swap), and nothing catches that a value was read from the wrong shape. In practice: this technique's own excuse, "the original file's unused media stay attached, bloating the copy," does not hold either. `python-pptx` only serialises parts the surviving tree still references; removing unused slides and layouts drops their exclusive media on save (measured: 486 parts down to 33, 10.4 MB down to 36 kB). There is no real cost trade-off left in favour of the transplant path.
+
+**A look at the piece is headless, and the fonts go with the call.** `slide-library.py render --into <dir> --font-dir <folder>` writes pictures without opening anything on screen. `--font-dir` is repeatable and takes the folder the brand's own typefaces live in; it is needed more often than it looks, because a face installed for the user alone is invisible to a headless renderer on macOS and gets silently swapped for a serif. Do not drive PowerPoint or any other application by remote control to get a picture: that throws a window open on the screen of whoever is working there, once per file (operating-principles 12).
+
+**Establish a standing fact once, then read it.** Which typefaces the machine has, where LibreOffice sits, whether a helper is installed, where a brand's theme file lives: each takes a minute and answers the same on every run. `zanmai.py fact get <key>` first; on a miss, find out and `fact set <key> <value> --scope machine|install|bundle --about <what>`. The scope is what makes this safe: a machine fact is refused on a different machine rather than believed there. Fifteen runs on one piece of work re-checked the same typeface before this existed.
 
 **Check the theme fonts before trusting anything.** A master can carry a theme face the machine does not have, and then every inheriting placeholder is silently swapped: verified on a real customer template whose theme was Calibri Light and Calibri, neither installed, which is why its previews came out in a serif nobody chose. Fix the theme in the template once; until then pin the brand face per run.
 
@@ -184,7 +191,7 @@ unchanged: first slide only, it puts itself in the dock while it runs, so it is 
 with a reason or not used, and on a large deck it takes minutes.
 
 The countable part is still read, not looked at: `refs-check`, `overflow-check`,
-`overlap-check`, `align-check`, `layout-check` and `schema-check` all read the file, and a render
+`overlap-check`, `align-check`, `layout-check`, `furniture-check`, `media-check`, `fill-check` and `schema-check` all read the file, and a render
 does not replace any of them. The render catches the class none of them can: what the arrangement
 looks like once it is painted.
 

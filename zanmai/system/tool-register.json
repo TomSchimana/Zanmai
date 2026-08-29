@@ -847,6 +847,25 @@
         "method": "message",
         "note": "804 MB and a full office suite: too big to fetch behind the user's back, and there is no single-binary build. Named with its size at the first render that needs it, and at setup as one of the ones they install."
       }
+    },
+    "pymupdf": {
+      "purpose": "Turns an SVG or a PDF page into pixels, with transparency kept. Every icon set arrives as SVG and no slide, flyer or document can carry one until something has rasterised it. Nothing else on a plain machine does this: cairosvg needs a system Cairo, rsvg-convert and Inkscape are separate installs, and the LibreOffice route drops the alpha channel and has to have it reconstructed from brightness.",
+      "kind": "python-lib",
+      "tier": "on-demand",
+      "needed_by": [
+        "carol",
+        "loki",
+        "luis"
+      ],
+      "detect": {
+        "method": "import",
+        "import": "pymupdf"
+      },
+      "provision": {
+        "method": "venv-pip",
+        "pip": "pymupdf"
+      },
+      "size_mb": 24
     }
   },
   "capabilities": {

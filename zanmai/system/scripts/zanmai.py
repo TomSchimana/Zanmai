@@ -38,6 +38,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -71,6 +72,13 @@ from pathlib import Path
 SYSTEM_DIR = "zanmai"           # what the machine keeps; the user never opens it by hand
 IMPORT_DIR = "import"           # drop something in and it gets taken up
 ARCHIVE_DIR = "archive"         # finished and kept; answers no question any more
+# What has to be kept, or is worth keeping: contracts, policies, tax papers, certificates, receipts
+# with a warranty on them. The difference to the archive is not age and not tidiness, it is duty.
+# An archive holds what answers no question any more and may therefore be thrown away; this holds
+# what a law, a contract or a later need says must stay, and throwing any of it away is a decision
+# with a date attached. That is also why it is a root of its own rather than a folder inside the
+# archive: nesting it would inherit permission to clear it out, which is exactly backwards.
+RECORDS_DIR = "records"         # kept because it must be, with a term on each piece
 HOST_DIR = ".claude"            # what the host reads: skills, agents, settings
 
 # The five that describe what is going on in a head, not where a file type belongs.
@@ -102,10 +110,19 @@ ACTIVITY_LOG_FILE = f"{MEMORY_DIR}/activity-log.md"
 
 # The AI's own list of what is open. Under the system folder because it is the machine's, not the
 # user's: "I do not look at my concierge's notepad to see what he still has to do."
-# The `.base` suffix is the database format's, not a second folder: a markdown editor that
-# understands it renders the rows as a table and as a board grouped by state, so "what is waiting on
-# me" is answerable on a phone from the same files, with nothing exported to make the view work.
-OPEN_DIR = f"{SYSTEM_DIR}/open.base"
+#
+# One JSON file plus one markdown page per entry. It was a `.base` folder with a CSV and a schema
+# describing table and board views, because an editor rendered those; that editor is gone, and what
+# stayed was a 5 KB view definition nobody drew, larger than the 3.7 KB of actual work it described,
+# plus a migration step that existed only because a CSV header row drifts when a field is added. In
+# JSON a missing field is a default on read, and a broken file fails loudly instead of parsing into
+# something wrong. Not a database: twenty rows read and written whole, in a folder that syncs, where
+# a binary file is the thing that loses a merge.
+OPEN_DIR = f"{SYSTEM_DIR}/open"
+WORK_FILE = "open.json"
+# Where it used to live. Read once by `setup update` to carry an existing vault across, and by
+# nothing else.
+LEGACY_OPEN_DIR = f"{SYSTEM_DIR}/open.base"
 
 CONTACTS_DIR = "contacts"
 PEOPLE_DIR = f"{CONTACTS_DIR}/people"
@@ -131,11 +148,76 @@ KIND_FIELDS = {
     # The desk. It asks for nothing beyond the common fields on purpose: what clears a bundle off
     # the desk is read from the file dates, not from a field somebody has to keep true.
     "doing": {"required": (), "optional": ("status", "due")},
-    "habit": {"required": ("cadence",), "optional": ("last_done",)},
+    "habit": {"required": ("cadence",), "optional": ("last_done", "status")},
     "knowledge": {"required": (), "optional": ("topic", "status")},
+    # A kept document. Nothing is required beyond the common fields, and that is deliberate: a scan
+    # that arrives before anyone has worked out what it is still has to be filable. What turns it
+    # into a record with a term on it is `retention_policy`, and that is set once somebody knows.
+    "record": {"required": (), "optional": ("doc_type", "lifecycle", "retention_policy",
+                                            "retention_until", "relates_to", "relates_via",
+                                            "source_path", "status", "due")},
     "contact/person": {"required": (), "optional": ("nickname", "role", "org", "email", "phone", "birthday", "address", "website")},
     "contact/organization": {"required": (), "optional": ("kind_of", "website")},
 }
+
+# Where a kept document stands. Not a document type and not a folder: the same policy can hold a
+# contract and a receipt, and the same contract moves between these as time passes. The bucket is
+# what decides whether the thing may go, so it is the load-bearing field, not `doc_type`.
+RECORD_LIFECYCLE = {
+    "active": "the underlying matter is still in effect; nothing expires while it is",
+    "retention-bound": "a law or a contract says how long this has to stay",
+    "evidence-only": "no duty, but it proves something worth proving: a warranty, a repair history",
+    "expired": "its term has run out; it may go, and going is still a decision somebody makes",
+}
+
+# How long a document stays. Three buckets and nothing else. An earlier version had five rules for
+# computing a date from a contract end, an ownership period or a matter still running, which is
+# five ways of asking somebody to work out a figure nobody will ever check. The only question put
+# to a document is whether it can go yet, and disks are cheap while a missing paper is not: so
+# anything a real rule would put at one or two years sits in `four-years`, and anything a real rule
+# would put beyond ten sits in `forever`, because past ten years the difference is theoretical.
+RECORD_RETENTION = {
+    "forever": "never goes; `retention_until` stays empty",
+    "ten-years": "money and contracts; ten years from the document's date",
+    "four-years": "everyday proof with no contract behind it; four years from the document's date",
+}
+
+# How one document relates to another. A closed vocabulary, because the point of naming a relation
+# is that it can be asked about: which invoice paid this, what cancelled that, which version this
+# replaced. An open list of free text answers none of those.
+RECORD_RELATIONS = {
+    "pays": "settles an invoice, a contract or a service",
+    "cancels": "ends the thing it points at",
+    "confirms": "acknowledges an action taken earlier",
+    "amends": "changes the thing it points at without replacing it",
+    "replaces": "supersedes an earlier version",
+    "references": "mentions it, with no causal role",
+    "part-of": "belongs to the same matter, without a specific role",
+}
+
+
+# What `status:` may say, and what each value does to the rest of the system.
+#
+# The field already existed, but it meant something different per kind and nothing checked the
+# value, so it could say anything and nobody could act on it. These four are the lifecycle answers
+# every kind shares: does this still stand. `cancelled` and `done` take a file's open task lines
+# and its dates out of what the session start offers, which is the whole point of the field.
+#
+# The kind-specific values below them stay valid because they say where inside `active` something
+# sits, not whether it stands at all. A file carrying one of those is treated as active.
+STATUS_LIFECYCLE = {
+    "active": "runs, and its open points are current",
+    "waiting": "deliberately parked on something outside; give `due:` for when it comes back",
+    "done": "finished; open points on it are history, not work",
+    "cancelled": "does not happen any more; open points on it are void",
+    "unclear": "seen but not settled; somebody has to look at it",
+}
+# Values a kind used before this field had a vocabulary. They all mean some flavour of active.
+STATUS_KIND_SPECIFIC = ("planning", "wrap-up", "awaiting-archive")
+STATUS_VALUES = tuple(STATUS_LIFECYCLE) + STATUS_KIND_SPECIFIC
+# The two that silence a file: its task lines and its dates stop being offered at session start.
+STATUS_CLOSED = ("done", "cancelled")
+
 
 # A routine's frontmatter kind is singular (`habit`), its folder is plural (`habits/`). Every
 # other bundle kind spells both the same, which is why the mismatch stayed invisible for so long:
@@ -145,8 +227,16 @@ KIND_FIELDS = {
 # `habits/`, and the user's routines were invisible to half the system (found 2026-08-05).
 # These two functions are the only place that knows about the difference. The previous shape - a
 # hand-kept folder list in five places plus one local `kind_map` patch - is exactly what drifted.
-KIND_FOLDERS = {"habit": "habits"}
+# It then happened a second time, for record/records, and the same way: a new kind was added and
+# this map was not. So the map is no longer the safeguard, the check below is. Anything that has a
+# home under a root folder says so here; a kind whose folder is not a root at all is one that does
+# not get a folder of its own, and those are listed rather than inferred, so that forgetting an
+# entry fails loudly instead of quietly creating a folder next to the real one.
+KIND_FOLDERS = {"habit": "habits", "record": "records"}
 BUNDLE_KINDS = ("focus", "doing", "habit", "knowledge")
+# Kinds that deliberately have no root folder of their own: a contact is a single file under
+# `contacts/`, never a bundle. Listed so the check can tell "no folder" from "folder forgotten".
+FOLDERLESS_KINDS = ("contact/person", "contact/organization")
 
 
 def _tags_arg(value: str | None) -> list[str] | None:
@@ -163,6 +253,50 @@ def _tags_arg(value: str | None) -> list[str] | None:
 def _kind_folder(kind: str) -> str:
     """Root folder name for a frontmatter kind value."""
     return KIND_FOLDERS.get(kind, kind)
+
+
+def _check_kind_folders() -> None:
+    """Every kind either has a real root folder or is on the list of those that have none.
+
+    Twice now a kind was added and its folder mapping was not, and both times the result was a
+    folder in the singular sitting next to the real one, filled, while everything that reads the
+    vault looked in the plural. A map that has to be remembered is not a safeguard; failing at
+    import time is. This costs one dict lookup per kind at startup.
+    """
+    fehlend = [k for k in KIND_FIELDS
+               if k not in FOLDERLESS_KINDS and _kind_folder(k) not in USER_ROOTS]
+    if fehlend:
+        raise SystemExit(
+            f"zanmai.py is inconsistent with itself: kind(s) {', '.join(fehlend)} map to a folder "
+            f"that is not a vault root. Add the mapping to KIND_FOLDERS, or the kind to "
+            f"FOLDERLESS_KINDS where it is not meant to have a folder.")
+
+
+def _vault_mkdir(vault: Path, ziel: Path, **kw) -> None:
+    """Create a directory inside the vault, refusing to invent a new root folder.
+
+    The vault has nine user folders and they are the whole list. Twice a write path was built from
+    data, once from a kind value and once from a routing target, and each time it created a folder
+    in the singular next to the real one: filled, invisible to everything that reads the vault, and
+    only noticed because a person saw it in the sidebar. Both times the code was correct in its own
+    terms, and both times the wrong folder appeared anyway, because nothing checked the one thing
+    that matters, which is whether the path lands somewhere that exists. So the check sits here,
+    where the directory is actually made, and it fails loudly instead of building quietly.
+    """
+    try:
+        rel = ziel.resolve().relative_to(vault.resolve())
+    except (ValueError, OSError):
+        ziel.mkdir(**kw)      # outside the vault: not this function's business
+        return
+    # A dotted folder at the root is somebody else's business by design, the host config, the
+    # editor, git. The failure this guards against is a visible folder next to a visible folder.
+    if (rel.parts and not rel.parts[0].startswith(".")
+            and rel.parts[0] not in _VAULT_ROOT_ALLOWED_DIRS):
+        raise SystemExit(
+            f"fail: {rel.parts[0]}/ is not a folder this vault has, so nothing was created. The "
+            f"vault's folders are: {', '.join(sorted(_VAULT_ROOT_ALLOWED_DIRS))}. A path that "
+            f"lands anywhere else is a bug in whatever built it, not a folder to add.")
+    ziel.mkdir(**kw)
 
 
 def _folder_kind(folder: str) -> str:
@@ -190,8 +324,11 @@ USER_ROOTS = (
     KNOWLEDGE_DIR,
     TRUSTED_DIR,
     ARCHIVE_DIR,
+    RECORDS_DIR,
     CONTACTS_DIR,
 )
+
+_check_kind_folders()
 
 
 
@@ -556,6 +693,11 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
     if kind not in KIND_FIELDS:
         print(f"fail: unknown kind {kind}", file=sys.stderr)
         return 1
+    if kind not in BUNDLE_KINDS:
+        print(f"fail: {kind} is not a bundle kind. A matter in the records area is created with "
+              f"`records matter new`, which also gives it its chronology and its counterparty.",
+              file=sys.stderr)
+        return 1
     # Sub-bundle slugs are allowed via "/" (e.g. "computer/clippings"). Each
     # path segment is slugified independently; the last segment is the bundle slug.
     segments, slug = _slugify_bundle_path(args.slug)
@@ -567,7 +709,7 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
     if bundle_dir.exists():
         print(f"fail: bundle already exists: {bundle_dir}", file=sys.stderr)
         return 1
-    bundle_dir.mkdir(parents=True)
+    _vault_mkdir(vault, bundle_dir, parents=True)
     bundle_rel = f"{folder}/{'/'.join(segments)}"
     is_sub_bundle = len(segments) > 1
 
@@ -828,6 +970,40 @@ def _update_master_index(vault: Path) -> None:
         "Archive", ARCHIVE_DIR,
         "Finished and kept: the document from outside and your own completed piece. It answers no "
         f"question any more, and nothing has to end up here. See `{ARCHIVE_DIR}/`.")
+    def render_records(header: str, intro: str) -> str:
+        """The matters, grouped by section, rather than the sections alone.
+
+        A section is a filing drawer and nobody looks for one. What somebody looks for is the
+        contract, the policy, the case, and those live a level down, so listing only the drawers
+        makes the index say `vertraege` where the user is looking for `bahncard`.
+        """
+        root = vault / RECORDS_DIR
+        lines = [f"## {header}", "", intro, ""]
+        if not root.is_dir():
+            return "\n".join(lines + ["(empty)"]) + "\n"
+        etwas = False
+        for bereich in sorted(p for p in root.iterdir() if p.is_dir()):
+            sachen = sorted(s.name for s in bereich.iterdir() if s.is_dir())
+            if not sachen:
+                continue
+            etwas = True
+            lines.append(f"**{bereich.name}**")
+            lines += [f"- [[{s}]]" for s in sachen]
+            lines.append("")
+        lose = sorted(s.stem for s in root.iterdir()
+                      if s.is_file() and s.suffix == ".md" and s.stem != "INDEX")
+        if lose:
+            etwas = True
+            lines += [f"- [[{s}]]" for s in lose]
+        if not etwas:
+            lines.append("(empty)")
+        return "\n".join(lines).rstrip() + "\n"
+
+    new_records = render_records(
+        "Records",
+        "What has to be kept, whether or not it is still of interest: contracts, invoices, "
+        "certificates, anything with a term on it. Each matter is a folder holding its documents "
+        f"and a note saying where it stands. See `{RECORDS_DIR}/`.")
     new_contacts = render_contacts()
 
     # Each section is replaced up to the next heading, so the order here is the order in the file
@@ -839,10 +1015,17 @@ def _update_master_index(vault: Path) -> None:
         (r"## Habits\n.*?(?=\n## Knowledge)", new_habits),
         (r"## Knowledge\n.*?(?=\n## Trusted)", new_knowledge),
         (r"## Trusted\n.*?(?=\n## Archive)", new_trusted),
-        (r"## Archive\n.*?(?=\n## Contacts)", new_archive),
+        (r"## Archive\n.*?(?=\n## Records|\n## Contacts)", new_archive),
+        (r"## Records\n.*?(?=\n## Contacts)", new_records),
         (r"## Contacts\n.*?(?=\n## Import)", new_contacts),
     ):
         text = re.sub(pattern, replacement + "\n", text, flags=re.DOTALL)
+
+    # An index written before the records area existed has no heading for it, and a replacement
+    # that finds nothing to replace leaves it out for ever. So the heading is put in once, ahead of
+    # contacts, and filled on this same pass.
+    if "\n## Records\n" not in text and "\n## Contacts\n" in text:
+        text = text.replace("\n## Contacts\n", f"\n{new_records}\n\n## Contacts\n", 1)
 
     master.write_text(text, encoding="utf-8")
 
@@ -1174,6 +1357,85 @@ def _split_lesson_entries(text: str) -> tuple[str, list[tuple[str, str, str, lis
     return preamble, entries
 
 
+# A rule written as a bullet under a `## ` heading, which is what `general.md` is made of. The
+# dated-entry reader below sees four headings there and nothing else, so the file that grows fastest
+# was the one file the curation could not read: 21 rules in four weeks, four of them saying the same
+# thing, one of them stating in its own text that it refines an earlier one and standing next to it
+# anyway.
+_REGEL_BULLET = re.compile(r"^- \*\*(?P<kopf>.+?)\*\*(?P<rest>.*)$")
+
+# Words that mark a sentence as being about now rather than about always. A memory entry carrying
+# one of these was a situation, not a rule: "the dev session is here today" became the standing rule
+# "every guard refusal is reported to the dev session", and the word "today" was in the sentence.
+# Kept to the unmistakable ones. Words like "jetzt" and "gerade" appear in ordinary prose and
+# flagging those turns the report into noise, which is how a check stops being read.
+_LAGE_WOERTER = ("heute", "für diesen lauf", "in dieser sitzung", "diesmal", "vorerst",
+                 "today", "for this run", "this session", "for now", "for today")
+
+
+def _regel_eintraege(text: str) -> list[tuple[str, str, str]]:
+    """(section, headline, full line) for every rule written as a bullet."""
+    treffer: list[tuple[str, str, str]] = []
+    abschnitt = ""
+    for zeile in text.splitlines():
+        if zeile.startswith("## "):
+            abschnitt = zeile[3:].strip()
+            continue
+        passt = _REGEL_BULLET.match(zeile)
+        if passt:
+            treffer.append((abschnitt, passt.group("kopf").strip(), zeile))
+    return treffer
+
+
+def _regel_woerter(text: str) -> set[str]:
+    """The words of a rule that carry its meaning, for comparing two wordings of one rule."""
+    return {w for w in re.findall(r"\w+", text.lower()) if len(w) >= 5}
+
+
+_REGEL_GLEICH = 0.6   # how much of the shorter headline has to appear in the longer one
+_REGEL_MIN_WOERTER = 4  # below this a headline is too short for the overlap to mean anything
+# When a rules file is worth reading through. Not a limit and nothing is dropped at it: it is the
+# point where nobody reads the file as a whole any more, and unread rules are the same as absent
+# ones. A live vault reached 21 in four weeks.
+_REGELN_MARKE = 20
+
+
+def _regel_doppelungen(eintraege: list[tuple[str, str, str]]) -> list[tuple[str, str, float]]:
+    """Pairs of rules worded so alike that one of them is redundant, most alike first.
+
+    Compared on the headline rather than the whole entry, because the body carries the example and
+    two entries about one rule cite different examples.
+
+    What this finds is a repetition, not a contradiction and not a rule stated twice in different
+    words. Four entries in a live vault said "do not act unasked" in four vocabularies, and no
+    amount of word counting reaches that: it is a judgement about meaning and it belongs to the
+    close, which is why the count below exists to trigger a reading rather than to replace it.
+    """
+    paare: list[tuple[str, str, float]] = []
+    # Short headlines are left out rather than compared. With three meaningful words in one, a
+    # single word in common already reads as half the rule, and a report of coincidences is a
+    # report nobody opens twice: "do not judge, collect" came back paired with "text to copy goes
+    # to VimR as .txt" at 50 per cent.
+    woerter = [(kopf, _regel_woerter(kopf)) for _abschnitt, kopf, _zeile in eintraege]
+    woerter = [(kopf, w) for kopf, w in woerter if len(w) >= _REGEL_MIN_WOERTER]
+    for i, (kopf_a, wa) in enumerate(woerter):
+        for kopf_b, wb in woerter[i + 1:]:
+            anteil = len(wa & wb) / min(len(wa), len(wb))
+            if anteil >= _REGEL_GLEICH:
+                paare.append((kopf_a, kopf_b, anteil))
+    return sorted(paare, key=lambda p: p[2], reverse=True)
+
+
+def _lage_statt_regel(eintraege: list[tuple[str, str, str]]) -> list[str]:
+    """Rules whose own wording says they are about a moment rather than about always."""
+    treffer = []
+    for _abschnitt, kopf, zeile in eintraege:
+        klein = zeile.lower()
+        if any(w in klein for w in _LAGE_WOERTER):
+            treffer.append(kopf)
+    return treffer
+
+
 def cmd_memory_curate(args: argparse.Namespace) -> int:
     """Move what a run does not need out of a rules file, keep every rule that stands.
 
@@ -1195,6 +1457,42 @@ def cmd_memory_curate(args: argparse.Namespace) -> int:
         return 1
 
     text = source.read_text(encoding="utf-8")
+
+    # The bullet pass runs on every file, before the dated-entry pass, because it is the one that
+    # reads `general.md` at all. It reports and changes nothing: a merge is a judgement.
+    regeln = _regel_eintraege(text)
+    if regeln:
+        doppel = _regel_doppelungen(regeln)
+        lage = _lage_statt_regel(regeln)
+        zeichen = sum(len(z) for _a, _k, z in regeln)
+        print(f"rules as bullets: {len(regeln)}, {zeichen} characters")
+        # The number is the point. Every one of these is read on every dispatch that touches this
+        # file, so a file that only grows is a cost that only grows. Past the mark it is worth
+        # reading the whole thing once and merging what says the same thing twice, which no script
+        # can decide for you.
+        if len(regeln) > _REGELN_MARKE:
+            print(f"  over {_REGELN_MARKE} rules. Read the file through once and merge what repeats: "
+                  f"a rule that refines an earlier one replaces it, it does not stand beside it.")
+        if doppel:
+            print(f"  {len(doppel)} pair(s) that look like the same rule twice. Merge them by hand: "
+                  f"keep one wording, delete the other, and where one refines the other say so in "
+                  f"the one that stays.")
+            for a, b, anteil in doppel[:10]:
+                print(f"    {anteil:.0%}  {a[:60]}")
+                print(f"          {b[:60]}")
+        if lage:
+            print(f"  {len(lage)} entry/entries word themselves as being about a moment, not about "
+                  f"always. A situation is not a rule; check each one and strike what has passed:")
+            for kopf in lage[:10]:
+                print(f"    {kopf[:70]}")
+        if not doppel and not lage:
+            # Said plainly, because "nothing found" reads as "nothing there". What this pass sees
+            # is repeated wording and words like "today". Four entries in a live vault said "do not
+            # act unasked" in four vocabularies and none of them said "today"; no count reaches
+            # either. Reading the file is what reaches them.
+            print("  no repeated wording and no time words. That is not the same as no repetition: "
+                  "two rules saying one thing in different words are found by reading, not counting.")
+
     preamble, entries = _split_lesson_entries(text)
     if not entries:
         print(f"ok: {source.relative_to(vault)} has no dated entries, nothing to curate "
@@ -1604,6 +1902,1226 @@ def _import_route(path: Path) -> tuple[str, str]:
     return "unknown", "say so, never quietly leave it lying"
 
 
+# Where incoming material goes, as a file the user can open rather than a rule in the code. What
+# lands where is a decision that accumulates: a spoken note goes into the day, a backup log goes
+# into its own place, a scanned invoice goes to the records. Written into skills and hooks, those
+# decisions spread across a dozen files, none of which the user can read, and every new one needs a
+# release. Written here, the user changes a line.
+#
+# A rule keys on what something IS, never on the file it arrived as. A file type says how to read
+# something and nothing at all about what it is for: two `.txt` files are a shopping list and a
+# server's nightly report, and a rule that caught one caught the other. So the condition is a word
+# in the content or a pattern in the name, and the rule carries the sentence the user said about
+# it. Where nothing matches, that is the answer too: the file stays put and the user is asked once.
+#
+# JSON rather than Markdown because it is read by machine at the moment a file is being routed, and
+# `json.load` either gives a structure or fails; prose always gives back something. JSON rather
+# than a database because a rule the user set has to be readable by the user who set it.
+ROUTING_FILE = "routing.json"
+
+# How much of a file is looked at to decide what it is. A rule that needs more than the opening of
+# a document to recognise it is a rule about something other than the document.
+ROUTE_TEXT_CHARS = 20000
+
+
+def _routing_path(vault: Path) -> Path:
+    return vault / SYSTEM_DIR / ROUTING_FILE
+
+
+def _routing(vault: Path) -> dict:
+    """The user's routing table, or an empty one. A missing file changes nothing.
+
+    Deliberately forgiving: this is read on every import, and a vault whose routing file was never
+    written, or was broken by a hand edit, still has to work exactly as before. What it cannot do
+    is fail silently in a way that looks like a decision, so a broken file is reported by
+    `routing show` rather than swallowed here.
+    """
+    try:
+        daten = json.loads(_routing_path(vault).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return daten if isinstance(daten, dict) else {}
+
+
+def _routing_rules(vault: Path) -> list[dict]:
+    """The user's rules, in the order they were written. First match wins, so order is a decision."""
+    regeln = _routing(vault).get("rules")
+    if not isinstance(regeln, list):
+        return []
+    return [r for r in regeln if isinstance(r, dict) and r.get("name")]
+
+
+def _rule_matches(regel: dict, path: Path, text_of) -> bool:
+    """Whether this rule covers this file. Every condition given has to hold, an absent one is silent.
+
+    `text_of` is a callable and not the text: reading a file costs, and a rule that only names a
+    filename pattern must not pay for it. A rule with no conditions at all matches nothing on its
+    own; it exists to be pointed at by name when somebody decides this file belongs to it.
+    """
+    when = regel.get("when")
+    if not isinstance(when, dict) or not when:
+        return False
+    muster = when.get("name")
+    if muster and not fnmatch.fnmatch(path.name.lower(), str(muster).lower()):
+        return False
+    worte = when.get("text")
+    if worte:
+        if isinstance(worte, str):
+            worte = [worte]
+        inhalt = (text_of() or "").lower()
+        if not inhalt or not all(str(w).lower() in inhalt for w in worte):
+            return False
+    return True
+
+
+def _route_for_file(vault: Path, path: Path) -> dict:
+    """The first rule that covers this file, or an empty rule where the user has not said yet."""
+    gelesen: dict[str, str] = {}
+
+    def text_of() -> str:
+        if "t" not in gelesen:
+            try:
+                _art, text = _read_as_text(path)
+            except Exception:
+                text = ""
+            gelesen["t"] = (text or "")[:ROUTE_TEXT_CHARS]
+        return gelesen["t"]
+
+    for regel in _routing_rules(vault):
+        if _rule_matches(regel, path, text_of):
+            return regel
+    return {}
+
+
+def _rule_phrase(regel: dict) -> str:
+    """One rule as one readable line: where it goes and what the user said to do with it."""
+    if not regel:
+        return ""
+    teile = [f"{regel.get('name', '?')} -> {regel.get('to') or '(no destination)'}"]
+    if regel.get("do"):
+        teile.append(str(regel["do"]))
+    if regel.get("ask_first") is True:
+        teile.append("ask first")
+    elif regel.get("ask_first") is False:
+        teile.append("no need to ask")
+    return "; ".join(teile)
+
+
+# The user's own keeping terms, and the suggestions they were built from. Two files on purpose: one
+# ships and is replaced by every update, the other belongs to the vault and is never touched.
+# A term that lives in the code cannot be corrected without a release, and terms do change: one
+# country shortened its figure for accounting vouchers from ten years to eight, and a table built
+# on the old number still said ten months afterwards, because nothing about it invited a look.
+RETENTION_FILE = "retention.json"
+RETENTION_DEFAULTS = "retention-defaults.json"
+
+
+def _retention_defaults() -> dict:
+    try:
+        return json.loads((Path(__file__).resolve().parent.parent / RETENTION_DEFAULTS)
+                          .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _retention(vault: Path) -> dict:
+    """What actually applies here. The user's file where there is one, otherwise nothing.
+
+    Deliberately not falling back to the shipped suggestions: a term nobody confirmed is a term
+    nobody chose, and a number applied behind somebody's back is worse than no number at all.
+    """
+    try:
+        return json.loads((vault / SYSTEM_DIR / RETENTION_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+# The searchable copy of what is kept. Derived, never a source: it is built from the files and can
+# be thrown away and rebuilt at any time, which is what makes it safe to keep out of sight and out
+# of every backup. It lives under the runtime folder for exactly that reason.
+#
+# Why a database and not a note per document: the shape this replaces wrote one Markdown file per
+# document, and a hundred and twenty pay slips became a hundred and twenty files that turned up in
+# every search for years afterwards. The meaning of a matter belongs in a note somebody reads; the
+# words of five thousand documents belong somewhere nobody looks unless they are searching.
+RECORDS_DB = "records.sqlite3"
+# What can be read as text at all, and how.
+_TEXT_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".tsv", ".log")
+_MAIL_SUFFIXES = (".eml", ".msg")
+_OCR_SUFFIXES = (".png", ".jpg", ".jpeg", ".tiff", ".tif", ".heic", ".webp")
+
+
+def _records_db(vault: Path):
+    """The index, opened and ready. Created on first use, schema included."""
+    import sqlite3
+    pfad = vault / RUNTIME_DIR / RECORDS_DB
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(str(pfad))
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS documents (
+            path      TEXT PRIMARY KEY,
+            size      INTEGER,
+            -- Fractional, not whole seconds. A file whose length happens not to change and whose
+            -- edit falls in the same second as the last read looks untouched to a whole-second
+            -- comparison, and then a document that did change is never read again. Seen while
+            -- building this: an amount edited from 1250 to 1400 is the same number of characters.
+            mtime     REAL,
+            kind      TEXT,
+            read_at   TEXT,
+            note      TEXT
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS content USING fts5(
+            path UNINDEXED, body, tokenize='unicode61'
+        );
+    """)
+    return db
+
+
+# What a file is, read from the file. A name is a label somebody typed and it is wrong often
+# enough to matter: a PDF saved without an extension, a scan called `.txt`, a mail exported as
+# `.file`. The first bytes of a file say what it is and cannot be typed wrong, so they are asked
+# first and the name is only used where they stay silent.
+_MAGIC = (
+    (b"%PDF", ".pdf"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+    (b"II*\x00", ".tiff"),
+    (b"MM\x00*", ".tiff"),
+    (b"PK\x03\x04", ""),          # a zip: which office format is decided by the name
+    (b"{\\rtf", ".rtf"),
+    (b"From ", ".eml"),
+    (b"Return-Path:", ".eml"),
+    (b"Received:", ".eml"),
+)
+
+
+def _sniff(pfad: Path) -> str:
+    """The suffix a file would have if it were named after what it is, or "" where that is unclear.
+
+    Reading eight kilobytes costs nothing next to reading the document, and it closes the whole
+    class of gap where a file is skipped, or read the wrong way, because of its name.
+    """
+    try:
+        kopf = pfad.open("rb").read(8192)
+    except OSError:
+        return ""
+    for muster, suffix in _MAGIC:
+        if kopf.startswith(muster):
+            if suffix:
+                return suffix
+            # A zip. Office formats are zips with a known part inside them; anything else is left
+            # to the name, so an ordinary archive is not read as a document.
+            return pfad.suffix.lower() if pfad.suffix.lower() in _OFFICE_PARTS else ""
+    if kopf.lstrip()[:1] == b"<":
+        return ".html"
+    # RIFF and ISO media containers: audio and video carry no text to index, but saying what they
+    # are beats calling them binary.
+    if kopf[:4] in (b"RIFF", b"OggS", b"fLaC") or kopf[4:8] == b"ftyp":
+        return ".media"
+    return ""
+
+
+def _text_from_html(roh: str) -> str:
+    """The readable text out of a page, with the markup dropped.
+
+    Deliberately the standard library and no dependency: the job is to feed a full-text index, not
+    to render the page. Script and style content goes, tags go, entities are resolved, and runs of
+    whitespace collapse so the extract in a search result reads as a sentence.
+    """
+    import html as _html
+    import re as _re
+    ohne = _re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", roh)
+    ohne = _re.sub(r"(?s)<[^>]+>", " ", ohne)
+    return _re.sub(r"\s+", " ", _html.unescape(ohne)).strip()
+
+
+def _read_as_text(pfad: Path) -> tuple[str, str]:
+    """(kind, text) for one file, or ("", "") where nothing can be read here.
+
+    Reading is per format and none of it is guessed from the name alone: a PDF may carry a text
+    layer or be a photograph of paper, and the only way to know is to try the cheap way first.
+    """
+    suffix = _sniff(pfad) or pfad.suffix.lower()
+    if suffix in _TEXT_SUFFIXES:
+        try:
+            return "text", pfad.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return "", ""
+    if suffix in _MAIL_SUFFIXES:
+        try:
+            import email
+            from email import policy
+            nachricht = email.message_from_bytes(pfad.read_bytes(), policy=policy.default)
+            teile = [str(nachricht.get(k, "")) for k in ("Subject", "From", "To", "Date")]
+            koerper = nachricht.get_body(preferencelist=("plain", "html"))
+            if koerper is not None:
+                inhalt = koerper.get_content()
+                if koerper.get_content_subtype() == "html":
+                    inhalt = _text_from_html(inhalt)
+                teile.append(inhalt)
+            return "mail", "\n".join(t for t in teile if t)
+        except Exception:  # noqa: BLE001 -- a mail that will not parse is skipped, not fatal
+            return "mail", ""
+    if suffix == ".pdf":
+        if not shutil.which("pdftotext"):
+            return "pdf", ""
+        try:
+            lauf = subprocess.run(["pdftotext", "-q", str(pfad), "-"],
+                                  capture_output=True, text=True, timeout=120)
+            text = lauf.stdout or ""
+        except Exception:  # noqa: BLE001
+            return "pdf", ""
+        # A scan has no text layer. Four in five carry one; the rest need reading with eyes, which
+        # is what OCR is. Trying the cheap way first and only then the expensive one is the whole
+        # difference between minutes and hours on a real archive.
+        if len(text.strip()) > 40 or not shutil.which("ocrmypdf"):
+            return "pdf", text
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                ziel = Path(tmp) / "ocr.pdf"
+                subprocess.run(["ocrmypdf", "-q", "--skip-text", str(pfad), str(ziel)],
+                               capture_output=True, timeout=600)
+                if ziel.is_file():
+                    lauf = subprocess.run(["pdftotext", "-q", str(ziel), "-"],
+                                          capture_output=True, text=True, timeout=120)
+                    return "pdf-ocr", lauf.stdout or ""
+        except Exception:  # noqa: BLE001
+            pass
+        return "pdf", text
+    if suffix in _OCR_SUFFIXES:
+        if not shutil.which("tesseract"):
+            return "image", ""
+        try:
+            lauf = subprocess.run(["tesseract", str(pfad), "stdout", "-l", "deu+eng"],
+                                  capture_output=True, text=True, timeout=300)
+            return "image", lauf.stdout or ""
+        except Exception:  # noqa: BLE001
+            return "image", ""
+    return _read_anything(pfad, suffix)
+
+
+# Office files are ZIP archives of XML. Reading them needs no library at all, and refusing to look
+# because no library is installed is how a contract ends up outside the index.
+_OFFICE_PARTS = {
+    ".docx": ("word/document.xml",),
+    ".pptx": ("ppt/slides/",),
+    ".xlsx": ("xl/sharedStrings.xml", "xl/worksheets/"),
+    ".odt": ("content.xml",),
+    ".odp": ("content.xml",),
+    ".ods": ("content.xml",),
+}
+
+
+def _read_anything(pfad: Path, suffix: str = "") -> tuple[str, str]:
+    """Last resort for a file no specific reader claimed: read it, do not skip it.
+
+    This function exists because of a list. Readable formats were named one by one, and everything
+    not on the list fell through in silence: the index answered, it just answered short, and the
+    one contract that existed only as a saved web page was invisible. A list of what can be read
+    is a list that is always one format out of date. So the question is turned around. Every file
+    is read; the format only decides how. What genuinely carries no text says so, by name, instead
+    of disappearing.
+    """
+    suffix = suffix or pfad.suffix.lower()
+    if suffix in _OFFICE_PARTS:
+        try:
+            import zipfile
+            stuecke = []
+            with zipfile.ZipFile(pfad) as archiv:
+                for name in archiv.namelist():
+                    if not any(name.startswith(teil) or name == teil
+                               for teil in _OFFICE_PARTS[suffix]):
+                        continue
+                    if not name.endswith(".xml"):
+                        continue
+                    stuecke.append(_text_from_html(archiv.read(name).decode("utf-8", "replace")))
+            return suffix.lstrip("."), " ".join(s for s in stuecke if s)
+        except Exception:  # noqa: BLE001 -- a broken archive is read as bytes below
+            pass
+    # Anything else: read it as text and see. A file that is mostly printable is a text file
+    # whatever it is called, and one that is not says so rather than filling the index with noise.
+    if suffix == ".media":
+        return "media", ""
+    try:
+        roh = pfad.read_bytes()[:2_000_000]
+    except OSError:
+        return "", ""
+    text = roh.decode("utf-8", errors="replace")
+    druckbar = sum(1 for c in text if c.isprintable() or c in "\n\r\t")
+    if text and druckbar / len(text) > 0.85:
+        if "<" in text[:2000] and ">" in text[:2000]:
+            return suffix.lstrip(".") or "text", _text_from_html(text)
+        return suffix.lstrip(".") or "text", text
+    return suffix.lstrip(".") or "binary", ""
+
+
+# The matter, and the documents hanging off it. A single letter answers nothing; what answers
+# something is the policy, the employment, the vehicle, the case it belongs to. So the matter is
+# the unit that gets a note, and everything else is a line in its chronology plus a row in the
+# index. The shape this replaces wrote a note per document and drowned in them.
+MATTER_SUFFIX = "-matter"
+
+
+def _matter_doc_type(roh: str) -> str:
+    """The kind of a matter, with the suffix on it once.
+
+    It was appended without looking, so a kind that already carried it came out as
+    `contract-matter-matter`. Anything a person types twice by mistake is something the code has to
+    absorb, because the alternative is a field that reads as broken to whoever opens the file.
+    """
+    art = (roh or "matter").strip()
+    while art.endswith(MATTER_SUFFIX):
+        art = art[: -len(MATTER_SUFFIX)]
+    return f"{art or 'matter'}{MATTER_SUFFIX}"
+_CHRONO_HEADING = "## Chronology"
+_CHRONO_HEADER = ("| Date | What happened | Amount | With |\n"
+                  "|---|---|---|---|")
+
+# A matter note is the user's file, not a system file, so its headings belong in the language they
+# write in. The house rule already draws that line, the generator did not: notes came out with
+# English column headings in a vault kept in another language. Only the languages the distribution
+# actually speaks are here; anything else falls back to English rather than to a guess.
+_CHRONO_WORDS = {
+    "de": ("## Verlauf", "| Datum | Was geschah | Betrag | Mit wem |\n|---|---|---|---|"),
+    "en": (_CHRONO_HEADING, _CHRONO_HEADER),
+}
+
+
+def _chrono_words(vault: Path) -> tuple[str, str]:
+    """Heading and table header for a matter note, in the language the vault is kept in."""
+    try:
+        fm = _session_parse_frontmatter((vault / SYSTEM_DIR / "user.md").read_text(encoding="utf-8"))
+    except OSError:
+        return _CHRONO_WORDS["en"]
+    sprache = str(fm.get("language", "") or "").strip().lower()[:2]
+    return _CHRONO_WORDS.get(sprache, _CHRONO_WORDS["en"])
+
+
+def _matter_path(vault: Path, slug: str, bereich: str = "") -> Path:
+    ordner = vault / RECORDS_DIR / bereich / slug if bereich else vault / RECORDS_DIR / slug
+    return ordner / f"{slug}.md"
+
+
+def _find_matter(vault: Path, slug: str) -> Path | None:
+    """The matter note for this slug, wherever in the records tree it sits."""
+    wurzel = vault / RECORDS_DIR
+    if not wurzel.is_dir():
+        return None
+    treffer = [p for p in wurzel.rglob(f"{slug}.md") if p.is_file()]
+    return treffer[0] if treffer else None
+
+
+# One counterparty, however many ways it is written. The same insurer arrives as three spellings
+# across ten years of paper, and each spelling that becomes its own entry splits a matter that
+# belongs together. What this cannot do is decide: two legal entities of one brand may or may not
+# be one counterparty depending on why you are asking, and getting that wrong is invisible
+# afterwards. So it matches what it knows and proposes what it does not.
+ALIASES_FILE = "aliases.json"
+
+
+def _aliases(vault: Path) -> dict:
+    try:
+        daten = json.loads((vault / SYSTEM_DIR / ALIASES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return daten if isinstance(daten, dict) else {}
+
+
+def _alias_lookup(vault: Path, name: str) -> tuple[str, list[str]]:
+    """(canonical, near misses). An exact hit resolves; near misses are for a person to settle."""
+    tabelle = _aliases(vault).get("counterparties") or {}
+    gesucht = _slugify(name)
+    for kanon, eintrag in tabelle.items():
+        schreibweisen = {_slugify(s) for s in ([kanon] + list(eintrag.get("seen") or []))}
+        if gesucht in schreibweisen:
+            return kanon, []
+    # Near, not equal: a shared stem is a reason to ask, never a reason to merge.
+    stamm = gesucht.split("-")[0]
+    nah = [k for k in tabelle if k.split("-")[0] == stamm and len(stamm) >= 4]
+    return "", nah
+
+
+def cmd_records_who(args: argparse.Namespace) -> int:
+    """Resolve a counterparty name, or say what it might be."""
+    vault = _work_vault(args)
+    kanon, nah = _alias_lookup(vault, args.name)
+    if kanon:
+        print(kanon)
+        return 0
+    if nah:
+        print(f"unresolved: {args.name!r} is not listed. Close to: {', '.join(nah)}. "
+              f"Ask whether it is one of those before filing anything against it; "
+              f"`records who {args.name} --same-as <canonical>` records the answer.", file=sys.stderr)
+        return 1
+    print(f"unknown: {args.name!r} is new here. `records who {args.name} --new` adds it.",
+          file=sys.stderr)
+    return 1
+
+
+def cmd_records_who_set(args: argparse.Namespace) -> int:
+    """Record the answer: this spelling is that counterparty, or this one is new."""
+    vault = _work_vault(args)
+    daten = _aliases(vault)
+    daten.setdefault("_comment", "One canonical name per counterparty, and the spellings seen for "
+                                 "it. Written by `zanmai.py records who`, never merged silently.")
+    tabelle = daten.setdefault("counterparties", {})
+    if args.same_as:
+        kanon = _slugify(args.same_as)
+        if kanon not in tabelle:
+            print(f"fail: no counterparty '{kanon}' to attach this to. Add it with --new first.",
+                  file=sys.stderr)
+            return 1
+        gesehen = tabelle[kanon].setdefault("seen", [])
+        if args.name not in gesehen:
+            gesehen.append(args.name)
+    else:
+        kanon = _slugify(args.name)
+        tabelle.setdefault(kanon, {"seen": [], "note": args.note or ""})
+        if args.note:
+            tabelle[kanon]["note"] = args.note
+    ziel = vault / SYSTEM_DIR / ALIASES_FILE
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    ziel.write_text(json.dumps(daten, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+                    encoding="utf-8")
+    _append_activity_log(vault, args.agent or "zanmai.py", f"records: counterparty {kanon}")
+    print(f"ok: {args.name} -> {kanon}")
+    return 0
+
+
+def cmd_records_matter_new(args: argparse.Namespace) -> int:
+    """Open a matter: the thing documents belong to.
+
+    Written before the first document is filed against it rather than derived afterwards, because
+    the decision it records, that these papers are one matter, is exactly what nobody can
+    reconstruct later from a folder full of scans.
+    """
+    vault = _work_vault(args)
+    slug = _slugify(args.slug or args.title)
+    if _find_matter(vault, slug) and not args.force:
+        print(f"fail: a matter '{slug}' already exists. Use it, or pass --force to make a second "
+              f"one and say in its body why they are not the same matter.", file=sys.stderr)
+        return 1
+    ziel = _matter_path(vault, slug, args.area or "")
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    zeilen = ["---", "kind: record", f"slug: {slug}", f"created: {_today()}",
+              f"doc_type: {_matter_doc_type(args.doc_type)}",
+              f"lifecycle: {args.lifecycle}"]
+    if args.retention:
+        zeilen.append(f"retention_policy: {args.retention}")
+    if args.until:
+        zeilen.append(f"retention_until: {args.until}")
+    if args.with_whom:
+        zeilen.append(f"relates_to: {_slugify(args.with_whom)}")
+    zeilen += ["---", "", f"# {args.title}", ""]
+    if args.about:
+        zeilen += [args.about, ""]
+    ueberschrift, kopf = _chrono_words(vault)
+    zeilen += [ueberschrift, "", kopf, ""]
+    ziel.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"records: opened matter {ziel.relative_to(vault)}")
+    print(f"ok: {ziel.relative_to(vault)}")
+    return 0
+
+
+def _date_in_name(name: str) -> str:
+    """The date a filename carries, or "". Written down on purpose, so it beats the text."""
+    for muster in (r"(\d{4})-(\d{2})-(\d{2})", r"(\d{4})(\d{2})(\d{2})"):
+        treffer = re.search(muster, name)
+        if treffer:
+            iso = "-".join(treffer.groups())
+            if _as_iso_date(iso):
+                return iso
+    treffer = re.search(r"(\d{1,2})[.\-](\d{1,2})[.\-](\d{4})", name)
+    return _as_iso_date(".".join(treffer.groups())) if treffer else ""
+
+
+def _as_iso_date(roh: str) -> str:
+    """A date somebody wrote, as a date that sorts. Empty where it is not one.
+
+    A chronology whose rows do not sort is not a chronology, it is a list in the order the files
+    happened to be read. Dates come out of documents in whatever form the document used, so they
+    are brought to one form here rather than displayed as found: `04.02.2026` sorting above
+    `05.03.2025` is the kind of wrong that looks like a small formatting matter and is actually the
+    table saying something untrue about what happened when.
+    """
+    roh = (roh or "").strip()
+    treffer = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", roh)
+    if treffer:
+        return roh
+    treffer = re.match(r"^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})$", roh)
+    if not treffer:
+        return ""
+    tag, monat, jahr = treffer.groups()
+    if len(jahr) == 2:
+        jahr = f"20{jahr}"
+    try:
+        datetime(int(jahr), int(monat), int(tag))
+    except ValueError:
+        return ""
+    return f"{jahr}-{int(monat):02d}-{int(tag):02d}"
+
+
+def _matter_add_documents(vault: Path, notiz: Path, slug: str, dokumente: list[Path],
+                          args: argparse.Namespace) -> int:
+    """Hang documents on a matter, the chronology filled from what was read out of them.
+
+    The date, the amount and the counterparty are established already: the index pulled the text
+    out and `_extract` found the shape in it. Asking a person to type them again per document is
+    asking them to redo work a machine has done, and on a real pile that is where the hours go.
+    """
+    db = _records_db(vault)
+    kandidaten = []
+    for datei in dokumente:
+        rel = datei.relative_to(vault).as_posix()
+        treffer = db.execute("SELECT body FROM content WHERE path = ?", (rel,)).fetchone()
+        form = _extract(treffer[0]) if treffer else {}
+        # The name first, then the text. A date in a filename was put there deliberately, by the
+        # user or by whatever exported the file, and it is the day the document is about. The first
+        # date inside a document is whatever the document mentions first, which is as often a term,
+        # a due date or a validity than the day it was written: a cancellation confirmation from
+        # February landed a year out because the letter opened with the date the contract runs to.
+        kandidaten.append((
+            args.date or _date_in_name(datei.name)
+            or _as_iso_date((form.get("dates") or [""])[0]) or _today(),
+            rel,
+            datei.name,
+            args.amount or (form.get("amounts") or [""])[0],
+            args.with_whom or (form.get("parties") or [""])[0],
+        ))
+    db.close()
+
+    text = notiz.read_text(encoding="utf-8")
+    ueberschrift, kopf = _chrono_words(vault)
+    if ueberschrift not in text and _CHRONO_HEADING not in text:
+        text = text.rstrip() + f"\n\n{ueberschrift}\n\n{kopf}\n"
+    zeilen = text.rstrip().split("\n")
+    zugefuegt = 0
+    for datum, rel, name, betrag, wer in sorted(kandidaten):
+        if rel in text:      # already on this matter; saying it twice says nothing new
+            continue
+        zeilen.append(f"| {datum} | [{name}]({rel}) | {betrag} | {wer} |")
+        zugefuegt += 1
+    notiz.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"{zugefuegt} document(s) hung on matter {slug}")
+    print(f"ok: {zugefuegt} document(s) on {notiz.relative_to(vault)}"
+          + (f", {len(kandidaten) - zugefuegt} were already there"
+             if zugefuegt < len(kandidaten) else ""))
+    return 0
+
+
+def cmd_records_matter_add(args: argparse.Namespace) -> int:
+    """Hang a document on its matter: a line in the chronology, and the link back.
+
+    Both directions in one step on purpose. A document that names its matter while the matter does
+    not list it is half a link, and half a link is what makes an archive stop being answerable.
+    """
+    vault = _work_vault(args)
+    slug = _slugify(args.matter)
+    notiz = _find_matter(vault, slug)
+    if notiz is None:
+        print(f"fail: no matter '{slug}'. Open it first with `records matter new`; a document "
+              f"without a matter is one nobody finds again.", file=sys.stderr)
+        return 1
+    if args.via not in RECORD_RELATIONS:
+        print(f"fail: '{args.via}' is not a relation. Use one of: "
+              f"{', '.join(sorted(RECORD_RELATIONS))}", file=sys.stderr)
+        return 1
+
+    # A document, rather than a typed sentence. Everything the chronology wants, the date, the
+    # amount, who it was with, is already in the index, put there by machine when the file was
+    # read. Making somebody retype it per document is what turned filing thirty-four documents
+    # into an afternoon: the judgement is which matter something belongs to, and that is the only
+    # part worth a person's time.
+    dokumente: list[Path] = []
+    if args.path:
+        einer = _resolve_vault_file(vault, args.path)
+        if einer is None:
+            print(f"fail: no such file: {args.path}", file=sys.stderr)
+            return 1
+        dokumente = [einer]
+    elif args.folder:
+        ordner = vault / args.folder
+        if not ordner.is_dir():
+            print(f"fail: no such folder: {args.folder}", file=sys.stderr)
+            return 1
+        dokumente = sorted(f for f in ordner.rglob("*")
+                           if f.is_file() and f.name not in _SYSTEM_LITTER)
+        if not dokumente:
+            print(f"nothing to add: {args.folder} holds no documents")
+            return 0
+    if dokumente:
+        return _matter_add_documents(vault, notiz, slug, dokumente, args)
+    if not args.what:
+        print("fail: say what happened, or point at a document with --path or --folder.",
+              file=sys.stderr)
+        return 1
+
+    text = notiz.read_text(encoding="utf-8")
+    zeile = (f"| {args.date or _today()} | {args.what} | {args.amount or ''} | "
+             f"{args.with_whom or ''} |")
+    ueberschrift, kopf = _chrono_words(vault)
+    if ueberschrift not in text and _CHRONO_HEADING not in text:
+        text = text.rstrip() + f"\n\n{ueberschrift}\n\n{kopf}\n"
+    zeilen = text.rstrip().split("\n")
+    # Appended at the end of the table rather than sorted in: a chronology people read is written
+    # in the order things arrived, and a run that reorders somebody's table changes their file for
+    # its own convenience.
+    zeilen.append(zeile)
+    notiz.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+
+    # And the other direction, where the document has a note of its own.
+    if args.document:
+        dok = _resolve_vault_file(vault, args.document)
+        if dok is None:
+            print(f"fail: no such file: {args.document}", file=sys.stderr)
+            return 1
+        geaendert, notes = _edit_frontmatter_in_place(
+            dok, {"relates_to": slug, "relates_via": args.via}, [])
+        for n in notes:
+            print(f"  {n}")
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"records: {args.what[:60]} -> {slug} ({args.via})")
+    print(f"ok: added to {notiz.relative_to(vault)} ({args.via})")
+    return 0
+
+
+def cmd_records_matter_show(args: argparse.Namespace) -> int:
+    """One matter, whole: what it is, where it stands, and everything under it."""
+    vault = _work_vault(args)
+    slug = _slugify(args.matter)
+    notiz = _find_matter(vault, slug)
+    if notiz is None:
+        print(f"unknown: no matter '{slug}'", file=sys.stderr)
+        return 1
+    text = notiz.read_text(encoding="utf-8")
+    fm, _o, _b = _split_frontmatter(text)
+    print(f"{notiz.relative_to(vault)}")
+    print(f"  state     {fm.get('lifecycle', '(not stated)')}")
+    if fm.get("retention_policy"):
+        print(f"  kept      {fm['retention_policy']}"
+              + (f" until {fm['retention_until']}" if fm.get("retention_until") else ""))
+    unter = sorted(p for p in notiz.parent.rglob("*") if p.is_file() and p != notiz)
+    print(f"  documents {len(unter)}")
+    for p in unter[:20]:
+        print(f"    {p.relative_to(notiz.parent)}")
+    if len(unter) > 20:
+        print(f"    ... and {len(unter) - 20} more")
+    print()
+    print(text[text.index("# "):] if "# " in text else text)
+    return 0
+
+
+# What can be pulled out of a document without understanding it. Dates, amounts and the names that
+# look like parties are shapes, not meaning, so a regular expression finds them as well as a model
+# would and costs nothing.
+#
+# This is the whole economy of the thing. Reading five thousand documents with a model is millions
+# of tokens and hours; reading five thousand extracts is a fraction of one document each. And for
+# the decision that actually has to be made at this point, which is "is this something to keep, and
+# what matter does it belong to", the extract is usually enough: a paper that says invoice, carries
+# a date and an amount, and names a company is an invoice from that company on that date. The model
+# opens the file only where the extract leaves the question open.
+_DATUM_RE = re.compile(r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2})\b")
+_BETRAG_RE = re.compile(r"\b\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\s?(?:EUR|USD|CHF|GBP|€|\$|£)"
+                        r"|(?:EUR|USD|CHF|GBP|€|\$|£)\s?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}")
+# A run of capitalised words is a name in most Latin-script languages, and a legal-form suffix
+# makes it a company almost anywhere. Deliberately not a keyword list: a list of German document
+# words would work in one country and nowhere else.
+_FIRMA_RE = re.compile(r"\b([A-ZÄÖÜ][\w&.\-]+(?:\s+[A-ZÄÖÜ][\w&.\-]+){0,3}\s+"
+                       r"(?:GmbH|AG|KG|OHG|SE|mbH|Ltd|Limited|Inc|LLC|S\.p\.A|SARL|BV|NV|AB|Oy|"
+                       r"e\.?V|UG))\b")
+
+
+def _extract(text: str, limit: int = 400) -> dict:
+    """The shape of a document, without reading it for meaning.
+
+    Everything here is a pattern: dates look like dates in any language, an amount is digits and a
+    currency, a company is capitalised words ending in a legal form. What none of it says is what
+    the document is *about*, and that is on purpose: this exists so that something else can decide
+    whether it needs to look.
+    """
+    if not text.strip():
+        return {}
+    daten = sorted(set(_DATUM_RE.findall(text)))[:6]
+    # Whitespace collapsed first: an amount split across a line break comes out of a PDF as
+    # "EUR\n62,90" and would otherwise be carried into the survey with the break in it.
+    betraege = sorted(set(re.sub(r"\s+", " ", m.group(0)).strip()
+                          for m in _BETRAG_RE.finditer(text)))[:6]
+    firmen = []
+    for m in _FIRMA_RE.finditer(text):
+        name = re.sub(r"\s+", " ", m.group(1)).strip()
+        if name not in firmen:
+            firmen.append(name)
+    kopf = re.sub(r"\s+", " ", text.strip())[:limit]
+    return {"opening": kopf, "dates": daten, "amounts": betraege, "parties": firmen[:4]}
+
+
+def cmd_survey(args: argparse.Namespace) -> int:
+    """What a pile of files is, established by machine, for anybody who has to decide about them.
+
+    Not tied to the records area, because the problem is not: an expert handed twenty sources, a
+    folder of scans, a mail export, all face the same question first, which is what these things
+    are. That question does not need understanding, it needs shape, and shape is free.
+
+    The rule this exists to make cheap: **a run reads a file with a model only where the survey
+    leaves the question open.** Measured on real material, the survey is a sixteenth of the text.
+    Over a few thousand documents that is the difference between an afternoon and a minute, and the
+    answer to "what is this and where does it belong" is the same either way.
+    """
+    vault = _work_vault(args)
+    wurzel = Path(args.path)
+    if not wurzel.is_absolute():
+        wurzel = vault / args.path
+    if not wurzel.exists():
+        print(f"fail: no such path: {args.path}", file=sys.stderr)
+        return 1
+    dateien = ([wurzel] if wurzel.is_file()
+               else sorted(f for f in wurzel.rglob("*")
+                           if f.is_file() and not f.name.startswith(".")))
+    if not dateien:
+        print(f"empty: nothing in {args.path}")
+        return 0
+    if len(dateien) > args.limit:
+        print(f"note: {len(dateien)} files, surveying the first {args.limit}. "
+              f"Raise it with --limit where the whole pile has to be seen at once.")
+        dateien = dateien[:args.limit]
+
+    ausgabe, stumm = [], 0
+    for f in dateien:
+        art, text = _read_as_text(f)
+        eintrag = {"path": (f.relative_to(vault).as_posix()
+                            if f.is_relative_to(vault) else str(f)),
+                   "kind": art or f.suffix.lstrip(".").lower() or "unknown"}
+        merkmale = _extract(text or "", limit=args.opening)
+        for feld in ("dates", "amounts", "parties", "opening"):
+            if merkmale.get(feld):
+                eintrag[feld] = merkmale[feld]
+        if not merkmale.get("opening"):
+            eintrag["note"] = "nothing readable by machine; this one has to be opened"
+            stumm += 1
+        ausgabe.append(eintrag)
+
+    if args.json:
+        print(json.dumps(ausgabe, ensure_ascii=False, indent=2))
+    else:
+        for e in ausgabe:
+            print(f"{e['path']}  [{e['kind']}]")
+            for feld in ("dates", "amounts", "parties"):
+                if e.get(feld):
+                    print(f"    {feld:8} {', '.join(e[feld])}")
+            if e.get("opening"):
+                print(f"    opening  {e['opening'][:160]}")
+            if e.get("note"):
+                print(f"    {e['note']}")
+    print(f"\n{len(ausgabe)} file(s) surveyed by machine, {stumm} unreadable."
+          + ("  Those are the ones worth opening; the rest were answered here."
+             if stumm else "  None of this needed a model."))
+    return 0
+
+
+def cmd_records_survey(args: argparse.Namespace) -> int:
+    """One line per document, from the index, for something else to decide on.
+
+    The point of this command is what it is *not*: it is not a model reading files. It is the
+    machine handing over what it could establish for free, so that whoever decides what to do with
+    five thousand documents reads five thousand short lines instead of five thousand documents.
+    """
+    vault = _work_vault(args)
+    db = _records_db(vault)
+    zeilen = db.execute(
+        "SELECT d.path, d.kind, c.body FROM documents d LEFT JOIN content c ON c.path = d.path "
+        "ORDER BY d.path").fetchall()
+    db.close()
+    if not zeilen:
+        print(f"empty: nothing indexed yet. `records index --scope <folder>` reads it in first, "
+              f"mechanically and without a model.")
+        return 1
+    ausgabe = []
+    for pfad, art, text in zeilen:
+        merkmale = _extract(text or "", limit=args.opening)
+        eintrag = {"path": pfad, "kind": art}
+        if merkmale.get("dates"):
+            eintrag["dates"] = merkmale["dates"]
+        if merkmale.get("amounts"):
+            eintrag["amounts"] = merkmale["amounts"]
+        if merkmale.get("parties"):
+            eintrag["parties"] = merkmale["parties"]
+        if merkmale.get("opening"):
+            eintrag["opening"] = merkmale["opening"]
+        elif not text:
+            eintrag["note"] = "nothing readable; the file has to be opened to say what it is"
+        ausgabe.append(eintrag)
+    if args.json:
+        print(json.dumps(ausgabe, ensure_ascii=False, indent=2))
+    else:
+        for e in ausgabe:
+            print(f"{e['path']}  [{e.get('kind', '?')}]")
+            for feld in ("dates", "amounts", "parties"):
+                if e.get(feld):
+                    print(f"    {feld:8} {', '.join(e[feld])}")
+            if e.get("opening"):
+                print(f"    opening  {e['opening'][:160]}")
+            if e.get("note"):
+                print(f"    {e['note']}")
+    stumm = sum(1 for e in ausgabe if e.get("note"))
+    print(f"\n{len(ausgabe)} document(s) surveyed, {stumm} of them unreadable by machine."
+          + ("  Those are the ones worth opening." if stumm else
+             "  Nothing here needed a model to produce."))
+    return 0
+
+
+def cmd_records_file(args: argparse.Namespace) -> int:
+    """Move documents into the records area, or within it, a pile at a time, and read them there.
+
+    The source is any folder in the vault, not only `import/`: moving a pile that is already filed
+    onto a different section is the same operation and uses the same command. It was written as if
+    it only pointed inwards, and the run that needed it went back to moving files by hand.
+
+    This is the step that was missing. Everything around it existed, reading, searching, matters,
+    counterparties, and the one thing nobody could do was move a document in. So a run had to move
+    files by hand, one call each, and what actually happened on a real pile was that nothing moved
+    at all for hours while every file was thought about individually.
+
+    The folders under the source are kept as they are. A person who sorted their own material into
+    `telekom` and `insurance` has already answered the question of what belongs together, and
+    rebuilding that from the content produces a different, worse answer at great expense.
+    """
+    vault = _work_vault(args)
+    quelle = vault / args.source
+    if not quelle.exists():
+        print(f"fail: nothing at {args.source}", file=sys.stderr)
+        return 1
+    bereich = _slugify(args.area) if args.area else ""
+    ziel_wurzel = vault / RECORDS_DIR / bereich if bereich else vault / RECORDS_DIR
+
+    dateien = [p for p in ([quelle] if quelle.is_file() else sorted(quelle.rglob("*")))
+               if p.is_file() and p.name not in _SYSTEM_LITTER]
+    if not dateien:
+        print(f"nothing to file: {args.source} holds no documents")
+        return 0
+
+    basis = quelle.parent if quelle.is_file() else quelle
+    paare: list[tuple[Path, Path]] = []
+    for f in dateien:
+        ziel = ziel_wurzel / f.relative_to(basis)
+        if ziel.exists():
+            print(f"fail: {ziel.relative_to(vault)} is already there. Deal with that copy first, "
+                  f"nothing was moved.", file=sys.stderr)
+            return 1
+        paare.append((f, ziel))
+
+    if args.dry_run:
+        for f, ziel in paare:
+            print(f"  {f.relative_to(vault)} -> {ziel.relative_to(vault)}")
+        print(f"{len(paare)} document(s) would be filed. Nothing was moved.")
+        return 0
+
+    # The index entry moves with the file. Its content did not change, only where it lies, and
+    # reading a filed archive again costs minutes it does not need to cost. Whatever this misses,
+    # the index run below picks up.
+    db = _records_db(vault)
+    for f, ziel in paare:
+        _vault_mkdir(vault, ziel.parent, parents=True, exist_ok=True)
+        shutil.move(str(f), str(ziel))
+        alt_rel = f.relative_to(vault).as_posix()
+        neu_rel = ziel.relative_to(vault).as_posix()
+        db.execute("DELETE FROM documents WHERE path = ?", (neu_rel,))
+        db.execute("DELETE FROM content WHERE path = ?", (neu_rel,))
+        db.execute("UPDATE documents SET path = ? WHERE path = ?", (neu_rel, alt_rel))
+        db.execute("UPDATE content SET path = ? WHERE path = ?", (neu_rel, alt_rel))
+    db.commit()
+    db.close()
+    # The source folders are left behind empty, and an empty folder in `import/` is read again at
+    # every session start as if something were waiting there.
+    if quelle.is_dir():
+        # A folder holding nothing but a `.DS_Store` is an empty folder to everyone except the
+        # filesystem. Left standing, it makes every later session start report material waiting.
+        for d in sorted((p for p in quelle.rglob("*") if p.is_dir()) or [], key=lambda p: len(p.parts),
+                        reverse=True) + [quelle]:
+            rest = list(d.iterdir()) if d.is_dir() else []
+            if rest and all(r.is_file() and r.name in _SYSTEM_LITTER for r in rest):
+                for r in rest:
+                    r.unlink(missing_ok=True)
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"{len(paare)} document(s) filed into {RECORDS_DIR}/{bereich}")
+    print(f"ok: {len(paare)} document(s) filed into {RECORDS_DIR}/{bereich or ''}".rstrip("/"))
+    # Reading them now rather than later, because a document that is filed but not readable is a
+    # document the search cannot answer about, and nobody comes back to run a second command.
+    return cmd_records_index(argparse.Namespace(
+        vault=str(vault), scope=f"{RECORDS_DIR}/{bereich}" if bereich else RECORDS_DIR,
+        rebuild=False, agent=args.agent))
+
+
+def cmd_records_index(args: argparse.Namespace) -> int:
+    """Read what is kept, once each, into the searchable copy.
+
+    Incremental by size and modification time: a second run over five thousand files touches only
+    what changed. That is not an optimisation, it is what makes the thing usable at all, because a
+    full read of a real archive is measured in hours once scans are in it.
+    """
+    vault = _work_vault(args)
+    wurzel = vault / (args.scope or RECORDS_DIR)
+    if not wurzel.is_dir():
+        print(f"fail: no such folder: {wurzel.relative_to(vault) if wurzel.is_relative_to(vault) else wurzel}",
+              file=sys.stderr)
+        return 1
+    db = _records_db(vault)
+    bekannt = {p: (s, m) for p, s, m in db.execute("SELECT path, size, mtime FROM documents")}
+    gelesen, uebersprungen, leer = 0, 0, 0
+    for datei in sorted(f for f in wurzel.rglob("*") if f.is_file()):
+        if datei.name.startswith("."):
+            continue
+        rel = datei.relative_to(vault).as_posix()
+        try:
+            stat = datei.stat()
+        except OSError:
+            continue
+        if bekannt.get(rel) == (stat.st_size, stat.st_mtime) and not args.rebuild:
+            uebersprungen += 1
+            continue
+        art, text = _read_as_text(datei)
+        if not art:
+            continue
+        if not text.strip():
+            leer += 1
+        db.execute("DELETE FROM content WHERE path = ?", (rel,))
+        # The name goes into the searchable text with the content. What a document is called is
+        # very often the only place its subject is written in plain words: a scan reads as the
+        # broken output of a fax from 2008, and the one word somebody will actually type is on the
+        # file, not in it. Searching for the exact name of a file and being told there is no such
+        # thing is the answer that makes people stop trusting a search.
+        namensteile = " ".join(re.split(r"[^\w]+", rel.replace("/", " ")))
+        db.execute("INSERT INTO content (path, body) VALUES (?, ?)",
+                   (rel, f"{namensteile}\n{text}"))
+        db.execute("INSERT INTO documents (path, size, mtime, kind, read_at, note) "
+                   "VALUES (?, ?, ?, ?, ?, COALESCE((SELECT note FROM documents WHERE path = ?), '')) "
+                   "ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, "
+                   "kind=excluded.kind, read_at=excluded.read_at",
+                   (rel, stat.st_size, stat.st_mtime, art, _today(), rel))
+        gelesen += 1
+
+    # Entries whose file is gone. A document that was moved, filed elsewhere or deleted by hand
+    # stays in the index otherwise, and every search answers with it: a hit on a path that does not
+    # exist, next to the hit on the same document where it actually lies. Reading everything again
+    # does not fix that, because reading only ever adds. The index is a copy of what is there, so
+    # what is not there any more leaves it, and only inside the scope that was just walked, since
+    # nothing outside it was looked at.
+    praefix = f"{(args.scope or RECORDS_DIR).strip('/')}/"
+    tot = [pfad for (pfad,) in db.execute("SELECT path FROM documents WHERE path LIKE ?",
+                                          (praefix + "%",))
+           if not (vault / pfad).exists()]
+    for pfad in tot:
+        db.execute("DELETE FROM documents WHERE path = ?", (pfad,))
+        db.execute("DELETE FROM content WHERE path = ?", (pfad,))
+    db.commit()
+    gesamt = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    db.close()
+    print(f"ok: {gelesen} read, {uebersprungen} unchanged, {gesamt} in the index"
+          + (f", {len(tot)} gone" if tot else "")
+          + (f", {leer} of them carried no readable text" if leer else ""))
+    if leer:
+        print("  A file with no readable text is still indexed by its path, so it can be found by "
+              "name and by what somebody writes about it. What it cannot do is answer a search for "
+              "a word inside it.")
+    return 0
+
+
+def _fts_query(roh: str) -> str:
+    """What somebody typed, as something the index will actually accept.
+
+    The search language has its own punctuation, and a date, an amount or a case number is written
+    in exactly that punctuation: `31.12.2024` is a syntax error, `250,00` is another, and what the
+    user sees is a failure rather than an answer. Nobody searching an archive of paperwork is
+    writing a query language; they are typing what is printed on the paper. So each word is passed
+    as a phrase, which the index takes literally, and the operators stay available for anyone who
+    types them deliberately by quoting the whole thing themselves.
+    """
+    roh = roh.strip()
+    if roh.startswith('"') and roh.endswith('"') and len(roh) > 1:
+        return roh
+    if any(op in roh for op in (" AND ", " OR ", " NOT ", " NEAR(")):
+        return roh
+    worte = [w for w in roh.split() if w]
+    if not worte:
+        return roh
+    return " ".join('"' + w.replace('"', '""') + '"' for w in worte)
+
+
+def cmd_records_search(args: argparse.Namespace) -> int:
+    """Find a word in what is kept, and say where it stands."""
+    vault = _work_vault(args)
+    db = _records_db(vault)
+    try:
+        treffer = db.execute(
+            "SELECT c.path, d.kind, snippet(content, 1, '[', ']', ' ... ', 12) "
+            "FROM content c LEFT JOIN documents d ON d.path = c.path "
+            "WHERE content MATCH ? ORDER BY rank LIMIT ?",
+            (_fts_query(args.query), args.limit)).fetchall()
+    except Exception as fehler:  # noqa: BLE001 -- a malformed query is the user's, not a crash
+        print(f"fail: {fehler}", file=sys.stderr)
+        db.close()
+        return 1
+    db.close()
+    if not treffer:
+        print(f"nothing found for {args.query!r}. The index holds what `records index` has read; "
+              f"a document that arrived since then is not in it yet.")
+        return 1
+    for pfad, art, stelle in treffer:
+        print(f"  {pfad}  [{art or '?'}]")
+        if stelle:
+            print(f"      {' '.join(stelle.split())}")
+    print(f"{len(treffer)} hit(s)")
+    return 0
+
+
+def cmd_retention_show(args: argparse.Namespace) -> int:
+    """What applies here, or what would be proposed if nobody has decided yet."""
+    vault = _work_vault(args)
+    eigen = _retention(vault)
+    quelle = eigen or _retention_defaults()
+    if not quelle:
+        print("no keeping terms available at all", file=sys.stderr)
+        return 1
+    if eigen:
+        print(f"in force here (confirmed {eigen.get('_confirmed', 'date not stated')}):")
+    else:
+        print(f"nothing confirmed for this vault yet. These are suggestions, set on the generous "
+              f"side on purpose, and they apply to nothing until the user has said whether they "
+              f"fit:")
+    for eintrag in quelle.get("terms", []):
+        jahre = eintrag.get("years")
+        dauer = f"{jahre}y" if jahre else eintrag.get("policy", "")
+        print(f"  {eintrag.get('category', ''):22} {dauer:22} {eintrag.get('label', '')}")
+        if args.verbose and eintrag.get("why"):
+            print(f"    {eintrag['why']}")
+    return 0
+
+
+def cmd_retention_adopt(args: argparse.Namespace) -> int:
+    """Take the suggestions into this vault as the terms that apply.
+
+    Written as a whole file rather than merged, so what is in force is always readable in one go.
+    Editing single terms afterwards is a hand edit on purpose: it is rare, it is the user's
+    decision, and it should feel like one.
+    """
+    vault = _work_vault(args)
+    vorschlag = _retention_defaults()
+    if not vorschlag:
+        print("fail: no suggestions shipped with this version", file=sys.stderr)
+        return 1
+    ziel = vault / SYSTEM_DIR / RETENTION_FILE
+    if ziel.is_file() and not args.force:
+        print(f"fail: {ziel.relative_to(vault)} already exists. Pass --force to replace it, and "
+              f"be sure the user asked for that: what is in there was decided once.",
+              file=sys.stderr)
+        return 1
+    vorschlag["_confirmed"] = _today()
+    vorschlag["_comment"] = ("The keeping terms in force in this vault. Adopted from the shipped "
+                            "suggestions and changed by hand where they did not fit. Zanmai reads "
+                            "this file, never the shipped one.")
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    ziel.write_text(json.dumps(vorschlag, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"retention terms adopted "
+                         f"({len(vorschlag.get('terms', []))} categories)")
+    print(f"ok: {len(vorschlag.get('terms', []))} term(s) now in force in "
+          f"{ziel.relative_to(vault)}. Change by hand what the user said did not fit; this file is "
+          f"the one that counts.")
+    return 0
+
+
+def cmd_routing_show(args: argparse.Namespace) -> int:
+    """Print the routing table, and say plainly where it is silent."""
+    vault = _work_vault(args)
+    pfad = _routing_path(vault)
+    if not pfad.is_file():
+        print(f"no routing table yet at {pfad.relative_to(vault)}. Every kind of material takes "
+              f"its default route. `routing set` writes the first rule.")
+        return 0
+    try:
+        daten = json.loads(pfad.read_text(encoding="utf-8"))
+    except ValueError as fehler:
+        print(f"fail: {pfad.relative_to(vault)} is not readable as JSON ({fehler}). Nothing is "
+              f"routed by it until that is fixed; every kind takes its default route meanwhile.",
+              file=sys.stderr)
+        return 1
+    regeln = [r for r in (daten.get("rules") or []) if isinstance(r, dict)]
+    if not regeln:
+        print(f"{pfad.relative_to(vault)} exists and holds no rules.")
+        return 0
+    print(f"{len(regeln)} rule(s) in {pfad.relative_to(vault)}, first match wins:")
+    for regel in regeln:
+        when = regel.get("when") or {}
+        bedingung = []
+        if when.get("name"):
+            bedingung.append(f"name {when['name']}")
+        if when.get("text"):
+            worte = when["text"] if isinstance(when["text"], list) else [when["text"]]
+            bedingung.append("text " + " + ".join(f'"{w}"' for w in worte))
+        print(f"  {regel.get('name', '?')}")
+        print(f"      when   {', '.join(bedingung) or '(nothing, so it never matches by itself)'}")
+        print(f"      to     {regel.get('to') or '(no destination)'}")
+        if regel.get("about"):
+            print(f"      about  {regel['about']}")
+        if regel.get("do"):
+            print(f"      do     {regel['do']}")
+    return 0
+
+
+def cmd_routing_set(args: argparse.Namespace) -> int:
+    """Write one rule. A command rather than a hand edit, so the file stays valid JSON.
+
+    A rule of the same name is replaced in place rather than appended: order decides which rule
+    wins, and a correction that moved a rule to the end would quietly change which files it catches.
+    """
+    vault = _work_vault(args)
+    pfad = _routing_path(vault)
+    daten = _routing(vault) or {}
+    daten.setdefault("_comment", "What incoming material is, and where it goes. Written by "
+                                 "`zanmai.py routing set`, read on every import. First match wins.")
+    regeln = daten.setdefault("rules", [])
+    if not isinstance(regeln, list):
+        print(f"fail: 'rules' in {pfad.relative_to(vault)} is not a list. Fix that by hand first.",
+              file=sys.stderr)
+        return 1
+    regel = next((r for r in regeln if isinstance(r, dict) and r.get("name") == args.name), None)
+    neu_angelegt = regel is None
+    if regel is None:
+        regel = {"name": args.name}
+        regeln.append(regel)
+    regel["to"] = args.to
+    when = regel.setdefault("when", {})
+    if args.when_name:
+        when["name"] = args.when_name
+    if args.when_text:
+        when["text"] = list(args.when_text)
+    if args.about:
+        regel["about"] = args.about
+    if args.do:
+        regel["do"] = args.do
+    if args.ask is not None:
+        regel["ask_first"] = args.ask
+    if not when:
+        print(f"note: '{args.name}' has no condition yet, so nothing matches it on its own. "
+              f"Add --when-text or --when-name.")
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    pfad.write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _append_activity_log(vault, args.agent or "zanmai.py",
+                         f"routing: {args.name} -> {args.to}"
+                         + ("" if neu_angelegt else " (rule rewritten)"))
+    print(f"ok: {args.name} -> {args.to}")
+    return 0
+
+
 def _import_pending(vault: Path) -> list[Path]:
     """Everything waiting in the import folder, oldest first, subfolders included.
 
@@ -1619,6 +3137,9 @@ def _import_pending(vault: Path) -> list[Path]:
                   key=_recording_order_key)
 
 
+
+
+
 def cmd_import_scan(args: argparse.Namespace) -> int:
     """What is waiting in the import folder, oldest first, with the route for each.
 
@@ -1631,17 +3152,31 @@ def cmd_import_scan(args: argparse.Namespace) -> int:
         print(f"empty: nothing waiting in {IMPORT_DIR}/")
         return 0
     nach_art: dict[str, int] = {}
+    ohne_regel: list[str] = []
     for f in files:
         kind, verhalten = _import_route(f)
         nach_art[kind] = nach_art.get(kind, 0) + 1
         _rank, _value, basis, shown = _recording_order_key(f)
         rel = f.relative_to(vault).as_posix()
-        print(f"{shown:>16}  {kind:>12}  {rel}")
+        # The kind says how to read the file and nothing about where it goes. Where the user has
+        # written a rule that covers this file, that is the answer, and it is printed with the file
+        # rather than left in a table nobody opens.
+        regel = _route_for_file(vault, f)
+        if not regel:
+            ohne_regel.append(rel)
+        print(f"{shown:>16}  read as {kind:>10}  {rel}"
+              + (f"   -> {_rule_phrase(regel)}" if regel else "   -> no rule yet"))
         if args.verbose:
-            print(f"{'':>16}  {'':>12}  {verhalten}")
+            print(f"{'':>16}  {'':>18}  {verhalten}")
     zusammen = ", ".join(f"{count} {kind}" for kind, count in sorted(nach_art.items()))
-    print(f"ok: {len(files)} file(s) waiting in {IMPORT_DIR}/ ({zusammen})")
+    print(f"ok: {len(files)} file(s) waiting in {IMPORT_DIR}/ (read as: {zusammen})")
     print("    read all of them before processing any: the later one can withdraw the earlier.")
+    if ohne_regel:
+        print(f"    no rule yet for {len(ohne_regel)} of them: {', '.join(ohne_regel[:6])}"
+              + (", and more" if len(ohne_regel) > 6 else "") + ". Ask the user what this sort of "
+              f"thing is and where it belongs, once, then write it down with `routing set <name> "
+              f"<destination> --when-text <a word that appears in it>` so the next one of its sort "
+              f"answers itself. Nothing leaves {IMPORT_DIR}/ before its content is in the vault.")
     clash = _recording_order_disagreement(files)
     if clash:
         print(f"    dates and names disagree ({clash}). Read the order out of the contents "
@@ -1784,7 +3319,7 @@ def cmd_voice_lexicon(args: argparse.Namespace) -> int:
         out = Path(args.out)
         if not out.is_absolute():
             out = vault / args.out
-        out.parent.mkdir(parents=True, exist_ok=True)
+        _vault_mkdir(vault, out.parent, parents=True, exist_ok=True)
         out.write_text(prompt + "\n", encoding="utf-8")
     print(prompt)
     print(f"ok: {len(kept)} of {len(seen)} name(s) fit the prompt "
@@ -1817,7 +3352,9 @@ def cmd_voice_transcribe(args: argparse.Namespace) -> int:
     if not whisper:
         missing.append("whisper-cli, the recogniser itself")
     if not model:
-        missing.append("a model in zanmai/runtime/whisper/ (about 1.6 GB, fetched once)")
+        missing.append("a model in zanmai/runtime/whisper/. Fetch it with `zanmai.py tools ensure "
+                       "whisper-model`, one file of about 1.6 GB over HTTPS, once. An interrupted "
+                       "fetch resumes where it stopped")
     if missing:
         print("fail: cannot transcribe, and nothing will be guessed instead. Missing:",
               file=sys.stderr)
@@ -2010,18 +3547,11 @@ def cmd_index_search(args: argparse.Namespace) -> int:
 # away from the desk.
 # ---------------------------------------------------------------------------
 
+# The fields of a work object, in the order they are written. A field added here appears empty on
+# every existing entry the next time one is read; nothing has to migrate for that.
 WORK_FIELDS = [
-    ("id", "text", None, True),
-    ("work", "text", None, False),
-    ("state", "select", ["open", "waiting on you", "done"], False),
-    ("owner", "text", None, False),
-    ("waiting for", "text", None, False),
-    ("deliverable", "text", None, False),
-    ("workshop", "text", None, False),
-    ("updated", "date", None, False),
-    ("due", "date", None, False),
-    ("tokens", "number", None, False),
-    ("minutes", "number", None, False),
+    "id", "work", "state", "owner", "waiting for", "deliverable", "workshop",
+    "updated", "due", "tokens", "minutes",
 ]
 
 
@@ -2073,7 +3603,7 @@ def _work_vault(args: argparse.Namespace) -> Path:
     """The vault a work command acts on: the root, never the folder someone happens to stand in.
 
     Found on the live vault: a `work` call made from inside `doing/<slug>/` created a
-    second, empty `zanmai/open.base` there, because the default was the literal `.`. A work object
+    second, empty `zanmai/open` there, because the default was the literal `.`. A work object
     written into it would have been invisible to every later `work list`, which is the one thing
     this database exists to prevent.
     """
@@ -2092,117 +3622,114 @@ def _work_base(vault: Path) -> Path:
     return vault / OPEN_DIR
 
 
-def _work_uuid(seed: str) -> str:
-    import uuid
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"zanmai:work:{seed}"))
+def _work_id(vorhanden: set[str]) -> str:
+    """A fresh id for a work object. Random, and checked against what is already there.
 
-
-def _work_ensure(vault: Path) -> tuple[Path, Path, list[str]]:
-    """Create the database folder on first use and return (csv, schema, headers)."""
-    base = _work_base(vault)
-    csv_path = base / "data.csv"
-    schema_path = base / "schema.json"
-    pages = base / "pages"
-    headers = [name for name, _t, _o, _h in WORK_FIELDS]
-    if csv_path.is_file() and schema_path.is_file():
-        _work_migrate(csv_path, schema_path, headers)
-        return csv_path, schema_path, headers
-    base.mkdir(parents=True, exist_ok=True)
-    pages.mkdir(exist_ok=True)
-    fields = []
-    for name, ftype, options, hidden in WORK_FIELDS:
-        field = {"id": _work_uuid(f"field:{name}"), "name": name, "type": ftype}
-        if options:
-            field["options"] = [
-                {"id": _work_uuid(f"option:{name}:{value}"), "value": value} for value in options
-            ]
-        if hidden:
-            field["hidden"] = True
-        fields.append(field)
-    by_name = {f["name"]: f["id"] for f in fields}
-    table_view = {
-        "id": _work_uuid("view:table"), "name": "Everything", "type": "table",
-        "filters": [], "sorts": [{"fieldId": by_name["updated"], "direction": "desc"}],
-        "columnOrder": [f["id"] for f in fields],
-    }
-    board_view = {
-        "id": _work_uuid("view:board"), "name": "By state", "type": "board",
-        "filters": [], "sorts": [], "groupByFieldId": by_name["state"],
-        "boardColumnOrder": ["waiting on you", "open", "done"],
-        "cardFieldIds": [by_name["work"], by_name["owner"], by_name["waiting for"]],
-    }
-    schema = {
-        "version": 1, "idFieldId": by_name["id"], "fields": fields,
-        "views": [board_view, table_view], "activeViewId": board_view["id"], "pages": {},
-    }
-    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
-    if not csv_path.is_file():
-        import csv as _csv
-        import io
-        buf = io.StringIO()
-        _csv.writer(buf).writerow(headers)
-        csv_path.write_text(buf.getvalue(), encoding="utf-8")
-    return csv_path, schema_path, headers
-
-
-def _work_migrate(csv_path: Path, schema_path: Path, headers: list[str]) -> None:
-    """Give a database made by an earlier version the fields a later one added.
-
-    Without this it keeps its old columns for good: the reader takes the header row as it finds it
-    and the writer writes that same row back, so a field added later is dropped on every save and
-    never says so. Existing rows get the field empty, which is what an unset date should look like.
+    It used to be derived from the title and the timestamp to the minute, which meant two objects
+    opened in the same minute under the same title got the same id: the second was written into the
+    list and was then unreachable, because every lookup matched the first, and closing it closed the
+    other one. Two objects of the same name inside a minute is not exotic, it is what a run that
+    opens one per file does. The set is passed in rather than read here, so the caller reads the
+    list once and the check cannot race against its own write.
     """
-    import csv as _csv
-    with csv_path.open(newline="", encoding="utf-8") as fh:
-        reader = _csv.DictReader(fh)
-        vorhanden = list(reader.fieldnames or [])
-        rows = [dict(r) for r in reader]
-    fehlend = [h for h in headers if h not in vorhanden]
-    if not fehlend:
-        return
-    neu = vorhanden + fehlend
-    with csv_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = _csv.DictWriter(fh, fieldnames=neu)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({h: row.get(h, "") for h in neu})
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    bekannt = {f.get("name") for f in schema.get("fields", [])}
-    for name, ftype, options, hidden in WORK_FIELDS:
-        if name in bekannt:
-            continue
-        feld = {"id": _work_uuid(f"field:{name}"), "name": name, "type": ftype}
-        if options:
-            feld["options"] = [
-                {"id": _work_uuid(f"option:{name}:{value}"), "value": value} for value in options
-            ]
-        if hidden:
-            feld["hidden"] = True
-        schema.setdefault("fields", []).append(feld)
-        for view in schema.get("views", []):
-            if view.get("type") == "table" and isinstance(view.get("columnOrder"), list):
-                view["columnOrder"].append(feld["id"])
-    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    import uuid
+    for _ in range(1000):
+        neu = str(uuid.uuid4())
+        if neu not in vorhanden:
+            return neu
+    raise SystemExit("fail: could not find a free work id, which should be impossible")
+
+
+def _work_ensure(vault: Path) -> Path:
+    """Create the folder on first use and return the file the work objects live in."""
+    base = _work_base(vault)
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "pages").mkdir(exist_ok=True)
+    datei = base / WORK_FILE
+    if not datei.is_file():
+        datei.write_text(json.dumps({"work": []}, indent=2, ensure_ascii=False) + "\n",
+                         encoding="utf-8")
+    return datei
 
 
 def _work_read(vault: Path) -> tuple[list[dict], list[str]]:
-    import csv as _csv
-    csv_path, _schema, headers = _work_ensure(vault)
-    with csv_path.open(newline="", encoding="utf-8") as fh:
-        reader = _csv.DictReader(fh)
-        rows = [dict(r) for r in reader]
-        headers = reader.fieldnames or headers
-    return rows, list(headers)
+    """Every work object, and the field order to write them back in.
+
+    A file that will not parse is not treated as an empty list: this is the machine's record of what
+    it still owes, and answering "nothing open" from a broken file is worse than failing. A field the
+    file has not seen yet reads as empty, which is what makes adding one free.
+    """
+    datei = _work_ensure(vault)
+    try:
+        daten = json.loads(datei.read_text(encoding="utf-8"))
+    except ValueError as fehler:
+        raise SystemExit(f"fail: {datei.relative_to(vault).as_posix()} will not parse as JSON "
+                         f"({fehler}). Nothing is read from it until that is fixed, because "
+                         f"answering 'nothing open' out of a broken file is the one wrong answer.")
+    eintraege = daten.get("work") if isinstance(daten, dict) else None
+    if not isinstance(eintraege, list):
+        eintraege = []
+    felder = list(WORK_FIELDS)
+    for eintrag in eintraege:
+        for name in eintrag:
+            if name not in felder:
+                felder.append(name)
+    rows = [{name: str(eintrag.get(name, "") or "") for name in felder}
+            for eintrag in eintraege if isinstance(eintrag, dict)]
+    return rows, felder
 
 
 def _work_write(vault: Path, rows: list[dict], headers: list[str]) -> None:
+    """Write the whole list back. Empty fields are dropped rather than stored as empty strings."""
+    datei = _work_ensure(vault)
+    eintraege = [{h: row[h] for h in headers if str(row.get(h, "")).strip()} for row in rows]
+    datei.write_text(json.dumps({"work": eintraege}, indent=2, ensure_ascii=False) + "\n",
+                     encoding="utf-8")
+
+
+def _work_adopt_legacy(vault: Path) -> str:
+    """Carry a vault that still has the old `.base` folder across, once. Returns what it did.
+
+    Reads the CSV rather than trusting the schema beside it: the schema described views, the CSV
+    held the work. The pages move as they are, the old folder goes to the trash rather than being
+    deleted, and a vault that has already crossed is left alone.
+    """
+    alt_dir = vault / LEGACY_OPEN_DIR
+    alt_csv = alt_dir / "data.csv"
+    if not alt_csv.is_file():
+        return ""
+    neu_datei = _work_ensure(vault)
     import csv as _csv
-    csv_path, _schema, _h = _work_ensure(vault)
-    with csv_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = _csv.DictWriter(fh, fieldnames=headers)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({h: row.get(h, "") for h in headers})
+    with alt_csv.open(newline="", encoding="utf-8") as fh:
+        rows = [dict(r) for r in _csv.DictReader(fh)]
+    vorhanden, felder = _work_read(vault)
+    bekannt = {r.get("id") for r in vorhanden}
+    dazu = [r for r in rows if r.get("id") and r.get("id") not in bekannt]
+    for row in dazu:
+        for name in row:
+            if name not in felder:
+                felder.append(name)
+    _work_write(vault, vorhanden + [{k: (v or "") for k, v in r.items()} for r in dazu], felder)
+
+    seiten = 0
+    alt_pages = alt_dir / "pages"
+    neu_pages = _work_base(vault) / "pages"
+    if alt_pages.is_dir():
+        for seite in sorted(alt_pages.glob("*.md")):
+            ziel = neu_pages / seite.name
+            if not ziel.exists():
+                shutil.move(str(seite), str(ziel))
+                seiten += 1
+    # Deliberately not `.resolve()`: the vault path is taken as it was given, and resolving only
+    # this half of the comparison turns a symlinked parent into "outside the vault". Built as
+    # `vault / ...`, it is inside by construction.
+    if alt_dir.is_dir() and _move_into(vault, alt_dir, TRASH_DIR,
+                                       f"replaced by {OPEN_DIR}/", dated=True) != 0:
+        return (f"work objects were copied to {neu_datei.relative_to(vault).as_posix()}, but "
+                f"{LEGACY_OPEN_DIR}/ could not be moved out of the way. Both lists exist until "
+                f"that is dealt with by hand.")
+    return (f"work objects moved from {LEGACY_OPEN_DIR}/ to "
+            f"{neu_datei.relative_to(vault).as_posix()}: {len(dazu)} entry(s), {seiten} page(s)")
 
 
 def _work_find(rows: list[dict], wanted: str) -> dict | None:
@@ -2218,13 +3745,6 @@ def _work_page(vault: Path, row_id: str) -> Path:
     return _work_base(vault) / "pages" / f"{row_id}.md"
 
 
-def _work_register_page(vault: Path, row_id: str) -> None:
-    _csv_path, schema_path, _h = _work_ensure(vault)
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    schema.setdefault("pages", {})[row_id] = f"pages/{row_id}.md"
-    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
-
-
 def cmd_work_open(args: argparse.Namespace) -> int:
     """Open a work object. Returns its id, which every later call uses."""
     vault = _work_vault(args)
@@ -2237,7 +3757,7 @@ def cmd_work_open(args: argparse.Namespace) -> int:
         print("fail: --due expects YYYY-MM-DD", file=sys.stderr)
         return 1
     rows, headers = _work_read(vault)
-    row_id = _work_uuid(f"{_timestamp_log()}:{titel}")
+    row_id = _work_id({str(r.get("id", "")) for r in rows})
     row = {h: "" for h in headers}
     row.update({
         "id": row_id, "work": titel, "state": "open", "owner": args.owner or "",
@@ -2259,7 +3779,6 @@ def cmd_work_open(args: argparse.Namespace) -> int:
         "## Log\n\n"
         f"- {_timestamp_log()} opened\n",
         encoding="utf-8")
-    _work_register_page(vault, row_id)
     _append_activity_log(vault, args.owner or "zanmai.py", f"opened work '{titel}' ({row_id[:8]})")
     print(f"ok: work opened, id {row_id}")
     print(f"    short id usable everywhere: {row_id[:8]}")
@@ -2312,6 +3831,13 @@ def cmd_work_ask(args: argparse.Namespace) -> int:
     _work_append_section(page, "Waiting on you", f"- **{_today()}** {args.question}")
     _work_append_section(page, "Log", f"- {_timestamp_log()} asked: {args.question.splitlines()[0][:120]}")
     print(f"ok: {row['id'][:8]} is waiting on the user")
+    # Said at the one moment somebody is certain to read it: right after writing the question down.
+    # A work object is read at the start of a session and when somebody goes looking, neither of
+    # which happens while a run is in flight. A background run that wrote its question here and
+    # then waited for an answer waited for something nobody had been shown.
+    print("note: this question is now on the work object, which is not somewhere the user is "
+          "looking right now. Put it in your result and return; do not wait for an answer. Only a "
+          "run the user can see may park (operating-principles 12).", file=sys.stderr)
     return 0
 
 
@@ -2716,7 +4242,10 @@ def cmd_brand_list(args: argparse.Namespace) -> int:
 # the user's own queries and not only in ours. Read generously, written one way.
 
 _TASK_LINE_RE = re.compile(r"^(?P<indent>[ \t]*)(?P<bullet>[-*+][ \t]+\[)(?P<state>[ xX-])(?P<rest>\].*)$")
-_TASK_DUE_RE = re.compile(r"(?:\U0001F4C5|\(due:?)\s*(\d{4}-\d{2}-\d{2})\)?")
+# Three spellings, because three are in use. The brackets used to be required, and the bare
+# `due:2026-09-15` that the vault itself writes was therefore not a date at all: two live tasks sat
+# in the undated pile from the day they were written, one of them a flight that expires.
+_TASK_DUE_RE = re.compile(r"(?:\U0001F4C5|\(?\bdue:?)\s*(\d{4}-\d{2}-\d{2})\)?")
 _TASK_HEADING = "## Tasks"
 _TASK_SKIP_ROOTS = (SYSTEM_DIR, HOST_DIR, IMPORT_DIR)
 
@@ -2733,6 +4262,75 @@ def _task_date_ok(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+# When a piece of work on the desk has been still long enough to be worth a word. Two weeks,
+# because a week is an ordinary gap in anything that waits on somebody else and two is where a
+# thing stops being between steps and starts being forgotten. It is a reminder, never a demand:
+# nothing has to move because this line appeared.
+DESK_IDLE_DAYS = 14
+
+
+def _desk_idle(vault: Path, days: int = DESK_IDLE_DAYS) -> list[dict]:
+    """Pieces on the desk nobody has touched for a while, oldest first.
+
+    Left out: anything the truth file marks `done` or `cancelled`, and anything marked `waiting`
+    whose `due:` has not arrived. The second is the point of that value. Parking a thing on a
+    workshop three weeks out is a decision, and a decision that gets asked about every morning was
+    not recorded, it was ignored.
+    """
+    wurzel = vault / DOING_DIR
+    if not wurzel.is_dir():
+        return []
+    heute = datetime.now().date()
+    grenze = datetime.now().timestamp() - days * 86400
+    raus: list[dict] = []
+    for ordner in sorted(p for p in wurzel.iterdir() if p.is_dir()):
+        dateien = [f for f in ordner.rglob("*") if f.is_file()]
+        if not dateien:
+            continue
+        neueste = max(f.stat().st_mtime for f in dateien)
+        if neueste >= grenze:
+            continue
+        wahrheit = ordner / f"{ordner.name}.md"
+        status, faellig = "", ""
+        try:
+            inhalt = wahrheit.read_text(encoding="utf-8")
+            status = _status_of(inhalt)
+            fm, _o, _b = _split_frontmatter(inhalt)
+            faellig = str(fm.get("due") or "").strip()
+        except (OSError, UnicodeDecodeError):
+            pass
+        if status in STATUS_CLOSED:
+            continue
+        if status == "waiting" and faellig and _task_date_ok(faellig):
+            if datetime.strptime(faellig, "%Y-%m-%d").date() > heute:
+                continue
+        raus.append({
+            "slug": ordner.name,
+            "label": _buendel_titel(vault, f"{DOING_DIR}/{ordner.name}"),
+            "days": int((datetime.now().timestamp() - neueste) / 86400),
+            "files": len(dateien),
+            "status": status,
+        })
+    return sorted(raus, key=lambda e: e["days"], reverse=True)
+
+
+def _status_of(content: str) -> str:
+    """The `status:` a file's frontmatter carries, lowercased. Empty when it carries none.
+
+    Reads the raw text rather than taking a parsed dict, because every caller here already has the
+    text in hand and parsing the whole block to look at one field is the expensive way round.
+    """
+    if not content.startswith("---"):
+        return ""
+    ende = content.find("\n---", 4)
+    if ende == -1:
+        return ""
+    for zeile in content[3:ende].splitlines():
+        if zeile.startswith("status:"):
+            return zeile.split(":", 1)[1].strip().strip('"').strip("'").lower()
+    return ""
 
 
 def _task_scan(vault: Path, only_open: bool = True) -> list[dict]:
@@ -2755,9 +4353,17 @@ def _task_scan(vault: Path, only_open: bool = True) -> list[dict]:
         if _is_inside_database_folder(rel):
             continue
         try:
-            zeilen = md.read_text(encoding="utf-8").splitlines()
+            inhalt = md.read_text(encoding="utf-8")
+            zeilen = inhalt.splitlines()
             geaendert = md.stat().st_mtime
         except (OSError, UnicodeDecodeError):
+            continue
+        # A cancelled trip still carries every checkbox it ever had. Reading them out at session
+        # start is how a cancelled booking was offered as a live decision while the replacement
+        # trip sat two lines below it, and no amount of thinking about the list could catch that:
+        # the list was right about the file and the file was out of date. So the file says it once,
+        # in `status:`, and every task line under it goes quiet.
+        if _status_of(inhalt) in STATUS_CLOSED:
             continue
         for nummer, zeile in enumerate(zeilen, start=1):
             passt = _TASK_LINE_RE.match(zeile)
@@ -2834,6 +4440,11 @@ def _dated_files_ahead(vault: Path, days: int) -> list[dict]:
             continue
         if not (heute <= wann <= grenze):
             continue
+        try:
+            if _status_of(pfad.read_text(encoding="utf-8")) in STATUS_CLOSED:
+                continue
+        except (OSError, UnicodeDecodeError):
+            continue
         treffer.append({
             "date": m.group(0),
             "days": (wann - heute).days,
@@ -2870,6 +4481,13 @@ def _task_target(vault: Path, given: str | None) -> Path:
     return bekannt if bekannt is not None else (vault / given)
 
 
+# How long a task line may be. Not a style preference: a line this long is no longer something you
+# can read and act on, and the material that makes it long is always material that already sits
+# somewhere else in the vault. Measured against real lines in a working vault, the longest
+# legitimate one ran to about 120 characters.
+TASK_TEXT_MAX = 160
+
+
 def cmd_task_add(args: argparse.Namespace) -> int:
     """Write a task the user asked for onto one of their lists."""
     vault = Path(args.vault).resolve()
@@ -2881,6 +4499,28 @@ def cmd_task_add(args: argparse.Namespace) -> int:
     if not text:
         print("fail: a task needs words", file=sys.stderr)
         return 1
+    # A task is an action, in one line. Asked to merge four scattered lines about one flight into
+    # one task, a run produced three lines carrying a booking number, a price, a phone number, a
+    # refund figure, a rebooking fee and three separate dates, every one of which already stood
+    # four lines higher in the same file. Merging is not addition: the context goes where context
+    # lives and the task points at it. Past this length the line stops being readable as a thing to
+    # do and becomes a note with a checkbox in front of it.
+    if len(text) > TASK_TEXT_MAX:
+        print(f"fail: this is {len(text)} characters, and a task line holds {TASK_TEXT_MAX}. "
+              f"Do not simply cut it: what gets cut is information somebody needs, and losing it "
+              f"is the same mistake in the other direction. Put the numbers, amounts, deadlines, "
+              f"reference numbers and reasoning where they belong, in the bundle or the journal "
+              f"entry, and point the task at that with `--see <slug>`, which writes the link into "
+              f"the line. Where they are already written down somewhere, and they usually are, "
+              f"nothing needs filing and only the link is missing. Where several tasks are merged, "
+              f"the context is filed once, not added together.", file=sys.stderr)
+        return 1
+    # The link is part of the line, not decoration. A task with context elsewhere and no way to
+    # reach it is a task whose reader has to go looking, and going looking is what the context was
+    # written down to prevent.
+    verweis = (getattr(args, "see", "") or "").strip().strip("[]")
+    if verweis:
+        text = f"{text} ([[{verweis}]])"
     target = _task_target(vault, args.file)
     if target.suffix.lower() not in (".md", ".markdown"):
         print(f"fail: a task belongs in a markdown file, not in {target.name}", file=sys.stderr)
@@ -3881,9 +5521,9 @@ def _attachment_basenames(vault: Path) -> set[str]:
     """All non-Markdown filenames in the vault (lowercased), used to resolve
     embed-shaped wikilinks like `[[some-frame.jpg]]` against the filesystem.
     Skips the same distribution/system areas as the markdown walker. Also
-    skips database folders (`<Name>.base/`), their `data.csv`,
-    `schema.json` and record-page files are database-internal, not the vault's
-    own files that markdown bodies embed."""
+    skips the work objects and the user's own database folders (`<Name>.base/`):
+    what is in those is internal to whatever owns them, not the vault's own
+    files that markdown bodies embed."""
     out: set[str] = set()
     for p in vault.rglob("*"):
         if not p.is_file():
@@ -3895,6 +5535,8 @@ def _attachment_basenames(vault: Path) -> set[str]:
         except ValueError:
             continue
         if rel.startswith(f"{SYSTEM_MATERIAL_DIR}/") or rel.startswith(f"{HISTORY_DIR}/") or rel.startswith(".claude/"):
+            continue
+        if rel.startswith(f"{OPEN_DIR}/"):
             continue
         if _is_inside_database_folder(rel):
             continue
@@ -4246,10 +5888,22 @@ def cmd_journal_rollup(args: argparse.Namespace) -> int:
 # numbering jumped from 4 to 6. A rule that does not hold on the third attempt is not a wording
 # problem, so ordering, the cap, the overflow line and id-stripping happen here. What is left to
 # judgement is the wording of a line and the closing sentence.
-_GREET_CAP = 6
+# Two blocks, ten lines each at most, numbered straight through. The cap is a ceiling, never a
+# target: the filters below decide what is relevant and the list is as long as they leave it. Zero
+# lines in a block is a correct answer and the block is then left out entirely.
+#
+# The blocks are split by where a line comes from, because the two get lost in different ways. A
+# dated thing goes stale on its own and has to be seen before its day; a task somebody wrote down
+# has no day at all and simply sinks. Mixed into one list of six, the dated ones won every slot: a
+# live vault held twenty open task lines and the greet showed two of them, both by accident,
+# because they happened to carry a date.
+_GREET_CAP_DATED = 10         # block one: what has a day, from any source
+_GREET_CAP_TASKS = 10         # block two: task lines the user wrote, no day on them
+# From how many loose ends in one bundle they arrive as one line instead of one each. Three, because
+# two still read as two separate things and the third is where one topic starts crowding out the rest.
+_GREET_BUENDEL_AB = 3
 _GREET_WEEK_DAYS = 7          # what still counts as coming up rather than later
 _GREET_RECENT_OVERDUE = 14    # older than this, an overdue item is backlog: counted, not listed
-_GREET_UNDATED_DAYS = 7       # how fresh a journal or focus file must be for its undated items
 
 # Two orders, and keeping them apart is the point. Which items get one of the six slots is decided
 # by urgency alone; how the chosen ones are laid out is decided by group. Sorting the selection by
@@ -4263,10 +5917,25 @@ _GREET_HEADINGS = {
     "today": "Today",
     "tomorrow": "Tomorrow",
     "this week": "Coming up",
-    "open": "Open, no date",
+    "open": "Open tasks",
 }
 
 _GREET_LINK_RE = re.compile(r"\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]")
+
+
+# What one line may cost. The host replaces hook output over 10,000 characters with a preview and
+# says nothing about it, so the list has to fit whatever the vault holds. A task line in a live
+# vault ran to 452 characters, and twenty of those would have been the whole budget on their own.
+# The cut is also the right shape for a greet: a line nobody can read at a glance is not a line.
+_GREET_LINE_MAX = 200
+
+
+def _greet_shorten(text: str) -> str:
+    """One greet line, cut at a word boundary where it runs long. The full text stays in the file."""
+    if len(text) <= _GREET_LINE_MAX:
+        return text
+    schnitt = text[:_GREET_LINE_MAX].rsplit(" ", 1)[0].rstrip(" ,;:.")
+    return f"{schnitt} …"
 
 
 def _greet_group(days: int) -> str:
@@ -4316,6 +5985,24 @@ def _greet_same(a: dict, b: dict) -> bool:
     if not wa or not wb:
         return False
     return len(wa & wb) / min(len(wa), len(wb)) >= _GREET_SAME_SHARE
+
+
+def _buendel_titel(vault: Path, buendel: str) -> str:
+    """What a bundle is called, read from its own truth file, falling back to its slug.
+
+    The slug is ASCII by rule, so deriving the label from it prints a place name with the accents
+    stripped out. The file says what it is called; a heading it wrote itself is closer to how the
+    user says it than anything reconstructed from a pathname.
+    """
+    slug = buendel.split("/")[-1]
+    wahrheit = vault / buendel / f"{slug}.md"
+    try:
+        for zeile in wahrheit.read_text(encoding="utf-8").splitlines():
+            if zeile.startswith("# "):
+                return zeile[2:].strip()
+    except (OSError, UnicodeDecodeError):
+        pass
+    return _human_label_for_slug(slug)
 
 
 def _greet_items(vault: Path, now: datetime | None = None) -> dict:
@@ -4399,56 +6086,108 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
         aufnehmen(_greet_group(eintrag["days"]), eintrag["label"], eintrag["path"],
                   abs(eintrag["days"]), faellig=eintrag["date"])
 
-    # Undated, and only from a file touched in the last few days: a task written into today's
-    # journal belongs in the greet whether it carries a date or not. The window is what stops a
-    # month of ticked-over lists from arriving as if it were current.
-    frisch = _collect_open_todos(vault, _journal_roots() + [FOCUS_DIR],
-                                 days_back=_GREET_UNDATED_DAYS, eintraege=aufgaben)
-    for t in sorted((t for t in frisch if not t["due"]), key=lambda t: t["mtime"], reverse=True):
-        aufnehmen("open", t["text"], t["path"], _GREET_WEEK_DAYS + 1)
+    # Block two: every open task line the user wrote that carries no date, from anywhere in their
+    # folders. Both limits that used to sit here are gone, and each one was losing real work. The
+    # scope was `journal/` plus `focus/` only, so seventeen of twenty open lines in a live vault sat
+    # in `knowledge/` and could never arrive. The seven-day window on the file then cut most of the
+    # rest, on the theory that an old file means a stale task; what it actually means is that nobody
+    # has touched the file since writing the task down, which is the definition of still open.
+    #
+    # Nothing replaces them, because nothing has to: a task line is either ticked or it is not, and
+    # `status:` on the file settles the case where the whole matter fell away. Newest file first, so
+    # what was written down last is read first.
+    #
+    # Every open line goes through here, dated ones included, and the dedup above drops the ones
+    # block one already took. Filtering to undated lines instead left a hole exactly one window
+    # wide: a flight that expires in eighteen days is too far out for block one's seven days and
+    # was no longer undated, so it appeared in neither. A task the vault holds is in one of the two
+    # blocks or in one of the two overflow counts, never in none.
+    # Points from one bundle arrive as one line, not as six. A trip whose booking may already be
+    # off filled eight of seventeen lines with its own loose ends, and the reader had to notice
+    # that for themselves; worse, the one thing worth seeing, that two trips sat in the same month,
+    # was buried under the very entries that made the month look busy. Which bundle a task belongs
+    # to is its path, so this is arithmetic rather than judgement.
+    def ist_rueckstand(a: dict) -> bool:
+        if not (a["due"] and _task_date_ok(a["due"])):
+            return False
+        return (datetime.strptime(a["due"], "%Y-%m-%d").date() - heute).days < -_GREET_RECENT_OVERDUE
+
+    # Bundles only, and a bundle is a folder under one of the kind roots. A journal day is a date,
+    # not a topic: rolling five entries from one morning into one line named by that date says a
+    # day back at the user, which tells them nothing they did not know.
+    nach_buendel: dict[str, list[dict]] = {}
+    for a in aufgaben:
+        if ist_rueckstand(a):
+            continue   # counted in the overflow above; naming it here would count it twice
+        teile = a["path"].split("/")
+        if len(teile) < 3 or teile[0] not in BUNDLE_FOLDERS + (ARCHIVE_DIR, TRUSTED_DIR):
+            continue
+        nach_buendel.setdefault("/".join(teile[:-1]), []).append(a)
+
+    gebuendelt = {s: eintraege for s, eintraege in nach_buendel.items()
+                  if len(eintraege) >= _GREET_BUENDEL_AB}
+    for schluessel, eintraege in sorted(gebuendelt.items(),
+                                        key=lambda kv: max(a["mtime"] for a in kv[1]), reverse=True):
+        label = _buendel_titel(vault, schluessel)
+        offen = len(eintraege)
+        aufnehmen("open", f"{label}: {offen} open points", schluessel, _GREET_WEEK_DAYS + 1)
+
+    for a in sorted(aufgaben, key=lambda a: a["mtime"], reverse=True):
+        teile = a["path"].split("/")
+        if "/".join(teile[:-1]) in gebuendelt:
+            continue   # already named by the bundle line above
+        # Except what the backlog count above already stands for. Listing those here as well would
+        # show them and count them in the same breath, and the count would be a lie by exactly the
+        # number of lines standing above it.
+        if ist_rueckstand(a):
+            continue
+        aufnehmen("open", a["text"], a["path"], _GREET_WEEK_DAYS + 1, faellig=a["due"])
 
     # Selection by urgency: what waits on the user first, then distance from today, and an overdue
     # item ahead of a coming one at equal distance because that one is already missed.
     kandidaten.sort(key=lambda e: (e["rank"], e["near"], 0 if e["group"] == "overdue" else 1))
 
-    # The cap is six lines including the overflow line, never six plus one. Where an overflow is
-    # needed it takes the last slot, which is why the visible list is cut one short.
-    braucht_ueberlauf = rueckstand > 0 or len(kandidaten) > _GREET_CAP
-    grenze = _GREET_CAP - 1 if braucht_ueberlauf else _GREET_CAP
-    sichtbar = kandidaten[:grenze]
-    verdeckt = kandidaten[grenze:]
+    datiert = [e for e in kandidaten if e["group"] != "open"]
+    reine_aufgaben = [e for e in kandidaten if e["group"] == "open"]
 
-    # Layout by group, once the six are settled. Same items, read in an order that says something.
+    def kappen(eintraege: list[dict], cap: int, extra_verdeckt: int = 0) -> tuple[list[dict], list[dict]]:
+        """The visible part of one block and what it hides. The overflow line costs a slot."""
+        braucht = (len(eintraege) + extra_verdeckt) > cap
+        grenze = cap - 1 if braucht else cap
+        return eintraege[:grenze], eintraege[grenze:]
+
+    sichtbar, verdeckt = kappen(datiert, _GREET_CAP_DATED, rueckstand)
+    sichtbar_aufgaben, verdeckt_aufgaben = kappen(reine_aufgaben, _GREET_CAP_TASKS)
+
+    # Layout by group, once the slots are settled. Same items, read in an order that says something.
     ordnung = {name: i for i, name in enumerate(_GREET_GROUPS)}
     sichtbar.sort(key=lambda e: (ordnung[e["group"]], e["near"]))
 
     ueberlauf = None
-    if braucht_ueberlauf:
+    if verdeckt or rueckstand:
         heute_verdeckt = sum(1 for e in verdeckt if e["group"] == "today")
-        offen_verdeckt = sum(1 for e in verdeckt if e["group"] == "open")
-        nah_verdeckt = len(verdeckt) - offen_verdeckt
         teile: list[str] = []
-        if nah_verdeckt:
+        if verdeckt:
             zusatz = f" ({heute_verdeckt} of them today)" if heute_verdeckt else ""
-            teile.append(f"{nah_verdeckt} more within the next {_GREET_WEEK_DAYS} days{zusatz}")
-        if offen_verdeckt:
-            # Counted apart, because folding an undated item into "within the next 7 days" states a
-            # deadline nobody wrote.
-            teile.append(f"{offen_verdeckt} open with no date")
+            teile.append(f"{len(verdeckt)} more within the next {_GREET_WEEK_DAYS} days{zusatz}")
         if rueckstand:
             teile.append(f"{rueckstand} older overdue")
-        ueberlauf = {
-            "group": "more",
-            "text": ", ".join(teile),
-            "hidden_near": nah_verdeckt,
-            "hidden_today": heute_verdeckt,
-            "hidden_undated": offen_verdeckt,
-            "hidden_backlog": rueckstand,
-        }
+        ueberlauf = {"group": "more", "text": ", ".join(teile),
+                     "hidden_near": len(verdeckt), "hidden_today": heute_verdeckt,
+                     "hidden_backlog": rueckstand}
+
+    ueberlauf_aufgaben = None
+    if verdeckt_aufgaben:
+        # Counted apart from the dated block, because folding an undated item into "within the next
+        # 7 days" states a deadline nobody wrote.
+        ueberlauf_aufgaben = {"group": "more", "text": f"{len(verdeckt_aufgaben)} more open task(s)",
+                              "hidden_undated": len(verdeckt_aufgaben)}
 
     return {
         "items": sichtbar,
         "overflow": ueberlauf,
+        "tasks": sichtbar_aufgaben,
+        "tasks_overflow": ueberlauf_aufgaben,
         "totals": {
             "open_tasks": len(aufgaben),
             "candidates": len(kandidaten),
@@ -4458,16 +6197,18 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
 
 
 def _greet_block(vault: Path, now: datetime | None = None) -> list[str]:
-    """The greet list as hook output: numbered, grouped, capped, nothing left to arrange.
+    """The greet list as hook output: two blocks, numbered straight through, nothing left to arrange.
 
-    Rendered as data rather than as a suggestion. The numbers are printed, so they cannot skip; the
-    overflow arrives as its own numbered line, so it cannot become a sub-bullet; an empty vault
-    prints no list at all rather than a padded one.
+    Rendered as data rather than as a suggestion. The numbers are printed, so they cannot skip and
+    they cannot restart at the second block; an overflow arrives as its own numbered line, so it
+    cannot become a sub-bullet; an empty vault prints no list at all rather than a padded one.
     """
     walk = _greet_items(vault, now=now)
     items = walk["items"]
     ueberlauf = walk["overflow"]
-    if not items and not ueberlauf:
+    aufgaben = walk["tasks"]
+    ueberlauf_aufgaben = walk["tasks_overflow"]
+    if not (items or ueberlauf or aufgaben or ueberlauf_aufgaben):
         return ["- Nothing open and nothing dated. Greet in one sentence and ask what they want to "
                 "do; do not invent a list."]
 
@@ -4475,13 +6216,14 @@ def _greet_block(vault: Path, now: datetime | None = None) -> list[str]:
         "The greet list, already selected, sorted and capped. Render exactly these lines, in this "
         "order, one numbered line each, with the numbers as printed. Translate the group headings "
         "and the wording into the user's writing language, keep the item's own words, and add "
-        "nothing: no extra item, no sub-bullet, no path, no id. `greeting.md` covers the tone, the "
-        "address and the closing sentence.",
+        "nothing: no extra item, no sub-bullet, no path, no id. Each block holds at most ten lines "
+        "and is as short as the vault leaves it; a block with no lines is absent and is not "
+        "mentioned. `greeting.md` covers the tone, the address and the closing sentence.",
         "",
     ]
     heute = (now or datetime.now()).date()
-    letzte_gruppe = None
     nummer = 0
+    letzte_gruppe = None
     for eintrag in items:
         if eintrag["group"] != letzte_gruppe:
             letzte_gruppe = eintrag["group"]
@@ -4494,11 +6236,22 @@ def _greet_block(vault: Path, now: datetime | None = None) -> list[str]:
                 titel += f" ({(heute + timedelta(days=1)).isoformat()})"
             lines.append(f"GROUP {titel}")
         nummer += 1
-        lines.append(f"{nummer}. {eintrag['text']}")
+        lines.append(f"{nummer}. {_greet_shorten(eintrag['text'])}")
     if ueberlauf:
         nummer += 1
         lines.append("GROUP The rest")
         lines.append(f"{nummer}. + {ueberlauf['text']}. Offer: say \"show the open points\".")
+
+    # The second block, and the numbering carries on rather than restarting: two lists that both
+    # begin at 1 read as one list that lost its place.
+    if aufgaben or ueberlauf_aufgaben:
+        lines.append(f"GROUP {_GREET_HEADINGS['open']}")
+        for eintrag in aufgaben:
+            nummer += 1
+            lines.append(f"{nummer}. {_greet_shorten(eintrag['text'])}")
+        if ueberlauf_aufgaben:
+            nummer += 1
+            lines.append(f"{nummer}. + {ueberlauf_aufgaben['text']}. Offer: say \"show the open tasks\".")
     return lines
 
 
@@ -4911,7 +6664,45 @@ def cmd_bundle_remove_file(args: argparse.Namespace) -> int:
     return 0
 
 
-def _move_into(vault: Path, path: Path, folder: str, done: str, *, dated: bool = False) -> int:
+# Nothing is thrown away out of the drop area before it has arrived somewhere in the vault. Reading
+# a file and saying what it was in the conversation is not arriving: the conversation is gone
+# tomorrow, the file is in the trash, and the trash is swept. So a trashing out of `import/` has to
+# name one of two things, and refuses without either: the vault path the content actually reached,
+# or the user's own words saying it can go. Written as a condition on the move rather than as a
+# sentence in a contract, because the sentence was there and did not hold.
+#
+# The user is not locked out by it: `--user-said` is their override, and it costs a quote rather
+# than a permission. What this cannot do is stop a run that means to get past it, since nothing
+# checks that the quote is real. What it does is end the case this came from, where every step
+# looked correct and the material was gone anyway, and it leaves the claim in the activity log
+# where it can be read back.
+def _import_exit(vault: Path, filed_to: str | None, user_said: str | None) -> tuple[str, str]:
+    """(what to log, what to refuse with) for a file on its way out of the drop area."""
+    if user_said and user_said.strip():
+        return f"the user said: {user_said.strip()}", ""
+    if not filed_to:
+        return "", (
+            f"fail: nothing is thrown away out of {IMPORT_DIR}/ before its content is in the vault. "
+            f"Say where it "
+            f"landed with `--filed-to <vault path>`, or quote the user with `--user-said \"...\"` "
+            f"where they said it can go. A summary in the conversation is not a place.")
+    ziel = (vault / filed_to).resolve() if not Path(filed_to).is_absolute() else Path(filed_to).resolve()
+    try:
+        ziel_rel = ziel.relative_to(vault).as_posix()
+    except ValueError:
+        return "", f"fail: --filed-to '{filed_to}' is not inside the vault."
+    if not ziel.exists():
+        return "", (f"fail: --filed-to '{ziel_rel}' does not exist. The content has to be somewhere "
+                    f"before the file it came from can go.")
+    for tot in (IMPORT_DIR, TRASH_DIR, ARCHIVE_DIR):
+        if ziel_rel == tot or ziel_rel.startswith(f"{tot}/"):
+            return "", (f"fail: --filed-to '{ziel_rel}' is in {tot}/, which is not a place content "
+                        f"arrives at.")
+    return f"content filed to {ziel_rel}", ""
+
+
+def _move_into(vault: Path, path: Path, folder: str, done: str, *, dated: bool = False,
+               filed_to: str | None = None, user_said: str | None = None) -> int:
     """Move a file to `<folder>/[<date>/]<its current vault-relative path>` and log it.
 
     The path under the folder is not decoration, it is the record of where the file came from.
@@ -4935,24 +6726,76 @@ def _move_into(vault: Path, path: Path, folder: str, done: str, *, dated: bool =
         return 1
 
     rel_str = rel.as_posix()
+    grund = ""
+    # Only the trash. The archive is a place in the vault: what goes there stays indexed and
+    # findable, which is exactly the condition being asked for, so demanding a second destination
+    # for it would be circular. The trash is swept.
+    if rel_str.startswith(f"{IMPORT_DIR}/") and folder == TRASH_DIR:
+        grund, fehler = _import_exit(vault, filed_to, user_said)
+        if fehler:
+            print(fehler, file=sys.stderr)
+            return 1
     unter = Path(_today()) / rel if dated else rel
     target = vault / folder / unter
     if target.exists():
         print(f"fail: {folder}/{unter.as_posix()} is already taken. Deal with that copy first.",
               file=sys.stderr)
         return 1
-    target.parent.mkdir(parents=True, exist_ok=True)
+    _vault_mkdir(vault, target.parent, parents=True, exist_ok=True)
     shutil.move(str(path), str(target))
 
-    _append_activity_log(vault, "zanmai.py", f"{done} {rel_str}")
-    print(f"ok: {done} {rel_str} -> {target.relative_to(vault).as_posix()}")
+    _append_activity_log(vault, "zanmai.py",
+                         f"{done} {rel_str}" + (f" ({grund})" if grund else ""))
+    print(f"ok: {done} {rel_str} -> {target.relative_to(vault).as_posix()}"
+          + (f" ({grund})" if grund else ""))
+    return 0
+
+
+def cmd_file_status(args: argparse.Namespace) -> int:
+    """Set or read a file's `status:`, the one field that says whether it still stands.
+
+    A command rather than a hand edit, because the value has a vocabulary and a hand edit has none.
+    Setting it to `done` or `cancelled` is what takes the file's open task lines and its dates out
+    of the session start, so a wrong spelling is not a cosmetic problem: it silences nothing and
+    nobody notices.
+    """
+    vault = Path(args.vault).resolve()
+    target = _resolve_vault_file(vault, args.path)
+    if target is None:
+        print(f"fail: no such file in the vault: {args.path}", file=sys.stderr)
+        return 1
+    rel = target.relative_to(vault)
+    if not args.set:
+        jetzt = _status_of(target.read_text(encoding="utf-8"))
+        print(f"{jetzt or '(none)'}  {rel}")
+        return 0
+    wert = args.set.strip().lower()
+    if wert not in STATUS_VALUES:
+        print(f"fail: '{wert}' is not a status. Use one of: {', '.join(STATUS_VALUES)}", file=sys.stderr)
+        return 1
+    changed, notes = _edit_frontmatter_in_place(target, {"status": wert}, [])
+    for note in notes:
+        print(f"  {note}")
+    if not changed:
+        print(f"ok: {rel} already carries status: {wert}")
+        return 1 if notes else 0
+    _append_activity_log(vault, args.agent or "zanmai.py", f"status of {rel} set to {wert}")
+    folge = (" Its open task lines and its dates stop being offered at session start."
+             if wert in STATUS_CLOSED else "")
+    print(f"ok: {rel} -> status: {wert}.{folge}")
     return 0
 
 
 def cmd_trash_file(args: argparse.Namespace) -> int:
-    """Move a file into vault-relative `<trash>/<original-path>`. Reversible with `file restore`."""
+    """Move a file into vault-relative `<trash>/<original-path>`. Reversible with `file restore`.
+
+    `getattr` on the two drop-area arguments rather than plain attributes: this is also called from
+    inside `bundle remove-file`, which builds its own namespace and has nothing to do with imports.
+    """
     vault = Path(args.vault).resolve()
-    return _move_into(vault, Path(args.path).resolve(), TRASH_DIR, "trashed", dated=True)
+    return _move_into(vault, Path(args.path).resolve(), TRASH_DIR, "trashed", dated=True,
+                      filed_to=getattr(args, "filed_to", None),
+                      user_said=getattr(args, "user_said", None))
 
 
 def cmd_archive_file(args: argparse.Namespace) -> int:
@@ -5000,7 +6843,7 @@ def cmd_restore_file(args: argparse.Namespace) -> int:
         print(f"fail: {origin_rel.as_posix()} exists again. Move or rename it first, "
               f"otherwise the restore would overwrite it.", file=sys.stderr)
         return 1
-    target.parent.mkdir(parents=True, exist_ok=True)
+    _vault_mkdir(vault, target.parent, parents=True, exist_ok=True)
     shutil.move(str(path), str(target))
 
     _append_activity_log(vault, "zanmai.py", f"restored {origin_rel.as_posix()} from {holder}/")
@@ -5621,6 +7464,7 @@ REQUIRED_FOLDERS_CORE = [
     TRUSTED_DIR,
     BRANDS_DIR,
     ARCHIVE_DIR,
+    RECORDS_DIR,
     # Who it is about.
     PEOPLE_DIR,
     ORGANISATIONS_DIR,
@@ -5669,7 +7513,7 @@ def _required_folders(vault_root: Path) -> list[str]:
 # later.
 _VAULT_ROOT_ALLOWED_DIRS = frozenset({
     JOURNAL_DIR, FOCUS_DIR, DOING_DIR, HABITS_DIR, KNOWLEDGE_DIR, TRUSTED_DIR,
-    ARCHIVE_DIR, CONTACTS_DIR, IMPORT_DIR, SYSTEM_DIR,
+    ARCHIVE_DIR, RECORDS_DIR, CONTACTS_DIR, IMPORT_DIR, SYSTEM_DIR,
 })
 _VAULT_ROOT_ALLOWED_FILES = frozenset({"CLAUDE.md", "README.md", "INDEX.md"})
 
@@ -5772,6 +7616,7 @@ _ROSTER: list[tuple[str, bool, bool]] = [
     ("luis",    True,    True),
     ("shuri",   True,    True),
     ("ben",     True,    True),
+    ("marcus",  True,    True),
 ]
 _AGENT_NAMES: list[str] = [name for name, adapter, _ in _ROSTER if adapter]
 _MEMORY_AGENTS: list[str] = [name for name, _, memory in _ROSTER if memory]
@@ -5786,28 +7631,24 @@ _SKILL_SYMLINK_MAP: list[tuple[str, str]] = [
     ("zanmai-voice", "voice"),
     ("zanmai-write", "write"),
     ("zanmai-grill-me", "brief"),
-    ("zanmai-greeting", "greeting"),
-    # Below: the skills that carry the craft. They shipped for months with no adapter, which meant
-    # the host never offered them and they were reached only when a contract line happened to be
-    # remembered at the right moment. A skill the host cannot see is a file, not a capability. The
-    # slash form is a side effect of registering; the point is the `description`, which is what the
-    # host shows the model when it is deciding what this job needs.
-    ("zanmai-classify-note", "classify-note"),
-    ("zanmai-content-brief", "content-brief"),
-    ("zanmai-design", "designer"),
-    ("zanmai-powerpoint", "powerpoint"),
-    ("zanmai-html", "html"),
-    ("zanmai-typst", "typst"),
-    ("zanmai-affinity", "affinity"),
-    ("zanmai-media", "media"),
-    ("zanmai-image-edit", "image-edit"),
-    ("zanmai-video", "video"),
-    ("zanmai-video-review", "video-review"),
-    ("zanmai-motion", "motion"),
-    ("zanmai-create-expert", "create-expert"),
     ("zanmai-create-launcher", "create-launcher"),
-    ("zanmai-setup", "setup"),
 ]
+
+# What is deliberately NOT in that list, and why the list is short.
+#
+# Registering a skill puts it in the command menu the user opens by typing a slash. That menu is
+# theirs: it answers "what can I ask for". A specialist's working method is not something anybody
+# asks for by name, and fifteen of them in there buried the eleven that are. On 2026-08-26 all
+# twenty-six were registered at once, on the reasoning that a skill the host cannot see is a file
+# rather than a capability. That reasoning does not hold for these fifteen, and it is measurable why:
+# every one of them is named with its full path in the contract of the expert who runs it (Carol
+# reads `skills/typst/SKILL.md`, Loki reads `skills/media/SKILL.md`, and so on down the list). The
+# expert finds its method by reading its own contract, not by the host routing to it. What the host
+# routes on is the expert's description, and that has not changed.
+#
+# So the rule is one sentence: an adapter is a command, a command is for the user, and a method that
+# only a specialist ever runs is reached through that specialist's contract. `one-home.py` holds the
+# documentation to this, so a skill cannot claim one thing and be registered as the other.
 
 
 def _model_overrides(vault_root: Path) -> dict[str, str]:
@@ -6148,6 +7989,15 @@ the kind of file decides what happens to it, not a sub-folder. It empties itself
 """
 
 
+def _known_hooks() -> set[str]:
+    """Every hook this script implements, read from its own functions rather than from a list.
+
+    A list beside them is a second copy that goes stale in exactly the release where it matters.
+    """
+    return {name[len("cmd_hook_"):].replace("_", "-")
+            for name in globals() if name.startswith("cmd_hook_")}
+
+
 def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> str:
     """Render .claude/settings.json with the Zanmai hooks wired. Every
     hook is a subcommand of the single zanmai.py CLI now. No connection-guard:
@@ -6166,65 +8016,43 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
     where Zanmai runs and nowhere else. Zanmai's own guards do not depend on it: they
     are checks on every write, not questions put to the user."""
     zb = f"$CLAUDE_PROJECT_DIR/{SYSTEM_MATERIAL_DIR}/scripts/zanmai.py"
+    bekannt = _known_hooks()
+
+    def h(*namen: str) -> list[dict]:
+        """The hook entries for the names this script actually implements.
+
+        Filtered rather than listed, because the two halves are written at different moments and a
+        vault that ends up with a settings.json naming a guard its script does not have is locked
+        out: the host reads the script's exit 2 as "block", every Bash call is refused, and the call
+        that would finish the update is one of them. Filtering here means the registration can never
+        be ahead of the script it points at, whichever direction the version moved.
+        """
+        return [{"type": "command", "command": f'{python_cmd} "{zb}" hook {n}'}
+                for n in namen if n in bekannt]
+
+    def gruppe(matcher: str | None, *namen: str) -> list[dict]:
+        eintraege = h(*namen)
+        if not eintraege:
+            return []
+        return [({"matcher": matcher, "hooks": eintraege} if matcher else {"hooks": eintraege})]
+
     config = {
         "autoMemoryEnabled": False,
         "permissions": {"defaultMode": "auto"},
         "hooks": {
-            "SessionStart": [
-                {
-                    "hooks": [
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook session-start'}
-                    ],
-                }
-            ],
-            "PreToolUse": [
-                {
-                    "matcher": "Write|Edit",
-                    "hooks": [
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook checkbox-guard'},
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook prose-guard'},
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook kind-required'},
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook permission-guard'},
-                    ],
-                },
-                {
-                    "matcher": "Agent",
-                    "hooks": [
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook dispatch-guard'},
-                    ],
-                },
-                {
-                    "matcher": "mcp__.*",
-                    "hooks": [
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook outward-guard'},
-                    ],
-                },
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook delete-guard'},
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook library-check-guard'},
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook prose-guard'},
-                    ],
-                },
-            ],
-            "PostToolUse": [
-                {
-                    "matcher": "Write|Edit",
-                    "hooks": [
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook index-consistency'}
-                    ],
-                }
-            ],
-            "SessionEnd": [
-                {
-                    "hooks": [
-                        {"type": "command", "command": f'{python_cmd} "{zb}" hook session-end'}
-                    ],
-                }
-            ],
+            "SessionStart": gruppe(None, "session-start"),
+            "PreToolUse": (
+                gruppe("Write|Edit", "checkbox-guard", "prose-guard", "kind-required",
+                       "permission-guard")
+                + gruppe("Agent", "dispatch-guard")
+                + gruppe("mcp__.*", "outward-guard")
+                + gruppe("Bash", "delete-guard", "library-check-guard", "park-guard", "prose-guard")
+            ),
+            "PostToolUse": gruppe("Write|Edit", "index-consistency"),
+            "SessionEnd": gruppe(None, "session-end"),
         },
     }
+    config["hooks"] = {k: v for k, v in config["hooks"].items() if v}
     return json.dumps(config, indent=2) + "\n"
 
 
@@ -6832,6 +8660,30 @@ def _upgrade_via_git(vault: Path, branch: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _checkout_version_via_git(vault: Path, version: str) -> tuple[bool, str]:
+    """Put a clone's distribution files on a published tag, in either direction.
+
+    The branch is left where it is and only the distribution paths are checked out, so `git status`
+    afterwards says the truth: this vault is not on its branch's head any more. A `reset --hard`
+    would hide that, and hiding it is how somebody later wonders why a pull brings nothing.
+    """
+    import subprocess
+
+    def run(*cmd: str):
+        return subprocess.run(["git", "-C", str(vault), *cmd],
+                              capture_output=True, text=True, timeout=180)
+
+    if run("fetch", "--tags", "origin").returncode != 0:
+        return False, "could not fetch tags from origin"
+    tag = f"v{version}"
+    if run("rev-parse", "--verify", f"{tag}^{{commit}}").returncode != 0:
+        return False, f"the source has no tag {tag}"
+    holen = run("checkout", tag, "--", "CLAUDE.md", SYSTEM_MATERIAL_DIR)
+    if holen.returncode != 0:
+        return False, (holen.stderr.strip() or f"could not take the files from {tag}")
+    return True, ""
+
+
 def _refresh_host_config(vault: Path, quiet: bool = False) -> None:
     """Re-run the host-side refresh so adapters and settings match the new files.
 
@@ -7149,6 +9001,13 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
     branch = channel or _manifest_scalar(manifest, "update_branch") or "main"
     is_clone = bool(_clone_remote(vault))
 
+    # A named version is a decision, so it is taken as one: forwards or backwards, without asking
+    # whether it is newer. The automatic offer still never goes backwards; this is the deliberate
+    # way, and it exists because there was none. A release that turns out broken could only be
+    # undone by replacing files by hand in a live vault, which is the one thing E11 forbids.
+    gewuenscht = (getattr(args, "to", None) or "").strip().lstrip("v")
+    ziel_ref = f"refs/tags/v{gewuenscht}" if gewuenscht else f"refs/heads/{branch}"
+
     # Named per branch, because a clone asks its own git remote and every other vault
     # asks the manifest's source. It used to be read from the manifest either way,
     # which for a clone read a name that was never assigned: the command crashed with
@@ -7156,7 +9015,15 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
     # moment it is ever run. A clone that was up to date returned before reaching the
     # line, so the fault sat there through several releases and surfaced as a
     # traceback in front of the user rather than a version to say yes to.
-    if is_clone:
+    if gewuenscht:
+        source = _manifest_scalar(manifest, "update_source")
+        origin = (_clone_remote(vault) if is_clone else source) or "the update source"
+        remote = gewuenscht
+        if not is_clone and not source:
+            print("error: the manifest names no update source", file=sys.stderr)
+            return 1
+        base = (source or "").strip("/")
+    elif is_clone:
         origin = _clone_remote(vault) or "the repository this vault was cloned from"
         remote = _remote_version_via_git(vault, branch)
         if not remote:
@@ -7186,11 +9053,18 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
             return 1
 
     channel_note = f", channel: {channel}" if channel else ""
-    if not _is_newer(remote, local):
+    if not gewuenscht and not _is_newer(remote, local):
         print(f"ok: already on the current version ({local}{channel_note})")
         return 0
+    if gewuenscht and remote == local:
+        print(f"ok: already on {local}")
+        return 0
 
-    print(f"update available: {local} -> {remote} (from {origin}{channel_note})")
+    richtung = "going to" if gewuenscht else "update available:"
+    print(f"{richtung} {local} -> {remote} (from {origin}{channel_note})")
+    if gewuenscht and not _is_newer(remote, local):
+        print("    this goes backwards. A snapshot is taken first, and the version you are on now "
+              "can be reached the same way.")
     if args.check:
         if getattr(args, "changelog", False):
             changelog = (_remote_changelog_via_git(vault, branch) if is_clone
@@ -7204,8 +9078,21 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
 
     # a clone is upgraded through git, so it stays a clean clone and a manual
     # `git pull` keeps working afterwards
+    # Before anything is replaced, and only where a version was named: that is the case where the
+    # vault is deliberately moved off a state somebody may want back.
+    if gewuenscht:
+        schnapp = argparse.Namespace(vault=str(vault), reason=f"before going to {remote}",
+                                     agent="zanmai.py")
+        try:
+            cmd_snapshot_create(schnapp)
+        except Exception as fehler:  # noqa: BLE001
+            print(f"error: no snapshot could be taken ({fehler}), so nothing was changed.",
+                  file=sys.stderr)
+            return 1
+
     if is_clone:
-        ok, problem = _upgrade_via_git(vault, branch)
+        ok, problem = (_checkout_version_via_git(vault, remote) if gewuenscht
+                       else _upgrade_via_git(vault, branch))
         if ok:
             applied = _distribution_version(vault)
             return _hand_off_to_new_script(vault, local, applied, origin="the repository this vault was cloned from")
@@ -7218,7 +9105,7 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory() as work:
         work_path = Path(work)
         try:
-            archive = _fetch(f"https://codeload.github.com/{base}/tar.gz/refs/heads/{branch}", timeout=180)
+            archive = _fetch(f"https://codeload.github.com/{base}/tar.gz/{ziel_ref}", timeout=180)
         except Exception as exc:  # noqa: BLE001
             print(f"error: could not download the new version ({exc})", file=sys.stderr)
             return 1
@@ -7401,7 +9288,7 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
     # Folders an empty release cannot deliver, since git carries no empty directory.
     # Same list `setup init` creates from and `setup validate` checks against.
     for rel in _required_folders(vault):
-        (vault / rel).mkdir(parents=True, exist_ok=True)
+        _vault_mkdir(vault, vault / rel, parents=True, exist_ok=True)
 
     _install_agent_symlinks(vault, _AGENT_NAMES)
     _install_skill_symlinks(vault, _SKILL_SYMLINK_MAP)
@@ -7428,6 +9315,13 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
             allow.append(rule)
     existing.setdefault("permissions", {})["allow"] = allow
     local_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+
+    # Carry a vault that still keeps its work objects in the old `.base` folder across. Once,
+    # here rather than on first read: a migration that runs inside a read runs during every
+    # session start, and one that never runs leaves a vault silently holding two lists.
+    umzug = _work_adopt_legacy(vault)
+    if umzug:
+        print(f"    {umzug}")
 
     # Backfill a lessons file for any expert added after this vault was
     # initialised. Memory is user-immune: create only, never overwrite.
@@ -7592,7 +9486,7 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
         rc = _move_into(vault, jetzt, TRASH_DIR, "trashed", dated=True)
         if rc != 0:
             return rc
-    jetzt.parent.mkdir(parents=True, exist_ok=True)
+    _vault_mkdir(vault, jetzt.parent, parents=True, exist_ok=True)
     _git(vault, "checkout", args.snapshot, "--", rel)
     _append_activity_log(vault, "zanmai.py", f"restored {rel} from snapshot {args.snapshot}")
     print(f"ok: {rel} is back as it was in {args.snapshot}. The version that was there went to "
@@ -8558,6 +10452,33 @@ _SUBSHELL_OPEN_RE = re.compile(r"\$\(|[`(){}]")
 _HANDS_OVER = frozenset({"xargs", "-exec", "-execdir", "-ok", "-okdir"})
 
 
+# What an operating system leaves lying around. None of it is anybody's material, none of it is
+# worth a trip through the vault's trash, and refusing to remove it refuses the whole chained
+# command it sits in: a copy that only added files was turned down because it tidied up two
+# `.DS_Store` afterwards, and the error text then offered `file trash`, which would have filed
+# them. The guard exists for the user's material, and this is not it.
+_SYSTEM_LITTER = (".DS_Store", "Thumbs.db", "desktop.ini", ".localized", "__pycache__", ".pyc")
+
+
+def _nur_systemmuell(argumente: list[str]) -> bool:
+    """Whether a removing command names nothing but operating-system litter.
+
+    False on an empty argument list, on a bare flag list, and on anything with a wildcard in it: a
+    `rm -rf *` that happens to sit in a folder of `.DS_Store` is still a command nobody should be
+    able to slip past by naming the pattern rather than the file.
+    """
+    ziele = [a for a in argumente if not a.startswith("-")]
+    if not ziele:
+        return False
+    for ziel in ziele:
+        if any(z in ziel for z in "*?["):
+            return False
+        name = Path(ziel).name
+        if name not in _SYSTEM_LITTER and not name.endswith(".pyc"):
+            return False
+    return True
+
+
 def _delete_verb_in(command: str) -> str | None:
     """Return the removing command in `command`, or None. Fails closed: a line this cannot take
     apart is checked with the old blunt word search, so an unparsable command is refused, never
@@ -8589,6 +10510,8 @@ def _delete_verb_in(command: str) -> str | None:
         if i < len(tokens):
             kopf = Path(tokens[i]).name
             if kopf in _DELETE_COMMANDS:
+                if _nur_systemmuell(tokens[i + 1:]):
+                    continue
                 return kopf
             if kopf == "git" and i + 1 < len(tokens) and tokens[i + 1] in ("rm", "clean"):
                 return f"git {tokens[i + 1]}"
@@ -8765,7 +10688,9 @@ def cmd_video_transcribe(args: argparse.Namespace) -> int:
     if not whisper:
         fehlt.append("whisper-cli, the recogniser itself")
     if not model:
-        fehlt.append("a model in zanmai/runtime/whisper/ (about 1.6 GB, fetched once)")
+        fehlt.append("a model in zanmai/runtime/whisper/. Fetch it with `zanmai.py tools ensure "
+                       "whisper-model`, one file of about 1.6 GB over HTTPS, once. An interrupted "
+                       "fetch resumes where it stopped")
     if fehlt:
         print("fail: cannot transcribe, and nothing will be guessed instead. Missing:",
               file=sys.stderr)
@@ -10393,6 +12318,46 @@ def cmd_video_frames(args: argparse.Namespace) -> int:
     return 0
 
 
+# The wait block from operating-principles 12, in the shapes it is actually written in. Matched on
+# the pair rather than on `sleep` alone: a one-off `sleep 2` between two calls is nobody's problem,
+# a loop that polls for a signal file is the thing that turns a background run into twelve minutes
+# of nothing.
+_PARK_SCHLEIFE = re.compile(r"\b(?:until|while)\b[^\n]*\bsleep\b|\bsleep\b[^\n]*\b(?:done|until)\b",
+                            re.IGNORECASE)
+
+
+def cmd_hook_park_guard(args: argparse.Namespace) -> int:
+    """PreToolUse Bash hook: refuse a wait loop inside a background expert.
+
+    Parking is for a run the user can see. A background expert's report reaches nobody until it
+    returns, so a question it writes down and then waits on is a question nobody has been shown:
+    one such run spent twelve minutes and tens of thousands of tokens on a five-second job, waiting
+    for an answer to something that sat on a work object while the user watched a spinner.
+
+    The check is on `agent_id`, which the host sets only inside a subagent. The conversation itself
+    keeps the wait block, because there the user is right there and can answer it.
+    """
+    payload = _hook_read_payload()
+    if not payload:
+        return 0
+    if payload.get("tool_name") != "Bash":
+        return 0
+    if not payload.get("agent_id"):
+        return 0   # the conversation itself may park; principle 12 is written for it
+    command = (payload.get("tool_input", {}) or {}).get("command", "") or ""
+    if not _PARK_SCHLEIFE.search(command):
+        return 0
+    print(
+        "park-guard: refusing this wait loop. You are a background run, so nothing you write is in "
+        "front of the user while you wait, and waiting is indistinguishable from hanging. Write "
+        "where you stand, put the open point in your result, and return now. Whoever dispatched you "
+        "asks the user and dispatches again with the answer. Parking is for the conversation "
+        "itself, which is what operating-principles 12 describes.",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
     """PreToolUse Bash hook: refuse to delete anything in the vault.
 
@@ -10413,6 +12378,22 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
     command = (payload.get("tool_input", {}) or {}).get("command", "") or ""
     if not command.strip():
         return 0
+    # A move out of the drop area is the same act as throwing it away, and `zanmai.py file trash`
+    # is where the condition on that lives: content in the vault first, or the user's own words.
+    # Left out, the whole gate is one `mv` wide. `cp` is not caught on purpose: it leaves the
+    # original lying, so nothing is lost and the next session start reads it again.
+    if _MOVE_VERB_RE.search(command) and _IMPORT_PATH_RE.search(command):
+        print(
+            f"delete-guard: refusing this command. It moves something out of `{IMPORT_DIR}/` by hand, "
+            f"which skips the check that the material actually arrived somewhere. Where it belongs "
+            f"in the vault, move it with `zanmai.py file archive --path <path>` or file it where it "
+            f"goes. Where it is done with, file the content first, then `zanmai.py file trash --path "
+            f"<path> --filed-to <where it landed>`, or `--user-said \"<their words>\"` where the "
+            f"user said it can go unfiled.",
+            file=sys.stderr,
+        )
+        return 2
+
     treffer = _delete_verb_in(command)
     if not treffer:
         return 0
@@ -10435,8 +12416,47 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
     return 2
 
 
+# `mv` run as a command, with a path in the drop area somewhere on the line. Deliberately blunt in
+# the same way the delete verbs are: working out which of the two paths is the source means parsing
+# shell, and a guard that parses shell can be talked around. A refusal costs a sentence.
+_MOVE_VERB_RE = re.compile(r"(?:^|[\s;&|(])(?:sudo\s+|command\s+|env\s+)*mv\b")
+_IMPORT_PATH_RE = re.compile(r"(?:^|[\s'\"=/])" + IMPORT_DIR + r"/")
+
 _PPTX_SAVE_RE = re.compile(r'\.save\(\s*["\']([^"\']+\.pptx)["\']')
 _PYTHON_RUN_RE = re.compile(r"(?:^|[\s;&|])python3?\b")
+# A python run that could produce a deck, as opposed to any python run at all. The wide version
+# bound every command that mentioned a bundle path anywhere, which in a bundle whose name has
+# nothing to do with slides meant a refusal for reading a file or ticking a checkbox off in
+# markdown. A guard that fires on work it has no business with gets worked around, and then it
+# guards nothing.
+#
+# Two things still bind, and between them they cover how a deck actually gets written: the command
+# names a `.pptx`, or it runs a script that lives inside the bundle, which is where a build script
+# sits and whose own `.save()` cannot be seen from here.
+_PPTX_HINT_RE = re.compile(r"\.pptx\b|python[-_]pptx|from\s+pptx|Presentation\(", re.IGNORECASE)
+# `slide-library.py` is mostly checks, and a check writes nothing. Binding the whole tool held up a
+# render because a font folder happened to sit under a bundle path: the folder was a source being
+# read from, no deck was written, and pictures are not presentations. Only the subcommands that
+# actually produce or alter a deck bind.
+_SLIDE_LIBRARY_WRITES = ("build", "fill", "nudge", "swap-image", "keep", "extract", "migrate")
+_SLIDE_LIBRARY_RE = re.compile(r"slide[-_]library\.py\s+(?:[-\w/.]*\s+)*?(" +
+                               "|".join(_SLIDE_LIBRARY_WRITES) + r")\b")
+# Python handed a script file, as opposed to python handed text. A build script's own `.save()`
+# cannot be seen from out here, so running one binds; a `-c` snippet or a heredoc carries its whole
+# behaviour in the command, where the deck hint above can see it. That is the line between a build
+# and somebody ticking a checkbox off in a markdown file with a throwaway script.
+_PY_SCRIPT_RUN_RE = re.compile(r"(?:^|[\s;&|])python3?\s+(?!-)([^\s;&|]*\.py)\b")
+# The vault's own CLI never writes a deck, whatever it is asked to do, and neither does asking any
+# script for its help text. Binding those meant a plain `zanmai.py journal --help` was refused
+# because the shell happened to stand in a bundle called `ci`, a word that turns up constantly in
+# marketing work. A guard has to be able to tell a build from a question.
+def _ohne_heredoc(command: str) -> str:
+    """The command with every heredoc body removed, so prose inside one is not read as a command."""
+    return re.sub(r"<<-?\s*['\"]?(\w+)['\"]?\n.*?\n\1", " ", command, flags=re.DOTALL)
+
+
+_NIE_DECK = ("zanmai.py", "image-edit.py", "design-check.py", "document.py")
+_HILFE_RE = re.compile(r"(?:^|\s)(--help|-h)\b")
 # Preceded by start, a slash, a quote or whitespace: a doing/<slug> path shows up embedded in a
 # quoted .save() argument, after a `cd`, or as a bare relative path, not only at a path boundary.
 _DOING_SLUG_RE = re.compile(r"(?:^|[/'\"\s])" + re.escape(DOING_DIR) + r"/([^/'\"\s]+)")
@@ -10507,7 +12527,24 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
     if payload.get("tool_name", "") != "Bash":
         return 0
     command = (payload.get("tool_input", {}) or {}).get("command", "") or ""
-    if not _PPTX_SAVE_RE.search(command) and not _PYTHON_RUN_RE.search(command):
+    if _HILFE_RE.search(command):
+        return 0
+    # The body of a heredoc is data, not command. It blocked the writing of a findings file that
+    # mentioned this very guard, because the prose in it named `.pptx`. Text about a deck is not a
+    # deck being written, and a guard that cannot tell the two apart blocks the report about
+    # itself.
+    command = _ohne_heredoc(command)
+    skripte = [Path(m).name for m in _PY_SCRIPT_RUN_RE.findall(command)]
+    fremde = [s for s in skripte if s not in _NIE_DECK and s != "slide-library.py"]
+    if "slide-library.py" in skripte and not fremde:
+        # A slide-library call names a deck almost every time, including when it only measures one.
+        # So the file name says nothing here and the subcommand says everything: `fill` writes,
+        # `align-check` reads. Letting the `.pptx` decide held up a render for having a font folder
+        # under a bundle path.
+        baut_deck = bool(_SLIDE_LIBRARY_RE.search(command))
+    else:
+        baut_deck = bool(_PPTX_HINT_RE.search(command)) or bool(fremde)
+    if not baut_deck:
         return 0
     vault = _session_find_vault_root()
     slug = _library_guard_slug(command, vault, cwd=payload.get("cwd"))
@@ -10537,6 +12574,25 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
 # keyword nobody would write by accident is deliberate: the thing being checked for is that the
 # user's words were carried over at all, so the check and the content are the same fact.
 _BRIEF_MARKER = "What the user said:"
+
+# The same heading in the languages a handover is actually written in, because the rule above this
+# one says Steve writes in the user's writing language and a handover is mostly the user's own
+# quoted words. A German vault therefore wrote "Was der Nutzer gesagt hat", was refused, lost the
+# whole assembled dispatch and rebuilt it with an English heading in an otherwise German prompt.
+# The guard checks that the user's words were carried over; which language the label is in says
+# nothing about whether they were.
+_BRIEF_MARKERS = (
+    _BRIEF_MARKER,
+    "Was der Nutzer gesagt hat",
+    "Was der Nutzer sagte",
+    "Was der Nutzer gesagt hat:",
+)
+
+
+def _brief_present(prompt: str) -> bool:
+    """Whether a handover carries the user's-words block, in any of the labels we accept."""
+    klein = prompt.lower()
+    return any(m.lower().rstrip(":") in klein for m in _BRIEF_MARKERS)
 
 
 # A tool name that writes into somebody else's system. Matched on the verb, because every MCP server
@@ -10621,7 +12677,7 @@ def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
     subagent = str(tool_input.get("subagent_type") or "agent")
     prompt = str(tool_input.get("prompt") or "")
     hintergrund_falsch = tool_input.get("run_in_background") is False
-    brief_fehlt = _BRIEF_MARKER.lower() not in prompt.lower()
+    brief_fehlt = not _brief_present(prompt)
     if not hintergrund_falsch and not brief_fehlt:
         return 0
     # Corrected, not refused. Refusing worked, and the user watched it work: a red error on their
@@ -10638,8 +12694,9 @@ def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
         # expert cannot hold it: it runs in the background and has nobody to ask.
         print(
             f"dispatch-guard: refusing this {subagent} dispatch, its handover is missing the two "
-            f"labelled blocks. What this checks is formal, and only that: the words "
-            f"'{_BRIEF_MARKER}' have to appear. A handover can be rich in detail and still be "
+            f"labelled blocks. What this checks is formal, and only that: one of "
+            f"{', '.join(repr(m) for m in _BRIEF_MARKERS[:2])} has to appear, in English or in the "
+            f"user's language. A handover can be rich in detail and still be "
             f"refused here, which is what happened the first time this fired in the field. "
             f"The expert never met the user, and it runs in the background where it cannot ask, so "
             f"whatever is missing here gets invented and comes back looking like the expert's "
@@ -10937,6 +12994,11 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # carries `model` at all, and the docs say it is not guaranteed to be there, so everything that
     # reads it treats it as optional.
     payload = _hook_read_payload()
+    # Whether this is a new session or the same one picked up again. Read here rather than at the
+    # greet, because everything below has to know: a resumed session already did its session-start
+    # work, and repeating it means a second import run over the same files every time somebody
+    # steps out of the terminal and back in.
+    fortsetzung = str(payload.get("source") or "").lower() in ("resume", "compact")
     vault = _session_find_vault_root()
     if vault is None:
         import os
@@ -11061,14 +13123,21 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
 
     # Recordings waiting are named, not transcribed. A hook that takes a minute is a
     # session that starts in a minute, and the reading of them is a background job.
-    waiting = _pending_recordings(vault)
+    waiting = _pending_recordings(vault) if not fortsetzung else []
     if waiting:
         total = sum(_audio_duration(f) or 0.0 for f in waiting)
         lines.append(
             f"- {len(waiting)} voice note(s) waiting in {IMPORT_DIR}/"
             + (f", {_spoken_length(total)} in total" if total else "")
-            + ". Dispatch the `voice` skill in the background on the next turn and carry on; "
-              "report when it is done, and only ask about what it could not settle."
+            + ". **Dispatch the `import` skill in the background in this same turn**, before the "
+              "greet goes out; a background dispatch does not hold it up and the greet is written "
+              "while it runs. Not on the next turn: the next turn belongs to the user, so a greet "
+              "that says it will look is a greet that never does. The greet says the reading is "
+              "under way, in one line, in the present tense, and then nothing more about it. The "
+              "user knows something is lying there, they put it there, so announcing it is not "
+              "news and asking permission asks them to repeat themselves. What comes back is "
+              "reported when it comes back, and only then is there anything to ask: where "
+              "something belongs when the file does not say, or a tool to fetch, with its size."
         )
 
     # Work the user has not answered yet. Named in one line, because this is the one
@@ -11125,14 +13194,131 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
         lines.append("- A rollup is due. Write the summary in the user's own words from the entries below, then `zanmai.py journal rollup`. It refuses a second one for the same period, so it cannot double up:")
         lines.extend(f"  {zeile}" for zeile in faellig)
 
-    wartend = _import_pending(vault)
+    # Not on a resume. The reading was dispatched when the session started; doing it again because
+    # the user stepped out of the terminal and back in runs the same files through the same expert
+    # a second time, at the same cost, for the same answer.
+    wartend = _import_pending(vault) if not fortsetzung else []
     if wartend:
         arten: dict[str, int] = {}
         for f in wartend:
             art, _weg = _import_route(f)
             arten[art] = arten.get(art, 0) + 1
         pretty = ", ".join(f"{n} {a}" for a, n in sorted(arten.items()))
-        lines.append(f"- {len(wartend)} file(s) waiting in `{IMPORT_DIR}/` ({pretty}). Run `zanmai.py import scan` for the list and the route per file. Read all of them before processing any, the later one can withdraw the earlier. A recording is read out without asking; everything else asks first.")
+        namen = ", ".join(f.name for f in wartend[:6])
+        if len(wartend) > 6:
+            namen += f", and {len(wartend) - 6} more"
+        # What the user already decided about this material, said here rather than left in a file
+        # nobody opens mid-turn. Where a rule covers a file it is the answer, and asking again asks
+        # the user to repeat themselves.
+        treffer = {}
+        for f in wartend:
+            regel = _route_for_file(vault, f)
+            if regel:
+                treffer[regel.get("name", "?")] = _rule_phrase(regel)
+        geregelt = [treffer[k] for k in sorted(treffer)]
+        lines.append(
+            f"- {len(wartend)} file(s) waiting in `{IMPORT_DIR}/` ({pretty}): {namen}. "
+            + (f"The routing table already answers part of it: {'; '.join(geregelt)}. Follow it "
+               f"rather than asking again. " if geregelt else "")
+            + f"**Read it by machine first**: `zanmai.py records index --scope {IMPORT_DIR}` pulls "
+              f"the text out of every file for free, then `zanmai.py records survey` gives one "
+              f"line each with dates, amounts, parties and the opening. Work from that and open a "
+              f"file only where the line leaves the question open. Reading them all with a model "
+              f"costs about sixteen times as much and answers the same question. "
+            + f"Run `zanmai.py import scan` for the route per file. Read all of them before "
+            f"processing any, the later one can withdraw the earlier. Anything can land here: a "
+            f"screenshot, a rental protocol, a spoken note, an idea, a document, a training log. "
+            f"The reading runs in the background from this turn, not the next one. Report what "
+            f"each was and where it belongs when the run returns. The question comes after the "
+            f"reading, never instead of it, and only where the material itself leaves something "
+            f"open. Nothing is written into the vault before that answer. Anything the "
+            f"routing table sends to `{RECORDS_DIR}/` goes to Marcus rather than Hank, and it "
+            f"moves as a pile: `zanmai.py records file --source <folder> --area <section>` files "
+            f"the lot in one call, keeps the folders the user already sorted it into and reads "
+            f"what it filed. **Do not move documents one at a time.** Deciding each one before "
+            f"anything moves is how a pile of thirty sits untouched while every file is thought "
+            f"about, and it is the same work the one call does in seconds. The matter notes come "
+            f"after the documents are in, and only where there is something to say that stands in "
+            f"no document. Where a kind has no rule yet and the user says where it belongs, "
+            f"user says where it belongs, write that down with `zanmai.py routing set "
+              f"<name> <destination> --when-text <a word in it>`, so the "
+            f"next one of its sort does not have to be asked about again.")
+        # The handover, written out rather than left to be composed. `dispatch-guard` checks for
+        # the user's-words block and refuses without it, and at a session start there is no
+        # sentence to quote: the user said "hello". Composing one on the spot means inventing a
+        # request nobody made, so the block says the true thing instead, which is that putting the
+        # files there was the request. A dispatch that has to be assembled from scratch at the one
+        # moment the session is trying to start is a dispatch that gets refused, and that is what
+        # happened the first time this ran.
+        lines.append(
+            f"  The prompt for that dispatch starts with these two blocks, verbatim:\n"
+            f"  `What the user said:` They put {len(wartend)} file(s) into `{IMPORT_DIR}/`: "
+            f"{namen}. Dropping material there is the instruction to take it in; nothing was said "
+            f"in the conversation about it.\n"
+            f"  `What I concluded:` This is the reading pass from `import-bundle/SKILL.md`, not a "
+            f"filing run. Open every file, work out what each one is, write nothing into the "
+            f"vault, ask nothing, and return per file what it is and where it would belong, plus "
+            f"what is still open. Check a tool with `tools check <id>` before needing it and "
+            f"report the gap rather than fetching it.")
+
+    # Material for the records area, before anybody is sent to file it. Put as a statement with two
+    # open questions hanging off it, never as a menu to pick from. A menu asks the user to work
+    # through options where there is nothing to choose: the area is called records, and the sorts of
+    # document that go in it are visible in their own material. What is worth asking is only what
+    # the machine cannot see, namely whether something is missing from that picture and whether the
+    # terms suit. Both answers are usually one word, and that is the point. The country is not
+    # asked either: shipping a list of legal areas is wrong for everybody not on it, so the terms
+    # lean long instead and are offered as a suggestion. An expert cannot run this conversation, it
+    # runs in the background and has nobody to ask, so it happens here or it happens never. Written
+    # as a mechanical check rather than as a rule in a contract: a rule that tells a background run
+    # to ask a question is a rule that cannot hold.
+    if wartend and not fortsetzung:
+        arten_da = {_import_route(f)[0] for f in wartend}
+        will_records = any((_route_for_file(vault, f).get("to") or "").startswith(RECORDS_DIR)
+                           for f in wartend)
+        eingerichtet = bool(_retention(vault))
+        if not eingerichtet and (will_records or not _routing(vault)):
+            gesehen = ", ".join(sorted(arten_da)[:8]) or "whatever the reading turns up"
+            lines.append(
+                f"- **The records area is not set up, so nothing gets filed there yet.** Settle it "
+                f"in this turn, in the user's language, as plain sentences and not as a menu of "
+                f"options to choose from. Write it for somebody who has never used this before, "
+                f"in this order: what you found lying in `import/` and what sort it is "
+                f"({gesehen}); that this sort is kept rather than filed away, which is a different "
+                f"job with a different specialist, Marcus, who looks after documents that have to "
+                f"be produced again years later; that the area for it is called `{RECORDS_DIR}`; "
+                f"what you would therefore take as belonging in it; and how long you would keep "
+                f"each sort. Print that last part with `zanmai.py retention show` and put it in as "
+                f"it stands, the terms are deliberately on the long side, so fine is the normal "
+                f"answer. Then two questions and wait: is anything missing from that or anything "
+                f"too much, and do those terms suit. Close by offering that you can say more about "
+                f"how the area works, from `zanmai/system/docs/records.md`, if they want it. Do "
+                f"not offer a choice of names, do not ask which country they are in, do not build "
+                f"a list to tick. On the answers: `zanmai.py retention adopt`, then `zanmai.py "
+                f"routing set <name> {RECORDS_DIR} --when-text <a word in it>` per sort that "
+                f"stands. Only then is anything "
+                f"dispatched to Marcus. He runs in the background and cannot ask, so a run sent "
+                f"out before this either guesses or stops, and both are worse than a question "
+                f"here.")
+
+    # The desk, once, as a sentence. `doing/` is the one folder that empties, so what sits there
+    # untouched is either finished and not filed, or waiting on something nobody wrote down. In a
+    # working vault this fills up faster than anyone notices: fifteen pieces, nine of them still
+    # for more than a fortnight. It is a reminder and not a demand, so it says the count, names a
+    # few, and offers the one move that makes a piece go quiet on purpose.
+    liegend = _desk_idle(vault)
+    if liegend:
+        namen = ", ".join(e["label"] for e in liegend[:3])
+        rest = f" and {len(liegend) - 3} more" if len(liegend) > 3 else ""
+        lines.append(
+            f"- {len(liegend)} piece(s) on the desk have not moved for over {DESK_IDLE_DAYS} days, "
+            f"longest first: {namen}{rest}. Say this in one sentence after the list, not as items, "
+            f"and only where it is worth a word: nothing here has to move. Where the user says one "
+            f"is waiting on something, record it with `zanmai.py file status --path "
+            f"<doing/<slug>/<slug>.md> --set waiting` and a `due:` for when it comes back, and it "
+            f"stays quiet until then. Where one is simply finished, `--set done` and it stops "
+            f"being asked about."
+        )
 
     if first_session:
         lines.append("- **First session after setup.** Before anything else, ask the user in their writing language whether they would like a short tour: what the folders are for, and what they can actually do with Zanmai. One question, two sentences at most, and a no is a fine answer. On a yes, answer from `zanmai/system/docs/index.md` and the pages it points at, shaped for this user, never a page pasted back at them.")
@@ -11240,7 +13426,6 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # it says resume the session already carries everything a greet exists to establish. Greeting
     # there reads as amnesia: a user reopened a running build in another terminal on,
     # got a full greet with a task list, and answered "I am completely lost about where you are".
-    fortsetzung = str(payload.get("source") or "").lower() in ("resume", "compact")
     if fortsetzung:
         lines.append(
             f"- **This session was resumed, so it is not greeted.** The thread is picked up where "
@@ -12299,15 +14484,27 @@ def _fetch_plain_file(vault: Path, tool_id: str, spec: dict, prov: dict) -> dict
 
     url = prov["url"]
     target = vault / prov["target"]
-    target.parent.mkdir(parents=True, exist_ok=True)
+    _vault_mkdir(vault, target.parent, parents=True, exist_ok=True)
     tmp = target.with_name(f".{target.name}-download")
+    # An interrupted fetch used to throw away what it had. On a 1.6 GB model over a home line that
+    # is minutes, and it happened: 962 MB were on disk and the next attempt started at zero. The
+    # part-file is kept and continued with a Range request. Where the server will not resume, the
+    # part-file is dropped and the whole thing is fetched again, which is the old behaviour and now
+    # the fallback rather than the rule.
+    schon = tmp.stat().st_size if tmp.exists() else 0
+    kopf = {"Range": f"bytes={schon}-"} if schon else {}
     try:
-        with urllib.request.urlopen(url, timeout=600) as response, tmp.open("wb") as out:
-            shutil.copyfileobj(response, out)
+        anfrage = urllib.request.Request(url, headers=kopf)
+        with urllib.request.urlopen(anfrage, timeout=600) as response:
+            fortgesetzt = response.status == 206
+            with tmp.open("ab" if fortgesetzt else "wb") as out:
+                shutil.copyfileobj(response, out)
     except Exception as exc:  # noqa: BLE001
-        tmp.unlink(missing_ok=True)
+        # What arrived stays on disk, so the next attempt continues instead of starting over.
+        gehalten = tmp.stat().st_size / (1024 * 1024) if tmp.exists() else 0
         return {"state": "WARNING", "detail": f"download failed: {type(exc).__name__}: {exc}",
-                "url": url}
+                "url": url, "kept_mb": round(gehalten),
+                "note": "the part already fetched is kept; run the same command again to continue"}
 
     size_mb = tmp.stat().st_size / (1024 * 1024)
     least = prov.get("expect_min_mb", 1)
@@ -12369,7 +14566,7 @@ def _fetch_pinned_binary(vault: Path, tool_id: str, spec: dict, os_spec: dict, p
     asset = os_spec["asset"].format(arch=arch, version=version)
     url = prov["release"].format(version=version, asset=asset)
     target_dir = vault / prov.get("into", f"{RUNTIME_DIR}/bin")
-    target_dir.mkdir(parents=True, exist_ok=True)
+    _vault_mkdir(vault, target_dir, parents=True, exist_ok=True)
     binary_name = os_spec.get("invoke", tool_id)
 
     tmp = target_dir / f".{tool_id}-download"
@@ -12497,7 +14694,9 @@ def cmd_tools_ensure_all(args: argparse.Namespace) -> int:
     for tid, _spec, _m in automatisch:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            rc = cmd_tools_ensure(argparse.Namespace(vault=str(vault), id=tid))
+            # `--yes` is already the gate on this command: the user answered the report above
+            # before this loop runs, so the consent is carried through rather than asked twice.
+            rc = cmd_tools_ensure(argparse.Namespace(vault=str(vault), id=tid, yes=True))
         try:
             ergebnis = json.loads(buf.getvalue())
         except json.JSONDecodeError:
@@ -12530,6 +14729,23 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
         return 0
     prov = spec.get("provision", {})
     method = prov.get("method")
+    # Nothing is fetched or installed on this machine without the user saying so, whatever it
+    # costs. `ensure-all` had this gate from the start and `ensure` did not, and the gap is not
+    # theoretical: a background run fetched 1.6 GB of model weights that nobody had agreed to,
+    # while its own question about that very download sat unanswered on a work object. Without
+    # `--yes` this reports what it would cost, and that report is the question the user answers.
+    if not getattr(args, "yes", False):
+        mb = spec.get("size_mb")
+        groesse = "unmeasured" if mb is None else (f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb} MB")
+        print(json.dumps({
+            "id": args.id, "state": "needs-consent", "tier": tier, "method": method,
+            "size": groesse,
+            "purpose": (spec.get("purpose") or "").split(". ")[0],
+            "target": prov.get("target") or prov.get("into") or prov.get("root") or f"{RUNTIME_DIR}/",
+            "ask": f"Tell the user what this costs and what it is for, then run "
+                   f"`tools ensure {args.id} --yes` once they agree.",
+        }, ensure_ascii=False, indent=2))
+        return 0
     if method == "venv-pip":
         py, note = _ensure_runtime_venv(vault)
         if not py:
@@ -12631,6 +14847,117 @@ def _tool_cache_path(vault: Path) -> Path:
     dynamic database of what was found on THIS machine, so a preflight is a quick
     look, not a full rescan each time."""
     return vault / RUNTIME_DIR / "tool-cache.json"
+
+
+# Facts a run establishes about the ground it stands on: a typeface is installed, a theme file
+# sits at this path, a helper answers on this port. Each one costs a minute to establish and gives
+# the same answer every time, so a run that establishes it again has spent that minute for nothing.
+# Measured on one piece of work: fifteen runs in a row re-checked the same typeface.
+#
+# What makes this more than a cache is the scope, and the scope is the whole point. "Montserrat is
+# installed" is true of a machine, "poppler is here" of an installation, "the theme is at this
+# path" of one bundle. Without saying which, a run on another machine reads a stranger's finding
+# and believes it. So a fact carries what it is about, and a fact about a machine is checked
+# against the machine before it is handed back.
+FACTS_FILE = "facts.json"
+FACT_SCOPES = ("machine", "install", "bundle")
+
+
+def _facts_path(vault: Path) -> Path:
+    # Under runtime, which is machine-local and never travels in a backup. A findings file that
+    # syncs to a second computer is worse than none: it is confidently wrong there.
+    return vault / RUNTIME_DIR / FACTS_FILE
+
+
+def _machine_signature() -> str:
+    """What identifies this machine well enough that a finding about it can be trusted here."""
+    import platform
+    return f"{platform.node()}|{platform.system()}|{platform.machine()}"
+
+
+def _facts_load(vault: Path) -> dict:
+    try:
+        return json.loads(_facts_path(vault).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _facts_save(vault: Path, facts: dict) -> None:
+    ziel = _facts_path(vault)
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    ziel.write_text(json.dumps(facts, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _fact_valid_here(eintrag: dict) -> tuple[bool, str]:
+    """Whether a recorded fact still applies in this run, and why not where it does not."""
+    if eintrag.get("scope") == "machine" and eintrag.get("machine") != _machine_signature():
+        return False, "recorded on a different machine"
+    return True, ""
+
+
+def cmd_fact_set(args: argparse.Namespace) -> int:
+    """Write down something established, with what it is about and when."""
+    vault = _work_vault(args)
+    facts = _facts_load(vault)
+    schluessel = args.key.strip()
+    facts[schluessel] = {
+        "value": args.value,
+        "scope": args.scope,
+        "about": args.about or "",
+        "recorded": _today(),
+        "machine": _machine_signature(),
+        "by": args.agent or "",
+    }
+    _facts_save(vault, facts)
+    print(f"ok: {schluessel} = {args.value} (about this {args.scope}"
+          + (f", {args.about}" if args.about else "") + f", {_today()})")
+    return 0
+
+
+def cmd_fact_get(args: argparse.Namespace) -> int:
+    """Read one back, or say plainly that it has to be established."""
+    vault = _work_vault(args)
+    eintrag = _facts_load(vault).get(args.key.strip())
+    if not eintrag:
+        print(f"unknown: {args.key} has not been established here. Find out, then "
+              f"`fact set {args.key} <value>`.")
+        return 1
+    gilt, warum = _fact_valid_here(eintrag)
+    if not gilt:
+        print(f"stale: {args.key} was {eintrag['value']} on {eintrag['recorded']}, but {warum}. "
+              f"Establish it again here.")
+        return 1
+    ueber = f" about {eintrag['about']}" if eintrag.get("about") else ""
+    print(f"{eintrag['value']}\n  established {eintrag['recorded']}, holds for this "
+          f"{eintrag['scope']}{ueber}")
+    return 0
+
+
+def cmd_fact_list(args: argparse.Namespace) -> int:
+    vault = _work_vault(args)
+    facts = _facts_load(vault)
+    if not facts:
+        print("nothing established yet")
+        return 0
+    for schluessel, eintrag in sorted(facts.items()):
+        gilt, warum = _fact_valid_here(eintrag)
+        mark = "ok" if gilt else "--"
+        ueber = f" ({eintrag['about']})" if eintrag.get("about") else ""
+        print(f"  [{mark}] {schluessel:28} {str(eintrag['value'])[:28]:28} "
+              f"{eintrag['scope']}{ueber}, {eintrag['recorded']}" + (f"; {warum}" if warum else ""))
+    return 0
+
+
+def cmd_fact_forget(args: argparse.Namespace) -> int:
+    vault = _work_vault(args)
+    facts = _facts_load(vault)
+    if args.key.strip() not in facts:
+        print(f"unknown: {args.key}", file=sys.stderr)
+        return 1
+    facts.pop(args.key.strip())
+    _facts_save(vault, facts)
+    print(f"ok: {args.key} forgotten; the next run establishes it again")
+    return 0
 
 
 def _load_tool_cache(vault: Path) -> dict:
@@ -12837,9 +15164,11 @@ def main(argv: list[str]) -> int:
     pt_lst.add_argument("vault", nargs="?", default=".")
     pt_lst.add_argument("--markdown", action="store_true", help="The register as a table, the form the documentation page carries.")
     pt_lst.set_defaults(func=cmd_tools_list)
-    pt_ens = sub_tools.add_parser("ensure", help="Provision an on-demand tool at first use (venv libs now; binaries later).")
+    pt_ens = sub_tools.add_parser("ensure", help="Provision an on-demand tool at first use. Reports what it would cost; fetches only with --yes.")
     pt_ens.add_argument("id")
     pt_ens.add_argument("vault", nargs="?", default=".")
+    pt_ens.add_argument("--yes", action="store_true",
+                        help="The user agreed to this download or install. Without it nothing is fetched.")
     pt_ens.set_defaults(func=cmd_tools_ensure)
 
     pt_all = sub_tools.add_parser("ensure-all", help="What this vault still needs, in one pass. Reports without --yes; that report is the question the user answers.")
@@ -12876,6 +15205,10 @@ def main(argv: list[str]) -> int:
     ps_upgrade = sub_setup.add_parser("upgrade", help="Fetch the newest published version over HTTPS and replace the distribution files. Works the same whether the vault was cloned or unpacked from an archive. Never touches user-immune paths; Pepper snapshots first.")
     ps_upgrade.add_argument("vault_root", nargs="?", default=".")
     ps_upgrade.add_argument("--check", action="store_true", help="Only report whether a newer version exists.")
+    ps_upgrade.add_argument("--to", metavar="VERSION",
+                            help="Go to this published version instead of the newest, backwards "
+                                 "included. A snapshot is taken first. Use when a release has to be "
+                                 "undone: nothing else in Zanmai moves a vault back.")
     ps_upgrade.add_argument("--channel", metavar="NAME",
                              help="Switch which branch this vault tracks (e.g. 'beta') and remember "
                                   "the choice in zanmai/user.md. 'release' switches back to the "
@@ -12940,6 +15273,7 @@ def main(argv: list[str]) -> int:
     pi_scan.add_argument("vault", nargs="?", default=".")
     pi_scan.add_argument("--verbose", action="store_true", help="Say what happens to each file, not just what it is.")
     pi_scan.set_defaults(func=cmd_import_scan)
+
 
     # housekeeping -----
     p_gaps = sub.add_parser("gaps", help="what the experts wrote into builder-gaps.md recently. "
@@ -13188,6 +15522,155 @@ def main(argv: list[str]) -> int:
     pv_ja.add_argument("--text", required=True)
     pv_ja.set_defaults(func=cmd_voice_journal_append)
 
+    p_fact = sub.add_parser("fact", help="What a run established about this machine, install or bundle, so the next one does not establish it again.")
+    sub_fact = p_fact.add_subparsers(dest="fact_cmd", required=True)
+
+    pfa_set = sub_fact.add_parser("set", help="Write down something established, with what it is about.")
+    pfa_set.add_argument("key", help="Short name, e.g. `font.montserrat` or `theme.path`.")
+    pfa_set.add_argument("value")
+    pfa_set.add_argument("--vault", default=None)
+    pfa_set.add_argument("--scope", choices=list(FACT_SCOPES), default="machine",
+                         help="What it is true of. A machine fact is refused on another machine.")
+    pfa_set.add_argument("--about", default="", help="Which install or bundle, where that is what it hangs on.")
+    pfa_set.add_argument("--agent", default="")
+    pfa_set.set_defaults(func=cmd_fact_set)
+
+    pfa_get = sub_fact.add_parser("get", help="Read one back. Exit 1 where it is unknown or does not hold here.")
+    pfa_get.add_argument("key")
+    pfa_get.add_argument("--vault", default=None)
+    pfa_get.set_defaults(func=cmd_fact_get)
+
+    pfa_list = sub_fact.add_parser("list", help="Everything established, and whether it still holds here.")
+    pfa_list.add_argument("--vault", default=None)
+    pfa_list.set_defaults(func=cmd_fact_list)
+
+    pfa_forget = sub_fact.add_parser("forget", help="Drop one, so the next run establishes it again.")
+    pfa_forget.add_argument("key")
+    pfa_forget.add_argument("--vault", default=None)
+    pfa_forget.set_defaults(func=cmd_fact_forget)
+
+    p_survey = sub.add_parser("survey", help="What a pile of files is, established by machine: dates, amounts, parties, opening. Read this before reading the files.")
+    p_survey.add_argument("path", help="A file or a folder.")
+    p_survey.add_argument("--vault", default=None)
+    p_survey.add_argument("--json", action="store_true", help="As JSON, for a run to read.")
+    p_survey.add_argument("--opening", type=int, default=400, help="How much of the opening to carry.")
+    p_survey.add_argument("--limit", type=int, default=500, help="How many files at most.")
+    p_survey.set_defaults(func=cmd_survey)
+
+    p_records = sub.add_parser("records", help="The searchable copy of what is kept: build it, search it.")
+    sub_records = p_records.add_subparsers(dest="records_cmd", required=True)
+
+    prc_who = sub_records.add_parser("who", help="One counterparty, however many ways it is written.")
+    prc_who.add_argument("name")
+    prc_who.add_argument("--vault", default=None)
+    prc_who.add_argument("--new", action="store_true", help="This is a counterparty not seen before.")
+    prc_who.add_argument("--same-as", dest="same_as", help="This spelling is that counterparty.")
+    prc_who.add_argument("--note", help="What distinguishes it, where two are close.")
+    prc_who.add_argument("--agent", default="")
+    prc_who.set_defaults(func=lambda a: (cmd_records_who_set(a) if (a.new or a.same_as)
+                                         else cmd_records_who(a)))
+
+    prc_matter = sub_records.add_parser("matter", help="A matter: the thing documents belong to.")
+    sub_matter = prc_matter.add_subparsers(dest="matter_cmd", required=True)
+
+    pm_new = sub_matter.add_parser("new", help="Open a matter, before the first document is filed against it.")
+    pm_new.add_argument("title", help="What it is called, in the user's words.")
+    pm_new.add_argument("--vault", default=None)
+    pm_new.add_argument("--slug", help="Default: derived from the title.")
+    pm_new.add_argument("--area", help="A folder inside records/, e.g. `insurance`.")
+    pm_new.add_argument("--doc-type", dest="doc_type", help="What kind of matter: policy, employment, vehicle, case.")
+    pm_new.add_argument("--lifecycle", default="active", choices=list(RECORD_LIFECYCLE))
+    pm_new.add_argument("--retention", choices=list(RECORD_RETENTION))
+    pm_new.add_argument("--until", help="YYYY-MM-DD, where the term resolves to a day.")
+    pm_new.add_argument("--with", dest="with_whom", help="The counterparty, as a contact slug.")
+    pm_new.add_argument("--about", help="A sentence on what this matter is.")
+    pm_new.add_argument("--force", action="store_true", help="Open a second matter with this slug.")
+    pm_new.add_argument("--agent", default="")
+    pm_new.set_defaults(func=cmd_records_matter_new)
+
+    pm_add = sub_matter.add_parser("add", help="Hang a document on its matter, both directions at once.")
+    pm_add.add_argument("matter")
+    pm_add.add_argument("what", nargs="?", default="",
+                        help="What this document did, in one line. Leave it out when pointing at a document with --path or --folder: the line is then filled from what was read out of it.")
+    pm_add.add_argument("--vault", default=None)
+    pm_add.add_argument("--path", default="", help="A document to hang on the matter. Its date, amount and counterparty come from the index.")
+    pm_add.add_argument("--folder", default="", help="Every document in this folder, the same way.")
+    pm_add.add_argument("--via", default="part-of", choices=list(RECORD_RELATIONS))
+    pm_add.add_argument("--date", help="YYYY-MM-DD; default today.")
+    pm_add.add_argument("--amount", help="Where there is one.")
+    pm_add.add_argument("--with", dest="with_whom", help="Who it was with.")
+    pm_add.add_argument("--document", help="A note of its own, where one exists; its fields are set too.")
+    pm_add.add_argument("--agent", default="")
+    pm_add.set_defaults(func=cmd_records_matter_add)
+
+    pm_show = sub_matter.add_parser("show", help="One matter, whole.")
+    pm_show.add_argument("matter")
+    pm_show.add_argument("--vault", default=None)
+    pm_show.set_defaults(func=cmd_records_matter_show)
+
+    prc_file = sub_records.add_parser("file", help="Move a pile of documents into or within the records area, and read them where they land.")
+    prc_file.add_argument("--vault", default=None)
+    prc_file.add_argument("--source", required=True, help="File or folder inside the vault, e.g. import/Abonnements to bring a pile in, or records/vertraege/telekom to move one that is already there.")
+    prc_file.add_argument("--area", default="", help="Section under records/, e.g. vertraege. Omitted puts them at the top.")
+    prc_file.add_argument("--dry-run", dest="dry_run", action="store_true", help="Show what would move, move nothing.")
+    prc_file.add_argument("--agent", default="")
+    prc_file.set_defaults(func=cmd_records_file)
+
+    prc_index = sub_records.add_parser("index", help="Read what is kept, once each. A second run touches only what changed.")
+    prc_index.add_argument("--vault", default=None)
+    prc_index.add_argument("--scope", help=f"A folder to read instead of {RECORDS_DIR}/.")
+    prc_index.add_argument("--rebuild", action="store_true", help="Read everything again, changed or not.")
+    prc_index.set_defaults(func=cmd_records_index)
+
+    prc_survey = sub_records.add_parser("survey", help="One line per indexed document: dates, amounts, parties, opening. Made by machine, for something else to decide on.")
+    prc_survey.add_argument("--vault", default=None)
+    prc_survey.add_argument("--json", action="store_true", help="As JSON, for a run to read.")
+    prc_survey.add_argument("--opening", type=int, default=400, help="How much of the opening to carry.")
+    prc_survey.set_defaults(func=cmd_records_survey)
+
+    prc_search = sub_records.add_parser("search", help="Find a word in what is kept.")
+    prc_search.add_argument("query")
+    prc_search.add_argument("--vault", default=None)
+    prc_search.add_argument("--limit", type=int, default=15)
+    prc_search.set_defaults(func=cmd_records_search)
+
+    p_retention = sub.add_parser("retention", help="How long kept documents stay: what applies here, and what was suggested.")
+    sub_retention = p_retention.add_subparsers(dest="retention_cmd", required=True)
+
+    prn_show = sub_retention.add_parser("show", help="What is in force, or what would be proposed.")
+    prn_show.add_argument("--vault", default=None)
+    prn_show.add_argument("--verbose", action="store_true", help="Say where each figure comes from.")
+    prn_show.set_defaults(func=cmd_retention_show)
+
+    prn_adopt = sub_retention.add_parser("adopt", help="Take the suggestions into this vault as the terms that apply.")
+    prn_adopt.add_argument("--vault", default=None)
+    prn_adopt.add_argument("--force", action="store_true", help="Replace terms already in force.")
+    prn_adopt.add_argument("--agent", default="")
+    prn_adopt.set_defaults(func=cmd_retention_adopt)
+
+    p_routing = sub.add_parser("routing", help="What incoming material is and where it goes, as a table the user owns.")
+    sub_routing = p_routing.add_subparsers(dest="routing_cmd", required=True)
+
+    prt_show = sub_routing.add_parser("show", help="Print the rules, and say where they are silent.")
+    prt_show.add_argument("--vault", default=None)
+    prt_show.set_defaults(func=cmd_routing_show)
+
+    prt_set = sub_routing.add_parser("set", help="Write one rule about a sort of material.")
+    prt_set.add_argument("name", help="What this sort of thing is, in the user's words, e.g. `nightly backup report`.")
+    prt_set.add_argument("to", help="Where it goes: a folder, a bundle slug, or `ask`.")
+    prt_set.add_argument("--vault", default=None)
+    prt_set.add_argument("--when-text", dest="when_text", nargs="+", metavar="WORD",
+                         help="Words that appear in the content. All of them have to be there.")
+    prt_set.add_argument("--when-name", dest="when_name", metavar="PATTERN",
+                         help="A pattern the file name matches, e.g. `backuplog*`. Only where the "
+                              "name is genuinely part of what the thing is.")
+    prt_set.add_argument("--about", help="What this sort of material is, for whoever reads the rule later.")
+    prt_set.add_argument("--do", dest="do", help="What to do with it, in the user's own words.")
+    prt_set.add_argument("--ask", type=lambda v: v.lower() in ("1", "true", "yes", "ja"),
+                         help="Whether to ask before acting on it. Omit to leave unchanged.")
+    prt_set.add_argument("--agent", default="")
+    prt_set.set_defaults(func=cmd_routing_set)
+
     p_work = sub.add_parser("work", help="Work objects: one row plus one page per piece of work, on the machine's own side.")
     sub_work = p_work.add_subparsers(dest="work_cmd", required=True)
 
@@ -13208,26 +15691,30 @@ def main(argv: list[str]) -> int:
     pw_open.add_argument("--due", help="YYYY-MM-DD, only where the work has a real deadline.")
     pw_open.set_defaults(func=cmd_work_open)
 
-    pw_ask = sub_work.add_parser("ask", help="Record a question only the user can answer; marks the object as waiting.")
-    pw_ask.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
-    pw_ask.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
-    pw_ask.add_argument("--id", help="Full id or its first characters.")
-    pw_ask.add_argument("--question", required=True)
+    # One subject, one vault flag, one agent flag, on every subcommand that takes an id. They used to
+    # be written out per parser and drifted: `log` took `--agent`, `ask` did not, and a run that had
+    # just used it on one spent a turn being refused on the other. Every refusal costs the whole
+    # context again, so four wrong guesses in a row cost more than the work they were guessing at.
+    def gemeinsam(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        parser.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
+        parser.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+        parser.add_argument("--id", help="Full id or its first characters.")
+        parser.add_argument("--agent", help="Who is doing it. Recorded on the log line.")
+        return parser
+
+    pw_ask = gemeinsam(sub_work.add_parser("ask", help="Record a question only the user can answer; marks the object as waiting."))
+    # `--text` and `--note` are here as aliases for exactly one reason: they were guessed, in that
+    # order, by a run that knew the subcommand and not its flag. A synonym costs one line; the guess
+    # costs a turn.
+    pw_ask.add_argument("--question", "--text", "--note", dest="question", required=True)
     pw_ask.set_defaults(func=cmd_work_ask)
 
-    pw_answer = sub_work.add_parser("answer", help="Record the user's answer and put the object back to open.")
-    pw_answer.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
-    pw_answer.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
-    pw_answer.add_argument("--id")
-    pw_answer.add_argument("--answer", required=True)
+    pw_answer = gemeinsam(sub_work.add_parser("answer", help="Record the user's answer and put the object back to open."))
+    pw_answer.add_argument("--answer", "--text", "--note", dest="answer", required=True)
     pw_answer.set_defaults(func=cmd_work_answer)
 
-    pw_log = sub_work.add_parser("log", help="Append one line to the object's log and add up its cost.")
-    pw_log.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
-    pw_log.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
-    pw_log.add_argument("--id")
-    pw_log.add_argument("--note", required=True)
-    pw_log.add_argument("--agent")
+    pw_log = gemeinsam(sub_work.add_parser("log", help="Append one line to the object's log and add up its cost."))
+    pw_log.add_argument("--note", "--text", "--message", dest="note", required=True)
     pw_log.add_argument("--tokens", type=int)
     pw_log.add_argument("--minutes", type=int)
     pw_log.add_argument("--workshop")
@@ -13235,11 +15722,7 @@ def main(argv: list[str]) -> int:
     pw_log.add_argument("--due", help="Set or move the deadline, YYYY-MM-DD.")
     pw_log.set_defaults(func=cmd_work_log)
 
-    pw_done = sub_work.add_parser("done", help="Close a work object.")
-    pw_done.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
-    pw_done.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
-    pw_done.add_argument("--id")
-    pw_done.add_argument("--agent")
+    pw_done = gemeinsam(sub_work.add_parser("done", help="Close a work object."))
     pw_done.set_defaults(func=cmd_work_done)
 
     pw_list = sub_work.add_parser("list", help="What is open and what is waiting on the user.")
@@ -13247,10 +15730,7 @@ def main(argv: list[str]) -> int:
     pw_list.add_argument("--state", help="Filter: open, 'waiting on you', done.")
     pw_list.set_defaults(func=cmd_work_list)
 
-    pw_show = sub_work.add_parser("show", help="Print one work object: its row and its page.")
-    pw_show.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
-    pw_show.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
-    pw_show.add_argument("--id")
+    pw_show = gemeinsam(sub_work.add_parser("show", help="Print one work object: its row and its page."))
     pw_show.set_defaults(func=cmd_work_show)
 
     p_prose = sub.add_parser("prose", help="Check draft prose before it is written, so the write is not later refused by the prose-guard hook.")
@@ -13281,6 +15761,9 @@ def main(argv: list[str]) -> int:
     pt_add.add_argument("--text", required=True, help="The task in the user's own words.")
     pt_add.add_argument("--file", help="Which list it goes on. Default: today's journal entry.")
     pt_add.add_argument("--due", help="YYYY-MM-DD, only where there is a real deadline.")
+    pt_add.add_argument("--see", help="Where the detail lives: a bundle or note slug, written into "
+                                      "the line as a wikilink. This is how a task stays one line "
+                                      "without losing what somebody needs to do it.")
     pt_add.add_argument("--agent", help="Name for the activity-log line.")
     pt_add.set_defaults(func=cmd_task_add)
 
@@ -13486,18 +15969,36 @@ def main(argv: list[str]) -> int:
     pj_rollup.set_defaults(func=cmd_journal_rollup)
 
     # file -----
+    def _add_drop_area_args(parser: argparse.ArgumentParser) -> None:
+        """The two ways a file may leave the drop area. Only checked for files that came from it."""
+        parser.add_argument("--filed-to", dest="filed_to",
+                            help=f"Where in the vault this file's content ended up. Required for "
+                                 f"anything coming out of {IMPORT_DIR}/.")
+        parser.add_argument("--user-said", dest="user_said",
+                            help="The user's own words saying it can go without being filed.")
+
     p_file = sub.add_parser("file", help="File moves into system folders.")
     sub_file = p_file.add_subparsers(dest="subcmd", required=True)
 
     pf_trash = sub_file.add_parser("trash", help=f"Move a file to {TRASH_DIR}/, keeping its path. Undo with `file restore`.")
     pf_trash.add_argument("vault", nargs="?", default=".")
     pf_trash.add_argument("--path", required=True)
+    _add_drop_area_args(pf_trash)
     pf_trash.set_defaults(func=cmd_trash_file)
 
     pf_archive = sub_file.add_parser("archive", help=f"Move a file to {ARCHIVE_DIR}/, keeping its path. Undo with `file restore`.")
     pf_archive.add_argument("vault", nargs="?", default=".")
     pf_archive.add_argument("--path", required=True)
     pf_archive.set_defaults(func=cmd_archive_file)
+
+    pf_status = sub_file.add_parser("status", help="Read or set a file's `status:`, the field that says whether it still stands.")
+    pf_status.add_argument("vault", nargs="?", default=".")
+    pf_status.add_argument("--path", required=True)
+    pf_status.add_argument("--set", dest="set", choices=list(STATUS_VALUES),
+                           help="Omit to read the current value. " +
+                                "; ".join(f"{k}: {v}" for k, v in STATUS_LIFECYCLE.items()))
+    pf_status.add_argument("--agent", default="")
+    pf_status.set_defaults(func=cmd_file_status)
 
     pf_restore = sub_file.add_parser("restore", help=f"Put a file from {TRASH_DIR}/ or {ARCHIVE_DIR}/ back where it came from.")
     pf_restore.add_argument("vault", nargs="?", default=".")
@@ -13665,6 +16166,9 @@ def main(argv: list[str]) -> int:
     ph_delete = sub_hook.add_parser("delete-guard", help="PreToolUse Bash. Refuses any command that removes something; discarding goes through `file trash`.")
     ph_delete.set_defaults(func=cmd_hook_delete_guard)
 
+    ph_park = sub_hook.add_parser("park-guard", help="PreToolUse Bash. Refuses a wait loop inside a background run, which can only wait where nobody is looking.")
+    ph_park.set_defaults(func=cmd_hook_park_guard)
+
     ph_libcheck = sub_hook.add_parser("library-check-guard", help="PreToolUse Bash. Refuses to save a .pptx into a doing/<slug>/ bundle until `slide-library.py check` has run for that slug.")
     ph_libcheck.set_defaults(func=cmd_hook_library_check_guard)
 
@@ -13680,6 +16184,17 @@ def main(argv: list[str]) -> int:
     pl_create.add_argument("--name", required=True, help="Display name for the starter.")
     pl_create.add_argument("--terminal", required=True, help="A terminal id from 'launcher detect-terminals'.")
     pl_create.set_defaults(func=cmd_launcher_create)
+
+    # A hook this version does not have is not an error, it is a hook that has nothing to guard.
+    # Checked before argparse, because argparse exits 2 on an unknown sub-command and the host reads
+    # exit 2 as "block this tool call". That is how a vault locked itself out completely: an update
+    # left a settings.json naming `park-guard` beside a script that predated it, every Bash call was
+    # refused including the one that would have finished the update, and the only way out was the
+    # user typing a command themselves. Silence is the only safe answer here: a guard that is not
+    # installed must not be able to stop the machine that would install it.
+    if len(argv) > 2 and argv[1] == "hook":
+        if argv[2] not in sub_hook.choices and not argv[2].startswith("-"):
+            return 0
 
     args = parser.parse_args(argv[1:])
     if getattr(args, "cmd", None) == "hook":
