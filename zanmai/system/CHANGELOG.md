@@ -3,6 +3,16 @@
 All notable changes to Zanmai. Versions follow semver; the 0.x series is pre-stable, so a folder
 name or a command can still change between versions.
 
+## [0.5.1] - 2026-08-30
+
+- Added `records rename` and `records move`: a kept document or a whole section gets a better name or a new place, and the search index follows
+- Added `--scope` to `records survey`, so it reports the folder that was just read in instead of the whole archive
+- Fixed `records file --area health/x-rays` collapsing a section inside a section into one folder
+- Fixed `bundle index-entry` refusing to write the line for a member that had none, which left a hand-edit of the index as the only way
+- Added `--truth` to `bundle create`, so a sub-bundle with a theme of its own gets its main file in the same call
+- Fixed the line describing a bundle's main file staying English in an index whose headings were translated
+- Added the resolution of `zanmai.py <subcommand>` to the session briefing, so a run does not look for a file that is not at the vault root
+
 ## [0.5.0] - 2026-08-29
 
 - Added `records/`, a root of its own for what has to be kept, with a term on each piece and no sweep that reaches it
