@@ -2,7 +2,9 @@
 
 # Speaking instead of typing
 
-Record a voice note, drop it in `import/`, and it gets read. A thought on the way to the car, a journal entry at the end of the day, an instruction you would rather say than type. The folder is created for you the first time.
+**Read this when:** something was spoken instead of typed.
+
+Record a voice note, drop it in `inbox/`, and it gets read. A thought on the way to the car, a journal entry at the end of the day, an instruction you would rather say than type. The folder is created for you the first time.
 
 ## How it goes
 
@@ -18,9 +20,9 @@ Several notes recorded in a row are read together and in order, because the thir
 
 The hard part of speech to text is never the ordinary words. It is the names, and the names are what the note is about. A general transcriber has never heard of the people you work with.
 
-Reading it is what makes it right, and that is the normal path. A word that is nearly a name is that name, the way a typo resolves: the sentence says what it must be. Most names in the world are known anyway, the vault supplies the ones only you have, and a subject too new for either is worth one quick look on the web. **How a name is written is settled here too**, because a recogniser applies its own capitalisation and cannot be talked out of it: a company always spelled in lower case comes back capitalised no matter what, and the vault's own spelling wins.
+Reading it is what makes it right, and that is the normal path. A word that is nearly a name is that name, the way a typo resolves: the sentence says what it must be. Most names in the world are known anyway, the space supplies the ones only you have, and a subject too new for either is worth one quick look on the web. **How a name is written is settled here too**, because a recogniser applies its own capitalisation and cannot be talked out of it: a company always spelled in lower case comes back capitalised no matter what, and the space's own spelling wins.
 
-**When a name will not come out, the vault's own list of names goes to the recogniser and the recording is read again.** That is the one step that hears the audio a second time, which is why it is the one that can recover a name that was misheard rather than mistyped. It is a second attempt, not the standard route: measured on a German note where five names were spoken in full, none came back right without the list and all five with it, while across ten minutes of a real meeting it changed nothing at all, because what people say in a room is first names and a recogniser knows those.
+**When a name will not come out, the space's own list of names goes to the recogniser and the recording is read again.** That is the one step that hears the audio a second time, which is why it is the one that can recover a name that was misheard rather than mistyped. It is a second attempt rather than the standard route, and it earns its cost only where full names were spoken: in a conversation between people who know each other, what gets said is first names, and a recogniser already knows those.
 
 **Corrections are written down, not read out.** Putting a mangled word right is the job, and a list of every fix would only give you something to check. What each change was, and on what grounds, goes into the run's log, so you can look if a note ever seems off. The one correction you do hear about is the one that would change what you meant, and that comes as a question before anything is changed. "Vertrag" and "Vortrag" are one letter apart.
 
@@ -28,13 +30,13 @@ Filler and false starts stay in a journal entry. That is how people talk, and ed
 
 ## Where a note ends up
 
-Depending on what it turns out to be: a journal entry goes into the note for the day you spoke it, not the day it happens to be read, an instruction is carried out the way it would be if you had typed it, an idea goes to the theme it belongs to, and something about work already running goes onto that work. One note can be more than one of these, and gets split.
+Depending on what it turns out to be: a journal entry goes into the note for the day you spoke it, not the day it happens to be read, an instruction is carried out the way it would be if you had typed it, an idea goes to the bundle it belongs to, and something about work already running goes onto that work. One note can be more than one of these, and gets split.
 
 **The recording itself is kept**, in the day you spoke it, beside whatever came out of it. It moves out of the import folder so it cannot be read twice, and it is not deleted: it is yours, a transcript is a reading of it, and keeping the original next to the reading is what makes a garbled word repairable years later.
 
 ## Letting it run while you are away
 
-Zanmai does not set up a schedule for you; you decide when it should run, with whatever your computer already uses for that (`launchd` or `cron` on a Mac, Task Scheduler on Windows). What it needs to run is one line, from the vault folder:
+Zanmai does not set up a schedule for you; you decide when it should run, with whatever your computer already uses for that (`launchd` or `cron` on a Mac, Task Scheduler on Windows). What it needs to run is one line, from the space folder:
 
 ```
 claude -p "/zanmai-voice nobody is at the keyboard, this is a scheduled run" --permission-mode dontAsk
@@ -50,9 +52,9 @@ Three things, and Zanmai tells you which are missing rather than guessing:
 - **whisper-cli**, the recogniser itself.
 - **A model file**, about 1.6 GB, fetched once. Nothing transcribes without it.
 
-Zanmai fetches the model itself when you say go. It lives in the machine-local part of the vault, so it never travels in a backup.
+Zanmai fetches the model itself when you say go. It lives in the machine-local part of the space, so it never travels in a backup.
 
-**Nothing is uploaded.** A spoken journal entry is the most private thing in the vault, so it is transcribed on this machine, with no account and no service. It also means it works on a train.
+**Nothing is uploaded.** A spoken journal entry is the most private thing in the space, so it is transcribed on this machine, with no account and no service. It also means it works on a train.
 
 ## Asking again
 
@@ -60,6 +62,6 @@ Zanmai fetches the model itself when you say go. It lives in the machine-local p
 
 ## Related
 
-- [Daily, weekly and monthly notes](daily-capture.md), where a spoken journal entry lands
+- [The journal](daily-capture.md), where a spoken journal entry lands
 - [Work that outlives one sitting](work.md), how a question about a note reaches you
 - [Backup and synced folders](backup.md), why the model file stays out of the copy

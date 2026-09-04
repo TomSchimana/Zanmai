@@ -2,31 +2,37 @@
 
 # Finding things again
 
-How Zanmai answers a question about your own material, and why it does not quietly go to the internet.
+**Read this when:** something in the space has to be found again and the name is not known.
 
-## Four layers, in order
+A question about your own material is answered from your space. Which tool answers it depends on what you asked, and Zanmai does not go to the internet unless you say so.
 
-A question about something you kept walks four layers and stops at the first one that answers it.
+## Two questions, two tools
 
-1. **The vault index.** A map of your material, rebuilt at session start whenever something changed. It knows themes, bundles, contacts and how they relate, so a question can be answered without reading every file.
-3. **Direct search** across your notes, for the case where wording matters more than structure.
-4. **The internet**, and only when you explicitly asked for research.
+**"Where is the thing about X, and what hangs off it?"** The index answers that. It is a map of your material, rebuilt at session start whenever something changed, and it knows bundles, contacts and how they relate, so the answer comes without reading every file.
 
-That last step is the important one. Zanmai does not slide from "nothing in the vault" into a web search. If your material does not answer the question, you are told that in one line and asked, rather than handed something from the internet dressed up as your own note.
+**"Where does this word appear?"** An ordinary text search answers that, and it is the faster of the two. It is the right one whenever the wording matters more than the structure.
+
+Neither of them goes to the internet. If your material does not answer the question, you are told that in one line and asked, rather than handed something from the web dressed up as your own note.
+
+## Why a plain search used to come back empty
+
+Your space is a git repository, which is how updates reach it. So that your own material never gets committed into it, every one of your areas is named in that repository's ignore rules. Search tools read those same rules, and that is why a search of your own notes could report nothing while looking exactly like a search that had worked.
+
+A file named `.ignore` at the top of your space settles it. Search tools read it ahead of the git rules, it puts your areas back in, and it keeps out what a search should never wade through: the snapshots, which hold every earlier version of every file, the trash, and the generated index files. Zanmai rewrites it at every session start, so it cannot fall behind a folder that was renamed. Rules of your own belong in `.rgignore`, which is read ahead of it.
 
 ## Why an index at all
 
-Search alone finds words. The index also knows structure: that a file belongs to a theme, that a person appears in several places, that two bundles cover related ground. That is what makes "what did I decide about that supplier last spring" answerable, and what lets an import land next to material it belongs with instead of creating a duplicate theme.
+Search alone finds words. The index also knows structure: that a file belongs to a bundle, that a person appears in several places, that two bundles cover related ground. That is what makes "what did I decide about that supplier last spring" answerable, and what lets an import land next to material it belongs with instead of creating a duplicate bundle.
 
-It also keeps itself honest. Every write into a bundle updates the theme's own index and the activity log, and a check flags omissions rather than letting them accumulate. That is why the map stays usable as the vault grows instead of decaying.
+It also keeps itself honest. Every write into a bundle updates the bundle's own index and the activity log, and a check flags omissions rather than letting them accumulate. That is why the map stays usable as the space grows instead of decaying.
 
 ## The overviews it keeps for you
 
 Two things are written and maintained without you asking.
 
-Every theme folder holds an index note: a line saying what the theme is for, then one link per file in it with a one-line summary of what that file is. So opening a theme tells you what is inside before you open anything, and the links work in any editor.
+Every bundle folder holds an index note: a line saying what the bundle is for, then one link per file in it with a one-line summary of what that file is. So opening a bundle tells you what is inside before you open anything, and the links work in any editor.
 
-At the vault root sits a master index over all themes and contacts, regenerated from what actually exists rather than patched, so it cannot quietly drift out of step with the folders.
+At the space root sits a master index over all bundles and contacts, regenerated from what actually exists rather than patched, so it cannot quietly drift out of step with the folders.
 
 The point is that they stay current. An overview kept by hand decays: the fifth file lands, the list does not get updated, and from then on it lies about what is in there. Here the update happens in the same operation that writes the file, and a check flags anything written without its entry. So the overview is worth trusting, which is the only thing that makes an overview useful.
 

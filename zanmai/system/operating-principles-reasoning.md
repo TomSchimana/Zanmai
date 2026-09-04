@@ -4,30 +4,21 @@
 
 This is the rationale layer for `zanmai/system/operating-principles.md` (the principle layer). Use this doc when the user asks why something works the way it does.
 
-> The pages below use Zanmai's own vocabulary. If a word is new, [how the vault is organised](folder-architecture.md) defines them: theme and bundle, the note that carries a theme, the fields at the top of a note, links between notes, and slugs.
+> The pages below use Zanmai's own vocabulary. If a word is new, [how the space is organised](folder-architecture.md) defines them: space, area and bundle, the note that carries a bundle's matter, the fields at the top of a note, links between notes, and slugs.
 
 ## The principles at a glance
 
-The principle layer currently lists ten numbered principles.
-
-1. **Approval before write, at the size of the operation.** A run that builds a bundle, rewrites a user body or moves material between bundles gets the four-part TL;DR in chat (structure tree, axis decision, counts, notable items); anything landing in an existing bundle gets twelve lines at most. Wait for approval, then execute.
-2. **Source files are sacred.** Body verbatim, on import and on every later edit; frontmatter migrates.
-3. **Skills and contracts carry their own discipline, and a brief cannot lift it.** Rules live in the skill file because that file is in context at invocation, and an instruction that runs against them is not carried out.
-4. **Mechanic over memory.** Critical rules become scripts or hooks, not prose.
-5. **Index and log everything written.** INDEX append plus activity-log append on every bundle write.
-6. **Daily, Weekly and Monthly Notes.** Read freely, write only on the user's direct instruction.
-7. **User-facing surfaces stay user-facing.** Distribution stays English, user-facing replies follow the user's language and address them personally rather than distantly, mechanics terminology does not leak.
-8. **Checkboxes are the user's.** Every markdown task, in every file, belongs to whoever owns the vault. The AI reads them and answers from them, and writes, ticks and deletes none. No exception, and a hook enforces it rather than a contract asking for it.
-9. **Tools-existence is not usage-intent.** For ambiguous tool detection, ask once and persist the user's intent flag.
-10. **Only tools that are present and agreed.** A missing capability is named with the one step that enables it, and the job stops there. No substitute assembled from whatever happens to be installed.
-
-Principles 1 to 4 are the original foundation, each written after a concrete failure. Principles 5 to 10 layer on top: 5 covers index hygiene, 6 note-edit semantics, 7 language and surface boundaries, 8 task-marker conventions, 9 tool-detection semantics, 10 what happens when a tool is absent.
+They are not listed again here. A second list of the same thing goes stale the day the first one
+changes, and this one had done exactly that: it still counted ten numbered principles after the
+principle layer had moved to named ones and grown to fourteen. Read them at the source,
+`zanmai/system/operating-principles.md`, where each carries its name as a heading (`approval`,
+`parking`, `route`). This page answers why they exist, one section per principle.
 
 ## Why each principle exists
 
 ### Approval before write, at the size of the operation
 
-LLM agents routinely lose work when they start writing before confirming intent. An unprompted bulk write can wipe carefully-built user content with no rollback path. The approval text returned in chat forces an explicit user yes before any destructive operation. The trade-off vs the older plan-file-in-vault approach: less ceremony, no file in the vault to read, but the proposal lives in the chat buffer rather than markdown. The audit trail after execute is the operation report under `zanmai/logs/`, which is persistent regardless of chat compaction.
+LLM agents routinely lose work when they start writing before confirming intent. An unprompted bulk write can wipe carefully-built user content with no rollback path. The approval text returned in chat forces an explicit user yes before any destructive operation. The trade-off vs the older plan-file-in-space approach: less ceremony, no file in the space to read, but the proposal lives in the chat buffer rather than markdown. The audit trail after execute is the operation report under `zanmai/logs/`, which is persistent regardless of chat compaction.
 
 The gate has two sizes because one size failed in practice. The four parts were written for an import of dozens of files into a new structure, and they were applied unchanged to four files going into a bundle the user had built the day before: a tree with two branches, an axis decision that decided nothing, and a full source evaluation tipped into the chat, so approving something small cost minutes of reading. A gate that expensive teaches the user to skim it, which is exactly what it exists to prevent. The test between the two sizes is mechanical (does the run create a bundle, rewrite a user body, move material between bundles) rather than a judgement about what feels big, and it sits in the format spec itself because Steve relays an expert's text verbatim and cannot shorten it downstream.
 
@@ -63,11 +54,11 @@ When a rule keeps failing despite being written down, it is a signal to move it 
 
 ### Index and log everything written
 
-Two things must happen on every bundle write to keep the vault navigable across sessions. The bundle's `INDEX.md` gets a wikilink to the new file. `zanmai/memory/activity-log.md` gets a one-line append. Without the INDEX, files become unreachable from the bundle truth file. Without the activity log, cross-session memory of what happened is lost.
+Two things must happen on every bundle write to keep the space navigable across sessions. The bundle's `INDEX.md` gets a wikilink to the new file. `zanmai/memory/activity-log.md` gets a one-line append. Without the INDEX, files become unreachable from the bundle truth file. Without the activity log, cross-session memory of what happened is lost.
 
-### Daily, Weekly and Monthly Notes
+### The journal
 
-These are the user's writing space. Operations live in the `journal` skill, which routes every change through `zanmai.py journal`. The AI reads daily and weekly entries for context but never writes without an explicit per-edit yes. The privacy boundary is firm. Content does not graduate to `zanmai/memory/general.md` or agent lessons unless the user explicitly says so.
+One entry per day, named by its date, under its year. It is the user's writing space. Operations live in the `journal` skill, which routes every change through `zanmai.py journal`. The AI reads entries for context but never writes without an explicit per-edit yes. The privacy boundary is firm. Content does not graduate to `zanmai/memory/general.md` or agent lessons unless the user explicitly says so.
 
 ### User-facing surfaces stay user-facing
 
@@ -75,7 +66,7 @@ The distribution ships in English (skill files, contracts, hooks, scripts). User
 
 ### Checkboxes are the user's
 
-`- [ ]` and `- [x]` are Markdown standard, editor-neutral, and they belong to whoever owns the vault. The AI reads them and answers from them. It writes none, ticks none, deletes none, restyles none.
+`- [ ]` and `- [x]` are Markdown standard, editor-neutral, and they belong to whoever owns the space. The AI reads them and answers from them. It writes none, ticks none, deletes none, restyles none.
 
 **Why there is no exception.** An earlier version allowed one when the user "asked for a list to tick through". That reads reasonable and cannot be enforced: whether a request counts as that is a judgement, and the write is exactly the moment at which nobody can check the judgement before it lands. A rule with an edge is a rule that gets talked past.
 
@@ -83,9 +74,33 @@ The distribution ships in English (skill files, contracts, hooks, scripts). User
 
 Nothing is lost. An obligation the AI works out from a source is said in the reply: advising is the job, entering is the user's call. What the AI itself still owes goes on a work object, which is its own list and needs no checkbox in anybody's file.
 
+### An open point parks the run where someone can wake it
+
+A run that hits something only the user can settle used to do one of two things, and both cost work. It guessed, which is how a wrong answer gets written into a file and found three days later. Or it gave up and returned, which threw away the context it had spent minutes building, so the next run rebuilt it from nothing. Parking keeps the run alive in its own context and lets the answer reach it.
+
+The order matters and is the part that failed in practice. Report first, then park: a run that parks before reporting leaves whoever dispatched it with nothing to act on, and if the wait then dies the work is gone. And a background run does not park at all, it writes the point down and returns, because nobody can see it waiting. That distinction exists because a background expert once waited out its full hour against a user who was never asked.
+
+### A piece of work is an object, and that object owns the work
+
+Chat is not storage. A question asked in a session that is then compacted is gone, and so is the answer to it. The work object is the place where a piece of work outlives the conversation that started it: what it is, who is on it, what waits on the user, what they decided and when.
+
+The trigger is the dispatch, not a judgement about size, because judging size is exactly where it broke. Small pieces got no object, then turned out to have an open question in them, and the question lived only in a chat buffer. A run with nobody in the chat gets one for the same reason: there, the object is the only place a result can land.
+
+### The route is chosen for the question, not for the role
+
+Reading everything and reading nothing are both failures, and an expert left to decide will pick one of them by temperament. A survey by script settles the cheap part: dates, amounts, parties, one line per file at a sixteenth of the text. What is left is a real decision about which files still have to be opened, and naming those in the return is what makes the decision reviewable instead of invisible.
+
+The same logic runs through sampling and through self-checking loops. A sample that is not declared is indistinguishable from a full pass that was never done, so the sample is always named. A loop runs two rounds because a third almost never changes anything, and what two rounds could not fix is either the user's judgement or outside the loop's sight: both belong in the return rather than in another round.
+
+### A result is handed back, not opened
+
+Opening a file on the user's screen is a small thing that takes the screen away from them, and the run doing it has no way of knowing whether that moment was a good one. So the run returns the path and what it is, and opening belongs to whoever is in the conversation, on a yes.
+
+The second half is the part that carries weight: the run looks at what it made before handing it over, reading the rendered file rather than its own report of it, because a report of a file is written from intent and the file is what exists. A fault that can be repaired is repaired first. One that cannot goes back as a question before the piece is shown, never as a note attached to showing it, because a caveat next to a finished-looking result gets read as polish rather than as a problem.
+
 ### Tools-existence is not usage-intent
 
-Detecting that a tool is installed does not mean the user wants it active for this vault. Setup distinguishes binary-on-disk from intended-for-this-vault by asking once when the signal is ambiguous, and persisting the answer as a flag in `zanmai/user.md`. Subsequent runs read the flag, not the binary.
+Detecting that a tool is installed does not mean the user wants it active for this space. Setup distinguishes binary-on-disk from intended-for-this-space by asking once when the signal is ambiguous, and persisting the answer as a flag in `zanmai/user.md`. Subsequent runs read the flag, not the binary.
 
 ### Only tools that are present and agreed
 

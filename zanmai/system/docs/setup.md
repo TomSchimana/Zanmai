@@ -2,100 +2,57 @@
 
 # Setup
 
-## What setup is
+**Read this when:** a space is set up for the first time, or an update added questions it never answered.
 
-The one conversation that happens when you open a fresh vault for the first time. It asks a handful of things, looks at what your machine has, and lays out the folders. After that it never runs again.
+Setup is one conversation the first time you open a fresh space. You say hello, and it asks what it needs to know, lays out the space with the areas you name, and settles what has to be on the machine for the things you want to do. It runs once.
 
-Underneath, the conversation collects the answers and one command writes them out. When it is done, close the session and open a new one: the guards Zanmai installs only take effect when a session starts.
+## What it asks
 
-Setup asks five things.
+**Who you are.** How you want to be addressed, your name, your language, and an email if you want one on file. The name matters because you are a contact in your own space like everybody else, and because everything after this is written to you rather than to a user.
 
-1. Preferred address (how Steve addresses the user in every reply, a nickname or short form, when the user does not want to be addressed by the real first name). Stored as `preferred_address` in `zanmai/user.md` and as `nickname` on the owner-contact. Empty if equal to the first name.
-2. First name (the real first name, for the owner-contact slug and any place the system needs full identity).
-3. Last name (for slug uniqueness, the first name alone collides with the next contact carrying the same first name).
-4. Email (optional, can be skipped, goes into the owner-contact, also useful for filing material addressed to the user).
-5. Language preference (`de`, `en`, etc., confirms the auto-detection from the conversation).
+**What the space is for.** Private life, work, one particular project, or all of it in one place. "Not sure yet" is a real answer. This is not a label for its own sake: it decides what the next question suggests.
 
-The split between preferred address and first name exists because many people prefer a nickname or short form over their full name. The same split applies to other contacts the user later files. Nicknames are a normal contact attribute, not a special case.
+**How it should be laid out.** You see the eight areas and one plain example of what lands where, then you name the broad areas you already have, and the projects or goals you are on. Each name becomes an empty bundle: something with an end goes to the desk, something that runs on goes to `life`. Nothing is created that you did not name.
 
-That is the entire dialogue. Setup does not ask birthday, address, organisation, role, phone or website. Those are optional profile fields the user adds when they mention them or when a concrete trigger appears (a booking needs a phone number, a contact links to an organisation). Setup writes a single-line reminder into `zanmai/memory/general.md` under "Open threads" so the option stays present across sessions without a user-visible task list.
+**What it should be able to do.** A short table of what the specialists can do and which of those need a program on your machine. You say what you already know you will want, and exactly those are offered, by name and size, before anything is fetched. Skipping is free: a missing program is fetched at the moment a job first needs it.
 
-## Why
+That table is not the limit, and the last thing setup says is why: where something you need is not on it, say so and it gets built for your case.
 
-Four mandatory questions, not more, because:
+## What happens after
 
-- Slug uniqueness needs first plus last name. A first-name-only slug collides the first time the user files another contact with the same first name. Zanmai enforces unique slugs per folder.
-- Email is the only piece of structured data setup needs upfront. It is the most common identifier and the most awkward to dig out of a separate dialog later. Still optional, the user can skip and add it later by mentioning it.
-- Language is asked explicitly even though Steve auto-detects. The auto-detection looks at how the user writes. Setup-time detection might mis-call if the user's first message is short. Asking once removes ambiguity.
-- All other fields stay out of the setup dialogue: birthday, address, organisation, role, phone, website. Adding them would balloon first install. Instead, the AI carries a one-line reminder in `zanmai/memory/general.md` Open Threads, the option is not forgotten across sessions, but the user is not nagged from a task list. The user mentions the value when it matters; the AI adds it to the owner-contact frontmatter at that moment.
+Close the session and open a new one. That is when the guards take effect, and until then the space is running without them.
 
-Why not zero questions and full automation? Because Steve needs to address the user by name from the first reply, and that name has to be persistent across sessions. Asking once is cleaner than guessing.
+The last question is optional and easy to say no to: a double-clickable icon that opens this space, so getting in never means finding a folder and typing a command. You can ask for it any time later.
 
-## What is checked before you are asked anything
+Three habits are worth the sentence they take:
 
-Before the first question, Zanmai looks for one thing on your machine: Python. Nothing else has to be installed, no editor and no companion app, because the vault is plain files and Zanmai brings its own folders, journal and trash.
+- **Starting is just saying hello.** The space reads its own state and tells you what is waiting.
+- **Ending is one command**, `/zanmai-close-session`, which writes the hand-off the next session starts from.
+- **Things go into `inbox/`** in whatever state they arrive, rather than being filed by hand.
 
-Python interpreter: it tries `python3`, `python`, `py -3`. The first invocation that reports a Python 3.x version wins and gets remembered as `python_cmd` in `zanmai/user.md`, and the hook commands in `.claude/settings.json` use that invocation. If none works, setup stops with a clear install hint for macOS, Linux or Windows. Nothing has been written at that point; you install Python and re-run setup.
+Everything else you learn when it comes up, by asking.
 
-Then the dialogue starts.
+## What has to be there before it starts
 
-## How to use
+One thing: Python 3.10 or newer. Zanmai looks for it before the first question, remembers which one it found, and stops with a plain instruction if there is none. Nothing has been written at that point, so you install it and start again.
 
-The user invokes setup through Steve when `zanmai/user.md` is missing, or asks for an initial install in their writing language. Steve checks whether `zanmai/user.md` exists. If no, the `setup` skill triggers. The skill runs the environment cascade above, then asks the five questions one at a time, then calls the script:
+No editor, no companion app, nothing else. [Requirements and installation](install/index.md) has the command per system.
 
-```
-<python_cmd> zanmai/system/scripts/zanmai.py setup init. --first-name "<first>" --last-name "<last>" --language "<lang>" --python-cmd "<python_cmd>" [--email "<email>"] [--preferred-address "<nickname>"]
-```
+## When a later version asks something new
 
-The script creates the folder skeleton, writes `zanmai/user.md`, creates the owner-contact under `contacts/people/<slug>.md`, writes `INDEX.md` at the vault root, generates `.claude/settings.json` with `autoMemoryEnabled: false` and the hooks wired, and writes `.claude/settings.local.json` with the Bash allow-rules. The first snapshot is taken automatically.
+Setup grows. A space set up months ago has answered fewer questions than one set up today, and there has to be a way to close that gap without reinstalling.
 
-Then Claude Code restart. The user closes the current session and re-opens the vault. From the next session on, the hooks are active and auto-memory is off.
+So a session opens with the missing questions and only those. What already stands in your profile and what already sits in your areas is read first, so nothing you have answered or built is asked about again, and the question does not come back afterwards, whether you answered it or said "not now".
 
-## When not to use
+## When it does not run
 
-Setup runs once. Re-running with an existing `zanmai/user.md` is refused. The hint points to `update` (when implemented) or to editing `zanmai/user.md` directly.
+Setup refuses to run a second time on a space that is already set up. If you want to change your name or your language afterwards, that is an edit to your profile rather than another setup.
 
-If the user wants to change their name or language after setup, the path for now is a direct edit of `zanmai/user.md` plus a manual rename of the owner-contact file. A `zanmai.py setup update` subcommand that does per-field edits is a future addition.
+## Related
 
-## Launcher icon
-
-The last step of setup offers a double-clickable starter: an icon that opens a terminal already in the
-vault folder and running Claude, so a person who did not set the vault up themselves never has to find
-the folder or type a command by hand. It is a yes-or-no question, not assumed either way.
-
-Saying no here is not final. The same offer is available anytime by asking, in any phrasing, for an
-icon, an app, a launcher or a shortcut. Building it detects what terminal apps are actually installed
-(macOS: Terminal plus a scan for others; Windows: the system default, no choice offered there) and asks
-what to call it, defaulting to the vault folder's own name rather than a fixed product name, so two
-vaults on one machine (a private one and a work one, say) get two distinct, correctly named icons.
-
-On macOS this creates an app under `/Applications`, reachable from Spotlight, Launchpad, or the Dock.
-On Windows it creates a shortcut on the Desktop; this path is written against documented behaviour but
-not run on real Windows hardware, the same status as the rest of Zanmai's Windows support.
-
-## Version
-
-`zanmai/system/VERSION` is a plain `key: value` file holding the current Zanmai distribution version:
-
-```
-distribution_version: <version>
-phase: <phase>
-schema_version: <schema version>
-released: <release date>
-```
-
-The user can read it any time via `cat zanmai/system/VERSION` or by asking Steve which version is running. `zanmai/user.md` carries `zanmai_version_installed` and `zanmai_phase_installed` recording what was active at setup. If a future `zanmai.py setup update` runs, the user.md fields stay, the VERSION file moves with the distribution. Drift between the two is the trigger for an update prompt.
-
-## Files
-
-- `zanmai/system/scripts/zanmai.py` (`setup init` subcommand): the single CLI; deterministic state change for first-time install. The first-run migration is an internal function in zanmai.py.
-- `zanmai/system/scripts/zanmai.py` (`launcher detect-terminals`, `launcher create` subcommands): the launcher-icon mechanic, callable independently of setup.
-- `zanmai/system/skills/setup/SKILL.md`: the dialogue.
-- `zanmai/system/skills/create-launcher/SKILL.md`: the launcher-icon dialogue, offered once from setup and reusable anytime.
-- `zanmai/system/VERSION`: distribution version.
-- `zanmai/user.md`: output, the user profile (carries `zanmai_version_installed`).
-- `contacts/people/<slug>.md`: owner-contact, also output.
-- `.claude/settings.json` and `.claude/settings.local.json`: output.
+- [How the space is organised](folder-architecture.md), the areas you see during setup
+- [Tools Zanmai uses](tools.md), what the last block offers to fetch
+- [A working session](sessions.md), what the three habits above look like in practice
 
 ---
 

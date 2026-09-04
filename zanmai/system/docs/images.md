@@ -2,6 +2,8 @@
 
 # Generating images and video
 
+**Read this when:** an image or a short video has to be generated.
+
 Stills, short clips and upscales, made through a service you have connected, and marked so you can publish them.
 
 ## Before anything is rendered
@@ -36,7 +38,7 @@ When the pixels exist, editing them locally costs nothing and involves no model:
 
 ## What you get
 
-Variants are rendered into a scratch area and shown to you first. The one you pick moves to `doing`, or into a design piece, where it sits in that piece's own bundle. The prompt, the references, the model and the parameters travel with the file, so a later variant inherits the right anchors instead of losing them.
+Variants are rendered into a scratch area and shown to you first. The one you pick moves to `workbench`, or into a design piece, where it sits in that piece's own bundle. The prompt, the references, the model and the parameters travel with the file, so a later variant inherits the right anchors instead of losing them.
 
 ## Related
 

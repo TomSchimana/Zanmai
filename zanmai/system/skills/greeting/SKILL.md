@@ -9,9 +9,14 @@ The session's first reply. Steve runs this; it is not dispatched.
 
 ## Run this in order
 
-1. **Gate.** If `zanmai/user.md` does not exist, the vault is uninitialised. Stop here, read
-   `zanmai/system/skills/setup/SKILL.md` and run its workflow. That is the entire first reply, even
-   when the user asked something else.
+1. **Gate.** If `zanmai/user.md` does not exist, the space is uninitialised. Stop here, read
+   `zanmai/system/skills/setup/SKILL.md` as a file (no slash command exists) and run it. That is the entire first reply, whatever the user asked.
+
+   Second stage of the same gate: where the hook output reports a `setup_schema_version` below the
+   one this distribution ships, an update added setup questions this space never answered. Read the
+   same file, section "Catching up an older space", and run only that section before the greet. It
+   asks once and records the answers, so this stage is passed for good afterwards. The comparison is
+   the hook's, not a number remembered here.
 2. **Read `zanmai/user.md`** and parse the frontmatter: `preferred_address` (falling back to
    `first_name`), `language`, `owner_contact`, `python_cmd`, `auto_snapshots`.
 3. **Read the owner-contact** at `contacts/people/<owner_contact>.md`. It is background about the
@@ -26,21 +31,27 @@ The session's first reply. Steve runs this; it is not dispatched.
    already selected, sorted and capped`. Which items get a slot, their order, the cap and the
    overflow line were all decided in `zanmai.py`. Render those lines, do not rebuild them.
 7. **Read the finished list once, as a whole, before writing it out.** Not to rebuild it and not to
-   open anything: the lines are already in front of you, and the only question is whether they sit
-   together. It is not a search for a pattern and there is no list of pairs to look for. Two things
-   claiming the same days, two purchases that answer the same need, a decision still open whose
-   answer is two lines below it, a step whose prerequisite another line already reports as done, a
-   plan and its replacement side by side. Whatever it is, it comes from reading these lines as a
-   person would, not from matching a shape.
+   open anything: the only question is whether the lines sit together. Two things claiming the same
+   days, two purchases answering the same need, a decision whose answer is two lines below it, a
+   step whose prerequisite another line reports as done. It comes from reading them as a person
+   would, not from matching a shape.
 
    Where something does not sit, one line after the list says so and names the numbers: "3 and 5
    want the same week, does that still hold?" One line, a question, no analysis, and none where
-   everything fits. Reading both out without noticing is how a decision that had already been taken
-   was put back in front of the user as still open.
+   everything fits.
 8. **Write the greet** in the shape below.
 
 These reads run whether the turn opens with a greeting or with a direct request. Skipping the greet
 on a direct request is not skipping the reads.
+
+## Asked for again later in the session
+
+The list has its own command, `/zanmai-show-welcome`, and its own skill file at
+`zanmai/system/skills/welcome/SKILL.md`, which is where the rules for showing it again live. Read
+that one when it is asked for. **A bare "show me the list" is not the trigger**: in a session that
+has been running an hour, "the list" is far more often the one on screen than this one, and
+answering with the wrong list throws away what the user was actually looking at. What triggers it is
+an unambiguous ask for what is open or waiting, or the command.
 
 ## Shape: regular session
 
@@ -53,10 +64,6 @@ each line into a readable sentence: the human label plus what is actually open a
 nothing.** Not an extra item, not a sub-bullet under a line, not a path, not an id, not a category
 the list does not contain. The three exceptions are listed under "Never in a greet" below, and
 nothing outside them is added.
-
-The list arrives in two blocks, what carries a day and what does not, and the numbers run straight
-through both. Each block is at most ten lines and is as long as the vault leaves it: a block of
-three is a correct answer, and a block with no lines is simply absent. Never pad one to reach ten.
 
 ```
 Hello <preferred-address>.
@@ -73,16 +80,14 @@ Hello <preferred-address>.
 
 Where the hook says the list is empty, the greet is one sentence plus a question.
 
+**The display name, never the model id.** "Opus 5 (1M context)", not "claude-opus-5[1m]". A greet
+that prints the wrong one reads plausibly and stays wrong until somebody notices.
+
 **The model line.** Where the hook names the model, the greet ends with one line saying which one is
 running, in the user's writing language, after the closing question. Just the name, no assessment and
 no recommendation. Where the hook does not name it, the line is left out; it is never guessed, and
 never read out of a settings file, which holds the default rather than what a `/model` switch left
 running.
-
-**The display name, never the model id.** "Opus 5 (1M context)", not "claude-opus-5[1m]". The hook
-takes `display_name` first and falls back only where it is absent. The two are visible separately at
-runtime, so a greet that expects one while the hook sends the other reads plausibly and stays wrong
-until somebody notices.
 
 **If the greet list is not in the hook output at all**, the hook did not run. Compose from
 `zanmai/memory/briefing.md` in the same shape: the same time groups in the same order, nearest
@@ -139,10 +144,10 @@ What is actually on your mind right now? Tell me what you are trying to get
 done, and I will walk you through how we would tackle it together.
 ```
 
-## Shape: empty vault
+## Shape: empty space
 
 No user-relevant items and nothing gathered yet: one short sentence in the user's writing language
-saying the vault has not collected anything yet, plus a question about what they want to do. Stop
+saying the space has not collected anything yet, plus a question about what they want to do. Stop
 there. The user fills the void.
 
 ## Never in a greet
@@ -152,23 +157,18 @@ there. The user fills the void.
 - **No wikilink and no slug.** A bundle is its plain human label, nothing in `[[double brackets]]`,
   no kebab-case pathname. The click-target is not the greet's job.
 - **No path.**
-- **No system-internal housekeeping as an item.** Vault mechanics run silently. Anything the user
+- **No system-internal housekeeping as an item.** Space mechanics run silently. Anything the user
   genuinely has to know is handled before the greeting or named in one short line at the top.
 
 **Three lines are the exception to "add nothing", and only these three.** They are not items and
 they never take a number:
 
-- **Material in `import/`**, where the hook names it: one line, present tense, saying what is
+- **Material in `inbox/`**, where the hook names it: one line, present tense, saying what is
   there and that it is being read. **The run starts in this turn, before the greet is written**,
   and **the hook prints the two handover blocks for it**, so they are pasted rather than composed.
-  Composing them here means writing a sentence the user never said, and `dispatch-guard` refuses
-  the dispatch without them, which is exactly what happened the first time this ran.
-  "I will look at it" and "let me have a look shortly" are both wrong, and not for their wording:
-  the next turn belongs to the user, so a greet that promises a look is a greet that never takes
-  one. Either the dispatch went out or the line is not written. This is not housekeeping either.
-  It is the user's own material, they put it there, and the rule against extra lines used to
-  swallow the hook's notice about it whole, so files sat in the folder for days while the greet
-  said nothing.
+  Either the dispatch went out or the line is not written: a greet that promises a look never takes
+  one, because the next turn belongs to the user. **This is not housekeeping**: it is the user's own
+  material, and the rule against extra lines used to swallow the notice about it whole.
 - **The second block's heading**, where the list carries one. The list has two blocks now, what has
   a day and what does not, and the numbers run straight through both.
 - **The contradiction line** from step 7, where there is one.
@@ -178,17 +178,15 @@ they never take a number:
 - **No re-reading, no rebuild, no foreground dispatch.** Bundles are not opened one by one before
   naming an item, `zanmai.py memory briefing` is never run to rebuild the briefing fresh, and
   nothing the greet needs goes to an Agent or Explore dispatch. All three turn a few-second greet
-  into a vault-wide scan, for a staleness case a real run found zero times in fifteen checks.
-  **The one background dispatch the hook asks for is the exception**: material in `import/` is sent
-  off with `run_in_background: true` before the greet is written, and it costs the greet nothing
-  because nothing waits on it. Where a named item turns out
-  stale, that is a write-path defect, a checkbox that should have gone through `zanmai.py task
-  done`, not something the greet re-derives at every start.
+  into a space-wide scan. **The one background dispatch the hook asks for is the exception**:
+  material in `inbox/` goes off with `run_in_background: true` before the greet is written. A named
+  item that turns out stale is a write-path defect, not something the greet re-derives.
 
 ## Language
 
 This file is canonical English. Translate the wording to the user's writing language at runtime, in
-the personal form of address where that language has one.
+the personal form of address where that language has one. **The names stay as they are**: Zanmai, space, bundle, `inbox`, `workbench`, `life`, `knowledge`,
+`archive`, `journal`, `contacts`. In German `der Space`, never "der Raum" (`CLAUDE.md`, Language).
 
 ## After the greet
 

@@ -1,20 +1,21 @@
 ---
 name: classify-note
-description: Decide the `kind` (focus, doing, habit, knowledge, contact/person, contact/organization) and the bundle for inbound notes. Used in `import-bundle` and when filing.
+description: Decide the `kind` (workbench, life, knowledge, archive, contact/person, contact/organization) and the bundle for inbound notes. Used in `import-bundle` and when filing.
 ---
 
 # classify-note
 
-The classifier. Two decisions in one pass: which `kind` (focus, doing, habit, knowledge, contact/person, contact/organization), and which bundle the material belongs to.
+The classifier. Two decisions in one pass: which `kind` (workbench, life, knowledge, archive, contact/person, contact/organization), and which bundle the material belongs to.
 
 ## Directives
 
-1. Bundle is the default. Material that shares a theme (a hobby, a project, a recurring topic) lives in one bundle under `<kind>/<theme-slug>/`. Singles are the exception, not the default.
-2. Existing bundle wins. If `<kind>/<theme-slug>/` already exists and the new material fits the theme, file there. Do not create a sibling bundle for the same theme.
-3. Knowledge is the default kind for ambiguous cases. Mis-classifying as knowledge is recoverable. Mis-classifying as focus pollutes attention.
-4. Time semantics matter. Past-dated material is knowledge or archive, not focus.
-5. Pattern-match intent, not literal strings. A sentence in the user's writing language that expresses a near-term commitment is focus material, regardless of which exact words appear.
-6. Use the index, not grep. Bundle match and theme derivation read `zanmai/memory/patterns.json` via `zanmai.py index find`. No `grep -r` over the vault, no body read across many files. The index is regenerated on demand via `zanmai.py index rebuild` plus `zanmai.py index patterns`.
+1. Bundle is the default. Material that shares a bundle (a hobby, a project, a recurring topic) lives in one bundle under `<kind>/<bundle-slug>/`. Singles are the exception, not the default.
+2. Existing bundle wins. If `<kind>/<bundle-slug>/` already exists and the new material fits the bundle, file there. Do not create a sibling bundle for the same bundle.
+2a. A new bundle is named after the subject, never after the occasion that produced the first file. `ai`, not `ai-coding-workflows`; `italy`, not `italy-southern-regions-september`. The file may be that specific, the folder around it may not: a bundle cut to fit one file holds one file for ever. `bundle create` refuses a slug of more than two words and names the subject it heard instead, so this is checked rather than remembered; `--narrow` is there for the case where the tight cut really is meant.
+3. Knowledge is the default kind for ambiguous cases. Mis-classifying as knowledge is recoverable. Mis-classifying as workbench fills the desk with what does not belong there.
+4. Time semantics matter. Past-dated material is knowledge or archive, not workbench.
+5. Pattern-match intent, not literal strings. A sentence in the user's writing language that expresses a near-term commitment is workbench material, regardless of which exact words appear.
+6. Use the index, not grep. Bundle match and bundle derivation read `zanmai/memory/patterns.json` via `zanmai.py index find`. No `grep -r` over the space, no body read across many files. The index is regenerated on demand via `zanmai.py index rebuild` plus `zanmai.py index patterns`.
 
 ## When to use
 
@@ -31,7 +32,7 @@ The classifier. Two decisions in one pass: which `kind` (focus, doing, habit, kn
 
 ### Decision A: kind, per topic
 
-Classification runs per topic, not per theme. A theme bundle of `kind: knowledge` can contain a topic of `kind: focus` (future activity with active preparation) or `kind: habit` (recurring routine on the same theme). Theme inheritance (all members inherit the theme's kind) is forbidden, it generalises and loses the attention layer the user needs to triage.
+Classification runs per topic, not per bundle. A bundle of `kind: knowledge` can contain a topic of `kind: life`, where the material is the user's own rather than something anybody could look up. Inheritance (all members take the bundle's kind) is forbidden, it generalises and loses the layer the user needs to triage.
 
 Answer Q1 to Q4 in order. The first match wins.
 
@@ -40,19 +41,19 @@ Answer Q1 to Q4 in order. The first match wins.
 - Person: `contact/person`. Target `contacts/people/<slug>.md`. Single file, not a bundle. Slug pattern is `<first>-<last>` (lowercased ASCII).
 - Organisation: `contact/organization`. Target `contacts/organisations/<slug>.md`. Single file, not a bundle. Slug pattern is the kebab-cased name.
 
-**Q2: does it have a cadence?** (weekly, monthly, recurring ritual)
+**Q2: is it the user's own, a recurring routine or a standing concern?**
 
-- Yes: `habit`. Target `habits/<bundle>/`.
+- Yes: `life`. Target `life/<bundle>/`.
 
-**Q3: active attention with a future or open horizon?**
+**Q3: is something being built here, with an end that can be named?**
 
-Signals for `focus`: a future date in the body or filename, active-preparation language in the user's writing, frontmatter fields like `status: in-planning` or `status: active`, embedded assets that signal active preparation (tickets, ICS files, booking confirmations). These signals are checked per topic, not per theme. A theme that is normally `knowledge` (past instances plus generic notes) can contain a topic with embedded assets and a future date that is `focus`.
+Signals for `workbench`: a future date in the body or filename, active-preparation language in the user's writing, frontmatter fields like `status: in-planning` or `status: active`, embedded assets that signal active preparation (tickets, ICS files, booking confirmations). These signals are checked per topic, not per bundle. A bundle that is normally `knowledge` (past instances plus generic notes) can contain a topic with embedded assets and a future date that is `workbench`.
 
-If the date is past and there is no signal of active revival, this is not focus, continue to Q4.
+If the date is past and there is no signal of active revival, this is not workbench, continue to Q4.
 
 **Q4: default**
 
-`knowledge`. Target `knowledge/<bundle>/` (default) or `knowledge/<slug>.md` (only when standalone and no theme applies).
+`knowledge`. Target `knowledge/<bundle>/` (default) or `knowledge/<slug>.md` (only when standalone and no bundle applies).
 
 ### Decision B: bundle
 
@@ -60,60 +61,60 @@ Once the kind is decided, identify the bundle this material belongs to. The whol
 
 **Step B0: ensure the index is fresh.**
 
-If `zanmai/memory/vault-index.json` is missing or older than the last write to the user's folders, run:
+If `zanmai/memory/space-index.json` is missing or older than the last write to the user's folders, run:
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py index rebuild <vault>
-<python_cmd> zanmai/system/scripts/zanmai.py index patterns <vault>
+<python_cmd> zanmai/system/scripts/zanmai.py index rebuild <space>
+<python_cmd> zanmai/system/scripts/zanmai.py index patterns <space>
 ```
 
-Both finish in well under a second on a vault with thousands of files. A fresh index is the prerequisite for the rest of Decision B.
+Both finish in well under a second on a space with thousands of files. A fresh index is the prerequisite for the rest of Decision B.
 
 **Step B1: look for an existing bundle that fits.**
 
-Tokenise the material the user is filing. Source of tokens in order of priority: the user's request phrasing, filenames of the imported files, frontmatter tags, H1 headings. ASCII-fold, lowercase, drop stop-words and tokens shorter than three characters.
+Tokenise the material the user is filing. Source of tokens in order of priority: the user's request phrasing, filenames of the imported files, frontmatter tags, H1 headings. ASCII-fold, lowercase, drop stop-words and tokens shorter than three characters. The folding is for matching only; nothing written back to the user is folded.
 
 Then query the index:
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py index find <vault> --tokens "tok1,tok2,..."
+<python_cmd> zanmai/system/scripts/zanmai.py index find <space> --tokens "tok1,tok2,..."
 ```
 
 The JSON output has five sections, used in this priority:
 
 1. `matching_bundles`: existing `<kind>/<slug>/` folders whose aggregated tokens overlap the query. If any match exists, use the highest-scoring one (or the one that matches the chosen kind). Do not create a sibling.
-2. `matching_hubs`: wikilink hubs across the vault. If a hub matches the tokens, the material likely belongs near it. The hub itself is a member of the theme.
-3. `matching_themes`: token clusters across all files, each with a `signal` field (strong, mixed, body-only). Strong-signal themes are sure things (filename, tag or H1 carries the token). Body-only themes are weaker, propose, do not auto-act.
-4. `related_tokens`: per query token, the top other tokens that share files with it across the corpus (co-occurrence). This is how the system finds connections when the material uses a different word for the same concept. A file that uses a sub-term but never the umbrella theme still surfaces the umbrella theme here if both tokens travel together in the corpus.
+2. `matching_hubs`: wikilink hubs across the space. If a hub matches the tokens, the material likely belongs near it. The hub itself is a member of the bundle.
+3. `matching_clusters`: token clusters across all files, each with a `signal` field (strong, mixed, body-only). Strong-signal clusters are sure things (filename, tag or H1 carries the token). Body-only clusters are weaker, propose, do not auto-act.
+4. `related_tokens`: per query token, the top other tokens that share files with it across the corpus (co-occurrence). This is how the system finds connections when the material uses a different word for the same concept. A file that uses a sub-term but never the umbrella bundle still surfaces the umbrella bundle here if both tokens travel together in the corpus.
 5. `bridge_bundles`: existing bundles that share no direct token with the query but share at least two tokens via `related_tokens`. Marked `signal: weak_via_co_occurrence`. Use as a plan suggestion, never as an automatic decision.
 
-The co-occurrence bridge handles the hidden-vocabulary problem. When a file uses a regional or technical sub-term but never the umbrella theme, the engine still surfaces the umbrella theme as a candidate target. The signal is statistical, never automatic, the user confirms.
+The co-occurrence bridge handles the hidden-vocabulary problem. When a file uses a regional or technical sub-term but never the umbrella bundle, the engine still surfaces the umbrella bundle as a candidate target. The signal is statistical, never automatic, the user confirms.
 
-**Step B2: pick a theme slug, the general bucket, never the specific item.**
+**Step B2: pick a bundle slug, the general bucket, never the specific item.**
 
-The user's mental model is general-to-specific. A top-level theme holds specific items as members. The bundle is the broad theme, specific items live inside. A specific topic (a place name, a product model, a medication, an appliance) is never the bundle name.
+The user's mental model is general-to-specific. A top-level bundle holds specific items as members. The bundle is the broad bundle, specific items live inside. A specific topic (a place name, a product model, a medication, an appliance) is never the bundle name.
 
 Procedure when `matching_bundles` from Step B1 is empty:
 
-1. Token engine first. Look at `matching_themes` with `signal: strong`. If a strong token cluster matches an obvious general theme, use it. Kebab-case ASCII, single word.
-2. Token engine missed it (the common case for narrow topics). The token engine cannot guess an umbrella theme from a file that contains only sibling-level terms. When this happens, the skill infers the general theme via reasoning: read the user's request phrasing plus the material's H1 and first paragraph, ask which broad bucket the user would file this under, pick the most natural one.
-3. List existing knowledge bundles as a constraint. Before proposing a new theme, look at `existing_bundles` in `patterns.json`. If a candidate matches one of those by reasoning even when tokens did not catch it, route the material there. A specific item often shares no token with its general theme but belongs there, the co-occurrence bridge from Step B1 catches this.
-4. Propose-and-ask when no existing bundle is the natural fit. Surface the inferred general theme in the plan, asking the user (in their writing language) whether to create a new bundle under the inferred theme name with the file as a member, or whether they have a different name in mind. The user confirms or renames in one turn.
-5. Member file inside the theme. Once the theme is fixed, the deliverable file inside has the topic slug: `knowledge/<theme>/<topic-slug>.md`, flat member of the theme, not its own sub-folder.
+1. Token engine first. Look at `matching_clusters` with `signal: strong`. If a strong token cluster matches an obvious general bundle, use it. Kebab-case ASCII, single word.
+2. Token engine missed it (the common case for narrow topics). The token engine cannot guess an umbrella bundle from a file that contains only sibling-level terms. When this happens, the skill infers the general bundle via reasoning: read the user's request phrasing plus the material's H1 and first paragraph, ask which broad bucket the user would file this under, pick the most natural one.
+3. List existing knowledge bundles as a constraint. Before proposing a new bundle, look at `existing_bundles` in `patterns.json`. If a candidate matches one of those by reasoning even when tokens did not catch it, route the material there. A specific item often shares no token with its general bundle but belongs there, the co-occurrence bridge from Step B1 catches this.
+4. Propose-and-ask when no existing bundle is the natural fit. Surface the inferred general bundle in the plan, asking the user (in their writing language) whether to create a new bundle under the inferred bundle name with the file as a member, or whether they have a different name in mind. The user confirms or renames in one turn.
+5. Member file inside the bundle. Once the bundle is fixed, the deliverable file inside has the topic slug: `knowledge/<bundle>/<topic-slug>.md`, flat member of the bundle, not its own sub-folder.
 
-For `focus` bundles the rule is different. Focus is instance-specific (`<theme>-<season>-<year>`) because the focus is the instance, a specific trip, a specific testing effort. Knowledge bundles are theme-only.
+For `workbench` bundles the rule is different. A piece of work is instance-specific (`<bundle>-<season>-<year>`) because the piece is the instance, a specific trip, a specific testing effort. Knowledge bundles are named for the subject only.
 
 **Step B3: a flat single in `knowledge/` is the emergency landing, not the default.**
 
 A flat single at `knowledge/<topic-slug>.md` is acceptable in these cases only:
 
-- The material is genuinely one-off with no plausible theme siblings ever.
+- The material is genuinely one-off with no plausible bundle siblings ever.
 - The user explicitly says (in their writing language) that they do not yet know where it belongs and to drop it flat for now.
-- Step B2 reasoning produced no natural theme name and the user did not want to commit to one.
+- Step B2 reasoning produced no natural bundle name and the user did not want to commit to one.
 
-In all those cases, the system flags the file in the next briefing as a homeless item to file later. When a second item lands in the same conceptual neighbourhood, the skill proposes promoting both into a new theme bundle.
+In all those cases, the system flags the file in the next briefing as a homeless item to file later. When a second item lands in the same conceptual neighbourhood, the skill proposes promoting both into a new bundle.
 
-A flat single is never the right answer just because no matching bundle exists today. Theme bundles are cheap to create, the question is naming, not whether. If a clear umbrella exists, Step B2 part 4 asks once and creates the bundle. Defaulting to flat at the knowledge root is the failure mode this skill exists to prevent.
+A flat single is never the right answer just because no matching bundle exists today. Bundles are cheap to create, the question is naming, not whether. If a clear umbrella exists, Step B2 part 4 asks once and creates the bundle. Defaulting to flat at the knowledge root is the failure mode this skill exists to prevent.
 
 Contacts are still always singles (one file per person or organisation under `contacts/people/` or `contacts/organisations/`). Contacts have their own filing tree, not bundles.
 
@@ -134,14 +135,14 @@ Other sub-bundle slugs appear organically when an imported member matches a reco
 
 Sub-bundle creation is a proposal in the plan, never silent. Hank presents the structure once during plan approval. The user accepts or asks to flatten. If the user picks flat, the proposal does not return for that bundle in this run.
 
-Sub-bundles are folders with members, not hubs with children. They have an `INDEX.md` but no truth file. The parent bundle's truth file already carries the theme, a separate sub-bundle truth file confuses users into thinking there is a parallel document. `zanmai.py bundle create` enforces this when the slug contains `/`. Wikilinks from the parent bundle's INDEX still resolve by basename, folder depth does not matter.
+Sub-bundles are folders with members, not hubs with children. They have an `INDEX.md` but no truth file. The parent bundle's truth file already carries the bundle, a separate sub-bundle truth file confuses users into thinking there is a parallel document. `zanmai.py bundle create` enforces this when the slug contains `/`. Wikilinks from the parent bundle's INDEX still resolve by basename, folder depth does not matter.
 
 ### When to ask the user (rare)
 
 Ask only when both decisions are genuinely ambiguous after running B1 and B2 and the answer materially changes where things land.
 
-- Kind ambiguous (Q2 says habit, Q3 says focus): one question, two options, recurring routine versus one-time future effort.
-- Bundle ambiguous (could be a narrow theme or a broader umbrella): one question, two options, the narrow theme versus the broader umbrella. Mark the recommendation in the user's writing language.
+- Kind ambiguous (Q2 says life, Q3 says workbench): one question, two options, a standing concern versus a piece of work with an end.
+- Bundle ambiguous (could be a narrow bundle or a broader umbrella): one question, two options, the narrow bundle versus the broader umbrella. Mark the recommendation in the user's writing language.
 
 One question, two options, default named. Not a multiple-choice menu.
 
@@ -149,33 +150,32 @@ One question, two options, default named. Not a multiple-choice menu.
 
 These examples are hypothetical. They illustrate the rule without leaking real user data.
 
-- Mixed-time theme material. Five files share one theme in body or filename. One of them carries a future date and active-preparation language. Kind decision: the future-dated file is `focus` (Q3 future plus active), the other four are `knowledge` (no active, some past with `status: archived`). Bundle decision: the planning file becomes its own focus bundle (instance-specific slug under `focus/`). The four knowledge files share the theme, they go into `knowledge/<theme>/` as members. Result: two bundles, not six items.
-- Single-shape knowledge bundle. The user imports eight files about one hobby topic (reviews, comparisons, configurations, location notes). Kind: all `knowledge`. Bundle: all share one theme. One bundle `knowledge/<theme>/` with eight files.
+- Mixed-time bundle material. Five files share one bundle in body or filename. One of them carries a future date and active-preparation language. Kind decision: the future-dated file is `workbench` (Q3, something is being built), the other four are `knowledge` (nothing under way, some past with `status: archived`). Bundle decision: the planning file becomes its own bundle (instance-specific slug under `workbench/`). The four knowledge files share the bundle, they go into `knowledge/<bundle>/` as members. Result: two bundles, not six items.
+- Single-shape knowledge bundle. The user imports eight files about one hobby topic (reviews, comparisons, configurations, location notes). Kind: all `knowledge`. Bundle: all share one bundle. One bundle `knowledge/<bundle>/` with eight files.
 - Single contact. The user says to add a new colleague with name and email. Kind: `contact/person`. Bundle: none, contacts are always singles in their respective folder. Target: `contacts/people/<slug>.md`.
 
 ## Sounds sensible, is wrong
 
 | Rationalization | Reality |
 |---|---|
-| "I'll file each file as a single because none of them has assets." | Assets are not the bundle criterion. Theme is. Five files about one theme belong in one bundle, not five flat singles. |
-| "I'll create a new bundle even though `knowledge/<theme>/` already exists, this material is slightly different." | Existing bundle wins for the same theme. If the new material truly does not fit, the theme assessment was wrong, re-check. |
-| "Knowledge bundles should always be sub-folders like `knowledge/umbrella/specific/`." | No top-down sub-categories invented before content exists. The trichotomy stays flat: `knowledge/<theme>/`. Sub-bundles are bottom-up. They appear inside an existing bundle when that bundle grows shapes. See Step B4. |
-| "I'll dump short web clippings flat into the theme bundle." | Wrong shape mix. Topic notes and short clippings belong apart. Propose a `clippings/` sub-bundle in the plan. |
-| "It looks important, I'll classify as focus." | Importance is not the criterion. Attention versus cadence versus reference is. |
-| "Past dates can still be focus if the user is reflecting." | Reflection on the past lives in knowledge, not focus. |
+| "I'll file each file as a single because none of them has assets." | Assets are not the bundle criterion. The matter is. Five files about one bundle belong in one bundle, not five flat singles. |
+| "I'll create a new bundle even though `knowledge/<bundle>/` already exists, this material is slightly different." | Existing bundle wins for the same bundle. If the new material truly does not fit, the bundle assessment was wrong, re-check. |
+| "Knowledge bundles should always be sub-folders like `knowledge/umbrella/specific/`." | No top-down sub-categories invented before content exists. The trichotomy stays flat: `knowledge/<bundle>/`. Sub-bundles are bottom-up. They appear inside an existing bundle when that bundle grows shapes. See Step B4. |
+| "I'll dump short web clippings flat into the bundle." | Wrong shape mix. Topic notes and short clippings belong apart. Propose a `clippings/` sub-bundle in the plan. |
+| "It looks important, I'll put it on the workbench." | Importance is not the criterion. What happens to it next is: being built, being lived with, or being looked up. |
+| "Past dates can still be workbench if the user is reflecting." | Reflection on the past lives in knowledge or life, not on the desk. |
 
 ## Stop and look again
 
-- About to create five flat singles when they share a theme. Bundle them.
-- About to create a sibling bundle to an existing one for the same theme. Append to existing.
+- About to create five flat singles when they share a bundle. Bundle them.
+- About to create a sibling bundle to an existing one for the same bundle. Append to existing.
 - About to create a sub-kind (project, area, resource) that is not one of the five legal kinds.
-- Classifying a past-dated receipt as focus.
+- Classifying a past-dated receipt as workbench.
 - More than two questions to the user for a single classification.
 
 ## Files
 
 - `zanmai/system/schema/frontmatter-v1.yaml`: the five valid `kind` values.
-- `zanmai/system/docs/folder-architecture.md`: rationale for the trichotomy.
 - `zanmai/system/scripts/zanmai.py`: the executor. Decision B uses `reindex`, `patterns`, `index find` for reads. `bundle create` and `bundle add-file` execute the filing.
-- `zanmai/memory/vault-index.json`: extracted file metadata. Regenerated on demand.
-- `zanmai/memory/patterns.json`: aggregated themes, hubs and existing bundles. Regenerated on demand.
+- `zanmai/memory/space-index.json`: extracted file metadata. Regenerated on demand.
+- `zanmai/memory/patterns.json`: aggregated bundles, hubs and existing bundles. Regenerated on demand.

@@ -2,7 +2,9 @@
 
 # When something does not work
 
-The failures that actually happen, and what each one means.
+**Read this when:** something does not work and the cause is not obvious.
+
+Describe the problem to Zanmai first: it can read its own state and usually names the cause faster than this page. What follows are the failures that actually happen and what each means.
 
 ## Ask first
 
@@ -10,7 +12,7 @@ Before working through anything below, describe the problem to Zanmai. It can re
 
 ## Nothing happens on the first start
 
-If the greeting looks generic and no setup ran, the session did not recognise the vault. Say "run setup" and it starts. This is the one moment Zanmai has no safety net yet, because the guards it installs during setup only take effect once a session begins.
+If the greeting looks generic and no setup ran, the session did not recognise the space. Say "run setup" and it starts. This is the one moment Zanmai has no safety net yet, because the guards it installs during setup only take effect once a session begins.
 
 After setup, close that session and open a new one. Until you do, the guards are written but not loaded.
 
@@ -22,7 +24,7 @@ Version 3.10 or newer is required. Some systems have several Pythons installed, 
 
 ## Too many approval prompts
 
-Zanmai runs its own engine for almost everything it files, indexes and checks, so in the strictest permission mode a session interrupts you a lot. Setup therefore writes `defaultMode: auto` into this vault's `.claude/settings.json`, which lets Claude Code judge commands itself instead of asking you each time. It applies to this folder only and leaves your global Claude Code settings untouched. The status line shows which mode is active, for example `⏵⏵ auto mode on`.
+Zanmai runs its own engine for almost everything it files, indexes and checks, so in the strictest permission mode a session interrupts you a lot. Setup therefore writes `defaultMode: auto` into this space's `.claude/settings.json`, which lets Claude Code judge commands itself instead of asking you each time. It applies to this folder only and leaves your global Claude Code settings untouched. The status line shows which mode is active, for example `⏵⏵ auto mode on`.
 
 If you still get a prompt at every step, the setting has not taken effect yet. A mode is read when a session starts, so the setup session itself still runs in whatever mode you opened it with, and not every plan offers auto mode. Press `Shift+Tab` to cycle the mode by hand and pick accept edits if auto is not in the list. The same key is also the way back if you would rather approve each step yourself.
 
@@ -32,7 +34,7 @@ Two things are worth knowing. Zanmai's own protections do not depend on the mode
 
 This is intended. Prerequisites are checked before a specialist starts, so you find out at the beginning rather than halfway through a document. You get told what is missing, what it does for this particular job, and the one command that installs it.
 
-Small helper libraries can be fetched on your go, into Zanmai's own corner of the vault, never into your system Python. Heavier programs are yours to install; Zanmai will not silently work around a missing one with a worse method.
+Small helper libraries can be fetched on your go, into Zanmai's own corner of the space, never into your system Python. Heavier programs are yours to install; Zanmai will not silently work around a missing one with a worse method.
 
 ## A document cannot be rendered
 
@@ -42,15 +44,15 @@ An exact colour profile, bleed and crop marks for a commercial press run are not
 
 ## An update refuses to apply
 
-Two cases stop on purpose. If your vault is a clone and Zanmai's own files were edited locally, the update refuses instead of overwriting those edits, and tells you which files. Either revert them or move what you want to keep into `zanmai/extensions`, which no update touches.
+Two cases stop on purpose. If your space is a clone and Zanmai's own files were edited locally, the update refuses instead of overwriting those edits, and tells you which files. Either revert them or move what you want to keep into `zanmai/extensions`, which no update touches.
 
-And a vault already ahead of the published version is never rolled back to an older one.
+And a space already ahead of the published version is never rolled back to an older one.
 
 If an update applied but something is off afterwards, the snapshot taken beforehand is the way back, and every update is recorded in `zanmai/update-history.md`.
 
 ## A connected source is not reachable
 
-A source only works on a machine where you configured it. On a different computer it is simply absent, and you are told that plainly rather than getting an invented answer. Secrets are never stored in the vault, so moving your notes to another machine never carries credentials with it, by design.
+A source only works on a machine where you configured it. On a different computer it is simply absent, and you are told that plainly rather than getting an invented answer. Secrets are never stored in the space, so moving your notes to another machine never carries credentials with it, by design.
 
 ## An image or video looks wrong
 
@@ -65,6 +67,7 @@ Say where it should be. Moving material is a normal operation, links are updated
 - [Requirements and installation](install/index.md)
 - [Keeping Zanmai up to date](updates.md)
 - [Snapshots](snapshots.md)
+- [Setup](setup.md), the first conversation and what it checks
 
 ---
 

@@ -1,25 +1,25 @@
 ---
 name: zanmai:import
-description: Import a folder, zip or file into Zanmai bundles. Triggers on any ask to file material from `import/` or an external path, or `/zanmai-import`.
+description: Import a folder, zip or file into Zanmai bundles. Triggers on any ask to file material from `inbox/` or an external path, or `/zanmai-import`.
 ---
 
 # import-bundle
 
-Filing for material from outside the vault. The AI plans and dialogues, `zanmai.py` does the writes.
+Filing for material from outside the space. The AI plans and dialogues, `zanmai.py` does the writes.
 
 ## Directives
 
-1. Bundle is the default. Material that shares a theme (a hobby, a project, a recurring topic) lives in one bundle under `<kind>/<theme-slug>/`. Singles only if the material is truly standalone (no thematic siblings in the import or vault, no overlap with existing bundles). See `classify-note` for the decision.
-2. Existing bundle wins. If `<kind>/<theme-slug>/` already exists and the new material fits the theme, append. Do not create a sibling bundle for the same theme.
+1. Bundle is the default. Material that shares a bundle (a hobby, a project, a recurring topic) lives in one bundle under `<kind>/<bundle-slug>/`. Singles only if the material is truly standalone (no thematic siblings in the import or space, no overlap with existing bundles). See `classify-note` for the decision.
+2. Existing bundle wins. If `<kind>/<bundle-slug>/` already exists and the new material fits the bundle, append. Do not create a sibling bundle for the same bundle.
 3. State changes via `zanmai.py` only. Never use `Write` or `Edit` directly for filing operations. The script handles created-date, source field, INDEX updates, activity-log appends, master-INDEX refresh and non-schema-field migration to the body.
 4. Body verbatim under both modes. "Body verbatim" means user-written prose is preserved. Convention adaption (slug rename, wikilink updates after move, embed-path updates after move, frontmatter migration) is mechanic, not body edit.
-5. Mandatory questions: the ones the target state leaves open, via `AskUserQuestion` form, never a fourth. Q2 scope is asked every time, it is the one thing the vault cannot derive. Q1 mode applies when a bundle is created; material going into a bundle that already exists follows the conventions that bundle already carries. Q3 conflict-policy applies when `index find` reports a slug collision, and is not asked when there is none. A question the state answers is not asked and its default is named in the approval text (Step 4); a question the state leaves open is asked even when a prior Steve-user chat dialog already discussed it, because chat dialog is preparation and the form is the decision capture. Dropping a question because the user "clearly wants" something is silent inference and stays forbidden, the state decides, not the impression.
-6a. **A file that keeps coming back is dealt with at its source, not in the folder.** Where the vault sits in a synced folder, deleting the local copy is undone by the next sync, and the same material arrives every morning. That is not a reason to leave it lying: it is a reason to say, once, that the thing writing it has to stop or write somewhere else, and to name where that is. Keeping a local copy because the original lives elsewhere gets it exactly backwards, since the original is what brings it back.
+5. Mandatory questions: the ones the target state leaves open, via `AskUserQuestion` form, never a fourth. Q2 scope is asked every time, it is the one thing the space cannot derive. Q1 mode applies when a bundle is created; material going into a bundle that already exists follows the conventions that bundle already carries. Q3 conflict-policy applies when `index find` reports a slug collision, and is not asked when there is none. A question the state answers is not asked and its default is named in the approval text (Step 4); a question the state leaves open is asked even when a prior Steve-user chat dialog already discussed it, because chat dialog is preparation and the form is the decision capture. Dropping a question because the user "clearly wants" something is silent inference and stays forbidden, the state decides, not the impression.
+6a. **A file that keeps coming back is dealt with at its source, not in the folder.** Where the space sits in a synced folder, deleting the local copy is undone by the next sync, and the same material arrives every morning. That is not a reason to leave it lying: it is a reason to say, once, that the thing writing it has to stop or write somewhere else, and to name where that is. Keeping a local copy because the original lives elsewhere gets it exactly backwards, since the original is what brings it back.
 
-6. `import/` is transit and it empties, but never before what arrived is in the vault. After filing, the source goes with what was made from it where it still carries something the result does not (a recording, because a transcript can be wrong; a photographed original), and to the trash where it does not (a log that arrives again tomorrow, a screenshot whose content is now a note). **The trash is deletion.** `zanmai.py file trash` refuses a file from `import/` without `--filed-to <where the content landed>` or `--user-said "<their words>"`, and neither of those is a summary in the conversation: what was said in a turn is gone tomorrow and the file is in the trash. Do not offer `file restore` as a reason it is safe. Leaving it lying is the third outcome and it is the exception: it needs a reason, and that reason is named. A folder that never empties makes every later session start read the same files again.
+6. `inbox/` is transit and it empties, but never before what arrived is in the space. After filing, the source goes with what was made from it where it still carries something the result does not (a recording, because a transcript can be wrong; a photographed original), and to the trash where it does not (a log that arrives again tomorrow, a screenshot whose content is now a note). **The trash is deletion.** `zanmai.py file trash` refuses a file from `inbox/` without `--filed-to <where the content landed>`, and a routing rule saying the file stays refuses it whatever is passed: a sentence in a turn is gone tomorrow and the file is in the trash. Do not offer `file restore` as a reason it is safe. Leaving it lying is the third outcome and it is the exception: it needs a reason, and that reason is named. A folder that never empties makes every later session start read the same files again.
 7. Snapshot if more than five files will be touched. Invoke the `snapshot` skill first.
 8. Structured notes can only be created from a template. Five kinds exist; unmappable concepts file as knowledge.
-9. Read via index, not via repeated file reads. Pattern detection across source plus vault uses `zanmai/memory/vault-index.json` and `zanmai/memory/patterns.json` (generated by `zanmai.py index rebuild` plus `zanmai.py index patterns`). Body read happens only for the small set of candidates the index identifies, never across the whole vault or whole import.
+9. Read via index, not via repeated file reads. Pattern detection across source plus space uses `zanmai/memory/space-index.json` and `zanmai/memory/patterns.json` (generated by `zanmai.py index rebuild` plus `zanmai.py index patterns`). Body read happens only for the small set of candidates the index identifies, never across the whole space or whole import.
 10. Source-folder names are tokens too. Before any `index find` call, harvest folder-path segments from the import and add them to the token query. The user's stated topic words alone miss material hidden under structural folder names. Folder-derived tokens count as light-weight evidence, co-occurrence does the rest.
 11. Contacts use `contact create`, never `bundle create`. A person or organisation is a single file under `contacts/people/<slug>.md` or `contacts/organisations/<slug>.md`, not a folder bundle. The script enforces this, `bundle create` refuses `contact-*` kinds.
 12. Trash question exactly once, at the very end, via `AskUserQuestion` form. It runs only in Step 7 (after execute, after clear-plan, after memory report). Never in Q1 through Q3, never in the plan, never mid-workflow. The form has two options: move the imported files to the trash (restorable), or leave them in place. The default option is to leave them in place. The user can come back later.
@@ -29,23 +29,23 @@ Filing for material from outside the vault. The AI plans and dialogues, `zanmai.
 16. Embed-path rewrite is `zanmai.py update embeds`, not a manual edit. After `bundle add-file` and `asset add` are done, run `zanmai.py update embeds --bundle-slug <slug>` once. It rewrites every embed reference in the bundle's markdown bodies to the file's place inside that same bundle. Body-verbatim preservation requires this, embed-path update is mechanic, not body edit.
 17. Inspect-scope before index find. Step 1 starts with `zanmai.py index inspect --scope <path>`, a visible plain-text scan of the import root. It lists subfolders, file counts per extension, folder-name token candidates and embed reference counts. The folder-name tokens it surfaces are added to the `index find` call together with the user-stated tokens. Skipping `index inspect` makes Hank go straight to tokens without looking at the structure.
 18. Discovered entities get stubs by default. When the Step 1 embed detection or the wikilink analysis finds a person or organisation name and no contact file exists for it, Hank creates a stub in Step 5 via `zanmai.py contact create`. Slug pattern is `<first>-<last>` for persons (lowercased ASCII), kebab-cased name for organisations. The stub frontmatter carries what Hank can infer (full name plus structured info from embeds, when present), the body stays empty, `source: ai-generated`. The user sees the stub in the operation report and can drop it later by trashing the file. Default is stub, not ask. Otherwise dangling wikilinks accumulate.
-19. Tasks are the user's (operating-principles section 8, enforced by `hook checkbox-guard`). An import never produces one: imported bodies keep the tasks the user wrote, exactly as written, and nothing Hank derives from the material becomes a task by itself. A date-anchored action is proposed in chat; if the user says yes, it goes on a list through `zanmai.py task add`, never silently as part of the import.
-20. Per-topic classify-note is mandatory, no theme inheritance. Every imported topic runs through `classify-note` and gets its own `kind` decision with a one-line rationale in the TL;DR's notable section. A theme bundle of `kind: knowledge` can contain a topic of `kind: focus` (future activity with active preparation, frontmatter `status: in-planning`, embedded assets like tickets or ICS files). The shortcut "all members inherit the theme's kind" is forbidden.
-21. Tag consolidation on import. Source tags run through a synonym lookup against vault use and the synonym catalogue (`zanmai/system/docs/tags.md`) before write. Duplicates collapse to a canonical form. Date-like tags move into the matching frontmatter date fields, not into `tags`. Stop-tags are dropped.
+19. Tasks are the user's (operating-principles, principle:tasks, enforced by `hook checkbox-guard`). An import never produces one: imported bodies keep the tasks the user wrote, exactly as written, and nothing Hank derives from the material becomes a task by itself. A date-anchored action is proposed in chat; if the user says yes, it goes on a list through `zanmai.py task add`, never silently as part of the import.
+20. Per-topic classify-note is mandatory, no bundle inheritance. Every imported topic runs through `classify-note` and gets its own `kind` decision with a one-line rationale in the TL;DR's notable section. A bundle of `kind: knowledge` can contain a topic of `kind: life` (future activity with active preparation, frontmatter `status: in-planning`, embedded assets like tickets or ICS files). The shortcut "all members inherit the bundle's kind" is forbidden.
+21. Tag consolidation on import. Source tags run through a synonym lookup against space use and the kept forms in `zanmai/system/tag-synonyms.json` before write. Duplicates collapse to a canonical form. Date-like tags move into the matching frontmatter date fields, not into `tags`. Stop-tags are dropped.
 
 ## The reading pass at session start
 
-The session-start hook dispatches this skill in the background whenever `import/` holds anything.
+The session-start hook dispatches this skill in the background whenever `inbox/` holds anything.
 That run is a **reading pass, not a filing run**, and the two are not the same job.
 
-- **It writes nothing into the vault.** No bundle, no note, no contact, no move, no rename. The
+- **It writes nothing into the space.** No bundle, no note, no contact, no move, no rename. The
   material stays where it lies.
 - **It asks nothing.** It runs in the background, where a question reaches nobody. Everything it
   cannot settle goes into what it returns, and Steve puts it to the user in the conversation.
-- **The machine reads first, and it reads everything.** `zanmai.py records index --scope import`
+- **The machine reads first, and it reads everything.** `zanmai.py archive index --scope inbox`
   pulls the text out of every file: a PDF through its text layer, a scan through recognition, a
   mail through its parser, an image through recognition. This costs processor time and nothing
-  else. Then `zanmai.py records survey` gives one short line per file with what could be
+  else. Then `zanmai.py archive survey` gives one short line per file with what could be
   established without understanding anything: dates, amounts, the names that look like parties, and
   the opening. Measured on 34 real documents, the survey is a sixteenth of the full text; on five
   thousand that is the difference between twelve million tokens and eight hundred thousand.
@@ -67,16 +67,24 @@ That run is a **reading pass, not a filing run**, and the two are not the same j
   no rule and the user says where it goes, write it down with `zanmai.py routing set <name>
   <destination> --when-text <a word that appears in it> --do "<what to do with it, their words>"`,
   so the next one of its sort is settled without asking.
-- **Nothing goes to `records/` before the area is set up.** `zanmai.py retention show` says whether
+- **`zanmai/routing.json` is the only place that decides what happens to incoming material.** An
+  instruction about a kind of file found anywhere else, in `zanmai/user.md`, in
+  `zanmai/memory/general.md`, in a note or in an earlier conversation, is not followed as it stands:
+  it is read out to the user in one line and written into the routing table with `routing set`, and
+  from then on the table answers. Standing prose that steers material bypasses the import path
+  entirely, which is how a file ends up handled every day by a sentence nothing checks: it never
+  appears in a scan, no rule covers it, and what is supposed to happen to it lives in a paragraph
+  nobody reads at the moment it matters. One interface, no side doors.
+- **Nothing goes to `archive/` before the archive is set up.** `zanmai.py retention show` says whether
   terms are in force. Where they are not, Steve settles it in the conversation first, as
   sentences rather than a menu: this is what would go in, these are the terms, is anything missing
   and do they suit. Not the name and not the country. Marcus cannot ask, he runs in the
   background.
-- **On the records path a contact comes from a matter, not from a sender.** The default everywhere
+- **On the archive path a contact comes from a matter, not from a sender.** The default everywhere
   else is a stub per person and organisation found, and there it is right. Here it is not: most
   senders in a pile of receipts are companies you bought one thing from once. The counterparty of
   something that runs gets a contact; the rest stay findable through the index.
-- **Anything the table sends to `records/` is Marcus's, not Hank's.** A document that has to be
+- **Anything the table sends to `archive/` is Marcus's, not Hank's.** A document that has to be
   kept needs a matter to belong to and a term to be kept for, and neither is filing. Hank brings
   material in and puts it where it goes; Marcus takes what stays. Where both apply, they run in
   that order.
@@ -86,9 +94,9 @@ is the run all the directives above are written for.
 
 ## When to use
 
-- The user drops material into `import/` and asks to file it.
+- The user drops material into `inbox/` and asks to file it.
 - The user invokes `/zanmai-import` or asks to import material in their writing language.
-- The user pastes an absolute path outside the vault and asks to file from there.
+- The user pastes an absolute path outside the space and asks to file from there.
 
 ## When not to use
 
@@ -113,15 +121,15 @@ What counts as "in scope"? Default is the narrowest sensible interpretation. Men
 
 The chat phrasing in the user's writing language names the scope Hank would default to, then asks whether to include nearby material that the index inspect output surfaced.
 
-Once the user has confirmed the scope, Hank does not silently shrink it further by sub-folder name. Every file in the confirmed scope is classified individually by content, frontmatter and embed mining (Hank's Hard Rule 7). Files whose relevance is unclear go into the plan's "Was anders gemacht wird" section with a proposal, never silently dropped.
+Once the user has confirmed the scope, Hank does not silently shrink it further by sub-folder name. Every file in the confirmed scope is classified individually by content, frontmatter and embed mining (Hank's Hard Rule 6). Files whose relevance is unclear go into the plan's "Was anders gemacht wird" section with a proposal, never silently dropped.
 
 ### Q3: conflict-policy
 
-Asked when `index find` reports that a target slug already exists in the vault, and skipped when it reports none. Three options, runtime translates the form labels.
+Asked when `index find` reports that a target slug already exists in the space, and skipped when it reports none. Three options, runtime translates the form labels.
 
 > A. Keep both, the new file gets a suffix (recommended). The existing file is untouched, the imported one lands beside it with `-imported` appended to the slug. Safe, decision-by-pile-later.
 >
-> B. Skip the imported file. The existing file wins, the source is not brought in. Use when the material is known to be already in the vault.
+> B. Skip the imported file. The existing file wins, the source is not brought in. Use when the material is known to be already in the space.
 >
 > C. Replace the existing, ask before each one. Overwrites the existing file with the import, confirmation per file. Use when the goal is specifically to update.
 
@@ -133,15 +141,15 @@ These answers shape the plan. Everything below is smart-default.
 
 These are decisions the skill makes silently and reports in the plan. The user can override in the plan-approval gate.
 
-- Index first. Step 1 runs `zanmai.py index rebuild` and `zanmai.py index patterns` over the union of the import scope and the existing vault. All subsequent decisions read those two JSON files. No grep loops across `import/`, no body reads across the whole vault.
-- Classification (`kind` plus bundle): invoke `classify-note`. Knowledge default. Focus only with future-dated active preparation. Past-dated material lands in knowledge with `status: archived`.
-- Bundle grouping: `classify-note` Step B identifies the bundle. Files that share a theme land in the same bundle, even if they come from different folders in the source. The grouping is computed once from the index, not file-by-file.
+- Index first. Step 1 runs `zanmai.py index rebuild` and `zanmai.py index patterns` over the union of the inbox scope and the existing space. All subsequent decisions read those two JSON files. No grep loops across `inbox/`, no body reads across the whole space.
+- Classification (`kind` plus bundle): invoke `classify-note`. Knowledge default. Workbench only where something is being built with a nameable end. Past-dated material lands in knowledge with `status: archived`.
+- Bundle grouping: `classify-note` Step B identifies the bundle. Files that share a bundle land in the same bundle, even if they come from different folders in the source. The grouping is computed once from the index, not file-by-file.
 - Existing bundle check: `zanmai.py index find` returns `matching_bundles`. If non-empty, append to the highest-scoring one. No separate scan.
 - Wikilink-hub respect: `zanmai.py index find` returns `matching_hubs` from the import. If a hub file exists in the import (two or more inbound wikilinks), it becomes the bundle's truth-file candidate, the others attach as members.
-- Slug: kebab-case ASCII from source filename or main heading. For focus, instance-specific slug (`<theme>-<date>`). For knowledge, theme slug from the top `matching_themes` token. Files inside a knowledge bundle keep their own slugs.
+- Slug: kebab-case ASCII from source filename or main heading. For workbench, instance-specific slug (`<bundle>-<date>`). For knowledge, bundle slug from the top `matching_bundles` token. Files inside a knowledge bundle keep their own slugs.
 - Attachments: every non-markdown file goes into the bundle it belongs to, flat beside that bundle's markdown. Detection is automatic through the embed scan. A referenced file travels with the markdown that references it, and the embed is rewritten so the reference resolves inside the bundle.
 - Generic asset basenames: when a source has a generic name (numbered images, screenshots, IMG_*), it is renamed at copy time to avoid collisions inside the bundle. Convention: `<referencing-note-slug>-<original-basename>`. Pass `--target-name` to `asset add`. The embed in the markdown gets rewritten to the new basename by `update embeds`.
-- Orphan wikilinks: resolved by lookup in `vault-index.json` (`wikilinks_out` of every file) plus the import's wikilinks. No `grep -r`. Logged as orphan only if no `filename_stem` or `slug` in the index matches.
+- Orphan wikilinks: resolved by lookup in `space-index.json` (`wikilinks_out` of every file) plus the import's wikilinks. No `grep -r`. Logged as orphan only if no `filename_stem` or `slug` in the index matches.
 - Before slug rename: backlinks come from `patterns.json` `wikilink_hubs[<old-slug>].linked_from`. No `grep -rn` unless the index is stale.
 - Contact detection: the plan flags H1 tokens of imported files that look like person names (capitalised two-word sequences in `name:` or H1) or organisation suffixes. Stub-by-default per Directive 18.
 
@@ -152,29 +160,29 @@ These are decisions the skill makes silently and reports in the plan. The user c
 1. Inspect the scope. Visible to the user.
 
    ```
-   <python_cmd> zanmai/system/scripts/zanmai.py index inspect <vault> --scope <import-path>
+   <python_cmd> zanmai/system/scripts/zanmai.py index inspect <space> --scope <import-path>
    ```
 
    The output (subfolder list, file-extension counts, folder-name token candidates, embed reference counts) prints in chat so the user can see what Hank looked at. Folder-name token candidates feed step 5's `index find` call together with user-stated tokens.
 
-2. Reindex the import and the vault.
+2. Reindex the import and the space.
 
    ```
-   <python_cmd> zanmai/system/scripts/zanmai.py index rebuild <vault>
-   <python_cmd> zanmai/system/scripts/zanmai.py index patterns <vault>
+   <python_cmd> zanmai/system/scripts/zanmai.py index rebuild <space>
+   <python_cmd> zanmai/system/scripts/zanmai.py index patterns <space>
    ```
 
-   Both finish in well under a second on a vault with thousands of files. The output lands in `zanmai/memory/vault-index.json` (per-file metadata) plus `zanmai/memory/patterns.json` (themes, wikilink hubs, existing bundles).
+   Both finish in well under a second on a space with thousands of files. The output lands in `zanmai/memory/space-index.json` (per-file metadata) plus `zanmai/memory/patterns.json` (bundles, wikilink hubs, existing bundles).
 
-3. Read the index, not the import. Open `vault-index.json` once, filter for entries whose `path` starts with the import scope. Derive file count per extension, obvious bundle shape, top tokens, and use the folder-path token candidates from Step 1.
+3. Read the index, not the import. Open `space-index.json` once, filter for entries whose `path` starts with the inbox scope. Derive file count per extension, obvious bundle shape, top tokens, and use the folder-path token candidates from Step 1.
 
-4. Scan embed references across all in-scope markdown for the wikilink-style embeds (`![[file.ext]]`) and the standard Markdown embeds (`![alt](path/file.ext)`). For every match, resolve the referenced file path under the import scope. Every referenced file becomes an asset candidate, even if it lives in a sibling sub-folder the user did not explicitly mention. The plan must list every referenced file with its target path inside the owning bundle.
+4. Scan embed references across all in-scope markdown for the wikilink-style embeds (`![[file.ext]]`) and the standard Markdown embeds (`![alt](path/file.ext)`). For every match, resolve the referenced file path under the inbox scope. Every referenced file becomes an asset candidate, even if it lives in a sibling sub-folder the user did not explicitly mention. The plan must list every referenced file with its target path inside the owning bundle.
 
-5. Query the patterns for the union of user-stated tokens and folder-path tokens via `zanmai.py index find --tokens "..."`. Output: existing bundles already covering the material, wikilink hubs at the centre of the import, emerging themes with signal strength, co-occurring tokens, weak-signal bridge bundles.
+5. Query the patterns for the union of user-stated tokens and folder-path tokens via `zanmai.py index find --tokens "..."`. Output: existing bundles already covering the material, wikilink hubs at the centre of the import, emerging bundles with signal strength, co-occurring tokens, weak-signal bridge bundles.
 
-6. Summarise in five to eight chat lines. The full detail lands in Hank's approval text before execute, not in this chat summary. The chat summary names scope, file count, top themes and existing-bundle matches if any.
+6. Summarise in five to eight chat lines. The full detail lands in Hank's approval text before execute, not in this chat summary. The chat summary names scope, file count, top bundles and existing-bundle matches if any.
 
-No `find import/` walk, no `grep -r` across the vault, no per-file `Read` of source bodies in Step 1. Body reads happen later in Step 4 for at most a handful of candidates the index already flagged.
+No `find inbox/` walk, no `grep -r` across the space, no per-file `Read` of source bodies in Step 1. Body reads happen later in Step 4 for at most a handful of candidates the index already flagged.
 
 ### Step 2: ask the questions the state leaves open
 
@@ -186,7 +194,7 @@ If the plan will touch more than five files, invoke the `snapshot` skill with sl
 
 ### Step 4a: mine embedded structured content
 
-For every source file the Step-1 embed scan flagged with an image or PDF embed, Hank reads the binary and looks for structured information that maps to a vault schema: contact/person (name, phone, address, email, website), booking, ticket, receipt, business-card-style fields. Hank uses `Read` on the binary (Claude Code reads images and PDFs natively).
+For every source file the Step-1 embed scan flagged with an image or PDF embed, Hank reads the binary and looks for structured information that maps to a space schema: contact/person (name, phone, address, email, website), booking, ticket, receipt, business-card-style fields. Hank uses `Read` on the binary (Claude Code reads images and PDFs natively).
 
 The output is a list of extractions, one per embed where mining succeeded. Each extraction names the source embed path, the inferred kind, the extracted key-value pairs, the proposed target file (where the structured fields land and where the source binary lands), and the wikilink shape between the two.
 
@@ -203,7 +211,7 @@ Build it per Hank's contract (`hank.md` § "TL;DR structure"), at the size the o
 1. **Structure tree.** ASCII tree showing where things would land. Top-level bundle roots, indented sub-bundles, one or two representative members per bundle, the rest elided with `… (N more)`. Truth files marked `(Truth)`. Member files can carry a one-phrase parenthetical role hint. Asset bundles show count plus kind: `(5 ticket PDFs)`. Stub folders show count plus sample slugs: `(9 stubs: <slug-1>, <slug-2>, …)`. Each top-level bundle gets `← <one-line context>` after its slug. This is the part the user reads first.
 2. **Axis decision.** One sentence naming the chosen grouping axis and the rejected alternatives in one phrase each. Even a flat-bundle case states the decision ("flat, no non-trivial axis").
 3. **Counts.** `N markdown · M assets · K stubs (P persons + Q orgs)`.
-4. **Notable.** Two to five bullets for non-trivial items only: ambiguous file assignments resolved by body-read, slug clean-ups worth flagging, classification deviations from the theme's kind, conflict-policy applications, tag-consolidation conflicts, what was deliberately left out of `import/` and why. Trivial runs leave this short or empty.
+4. **Notable.** Two to five bullets for non-trivial items only: ambiguous file assignments resolved by body-read, slug clean-ups worth flagging, classification deviations from the bundle's kind, conflict-policy applications, tag-consolidation conflicts, what was deliberately left out of `inbox/` and why. Trivial runs leave this short or empty.
 
 The TL;DR is the final message of Hank's subagent run. Steve relays it to the user verbatim, then appends a one-line execute-question in the user's writing language. Do not call any `zanmai.py` write-subcommand yet. The user replies go or no in chat, no plan file to open, no path to read.
 
@@ -212,7 +220,7 @@ The TL;DR is the final message of Hank's subagent run. Steve relays it to the us
 The user approved. First action: create the target bundles. They did not exist until now.
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py bundle create <vault> --kind <kind> --slug <slug> [--goal...] [--status...]
+<python_cmd> zanmai/system/scripts/zanmai.py bundle create <space> --kind <kind> --slug <slug> [--goal...] [--status...]
 ```
 
 One `bundle create` call per planned bundle, including sub-bundles via `--slug parent/child`.
@@ -224,7 +232,7 @@ Then, for each file in the mapping:
 - Wikilink updates after slug rename: in-place edit via `zanmai.py`, atomic, not via `Write` or `Edit`.
 - Embed-path updates for `![](relative/path)` after attachment move: in-place edit via `zanmai.py`, not via `Write` or `Edit`.
 
-For each entity Hank stubbed by default (Hard Rule 6):
+For each entity Hank stubbed by default (Hard Rule 5):
 
 ```
 <python_cmd> zanmai/system/scripts/zanmai.py contact create... --kind <person|organization> --slug <slug> [--full-name "..."]
@@ -235,7 +243,7 @@ Never use `bundle create` for contacts, the script refuses it.
 After all files are filed, refresh the master INDEX:
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py update master-index <vault>
+<python_cmd> zanmai/system/scripts/zanmai.py update master-index <space>
 ```
 
 Also called automatically by `bundle create`, but run explicitly after a multi-bundle session to be safe.
@@ -245,7 +253,7 @@ Also called automatically by `bundle create`, but run explicitly after a multi-b
 The markdown bodies were copied verbatim from the source, including any embed references. Those references still point at the source location and are broken after the move. Rewrite them:
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py update embeds <vault> --bundle-slug <slug>
+<python_cmd> zanmai/system/scripts/zanmai.py update embeds <space> --bundle-slug <slug>
 ```
 
 The script walks every `.md` in the bundle (recursive into sub-bundles), matches both embed styles, and rewrites them so they resolve against the bundle's own files. External URLs and unmatched basenames stay untouched. Idempotent.
@@ -257,31 +265,31 @@ Run this once per bundle after `asset add` is done for every attachment of that 
 The `## Plan` section in the bundle's truth file served its purpose: the user approved, filing executed. It is no longer documentation, it is leftover structure. Remove it so the truth file reads cleanly:
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py plan clear-section <vault> --bundle-slug <slug> [--bundle-kind <kind>]
+<python_cmd> zanmai/system/scripts/zanmai.py plan clear-section <space> --bundle-slug <slug> [--bundle-kind <kind>]
 ```
 
 The script removes the `## Plan` section and tidies the resulting whitespace. Everything before and after stays verbatim. Idempotent. Run this after every successful filing run, never before, if the user did not approve, the plan stays.
 
 ### Step 5d: offer to open the result
 
-After filing succeeds, offer to open the bundle's truth file in the user's writing language. Do not open automatically (CLAUDE.md Hard Rule 10). The chat reply has a one-paragraph summary of what was filed where, the path, and an explicit open-offer in the user's writing language. Wait for the user's yes. On yes, open the file with the platform default.
+After filing succeeds, offer to open the bundle's truth file in the user's writing language. Do not open automatically (CLAUDE.md Hard Rule 9). The chat reply has a one-paragraph summary of what was filed where, the path, and an explicit open-offer in the user's writing language. Wait for the user's yes. On yes, open the file with the platform default.
 
 ### Step 6: write the operation report
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py memory report <vault> --operation import-bundle --slug <primary-bundle-slug> --summary "<one-paragraph what-happened>"
+<python_cmd> zanmai/system/scripts/zanmai.py memory report <space> --operation import-bundle --slug <primary-bundle-slug> --summary "<one-paragraph what-happened>"
 ```
 
 `memory report` creates `zanmai/logs/<YYYY>/<MM>/<YYYY-MM-DD-HHMM>-import-bundle-<slug>.md` with summary, activity-log window and skeleton decisions or anomalies sections that Hank fills via `Edit` if relevant. Always pass a non-empty `--summary`. The report is the audit trail (no plan file to archive, the TL;DR lived in the chat) for the next Steve and for the user reviewing later. Not a chat dump.
 
 ### Step 7: trash question for the source files
 
-`import/` is transit. Now that filing is done and the report is written, ask once via `AskUserQuestion` form in the user's writing language. Two options.
+`inbox/` is transit. Now that filing is done and the report is written, ask once via `AskUserQuestion` form in the user's writing language. Two options.
 
 > A. Throw the imported source files away now that their content is filed.
 > B. Leave them in place for now (default).
 
-Default option: B. On A, run `zanmai.py file trash` for each imported source file (not the whole `import/` tree), passing `--filed-to` with the vault path that file's content actually reached. The command refuses without it. Say "throw away", not "move to the trash": the trash is swept, and to the user that is deletion.
+Default option: B. On A, run `zanmai.py file trash` for each imported source file (not the whole `inbox/` tree), passing `--filed-to` with the space path that file's content actually reached. The command refuses without it. Say "throw away", not "move to the trash": the trash is swept, and to the user that is deletion.
 
 ### Step 8: tooling-gap note and close-session proposal
 
@@ -302,11 +310,11 @@ All of the following must hold, or the run is not done.
 
 1. Every target file's body is byte-identical to its source. Diff is empty.
 2. Every target file's frontmatter validates against `zanmai/system/schema/frontmatter-v1.yaml`. Non-schema source fields are in the body's "Original metadata" section.
-3. Slugs are kebab-case ASCII, no collisions. Umlauts are mapped semantically (`ä` to `ae`, `ö` to `oe`, `ü` to `ue`, `ß` to `ss`).
+3. Slugs are kebab-case ASCII, no collisions. Umlauts are mapped semantically (`ä` to `ae`, `ö` to `oe`, `ü` to `ue`, `ß` to `ss`). **This is the file name and nothing else.** The title, the body, a task line, the name of a piece of work: everything a person reads keeps its umlauts. Carrying the slug rule into the text is how a space ends up telling its owner about `Ersatz fuer Ollama auswaehlen`, and `task add` and `work open` refuse that outright.
 4. After rewrite, no wikilink points nowhere; orphans go to the log, never to silent stubs.
 5. Every imported file is in its bundle's `INDEX.md` as a wikilink.
 6. `zanmai/memory/activity-log.md` has an entry per filed file with timestamp, agent and what.
-7. Master `INDEX.md` at the vault root references the new bundles.
+7. Master `INDEX.md` at the space root references the new bundles.
 8. The truth file of the primary bundle has no `## Plan` section after Step 5c.
 9. Operation report exists at `zanmai/logs/<YYYY>/<MM>/` covering this run.
 10. The Step 7 trash question has been asked exactly once. The outcome (trash or leave) has been honoured.
@@ -317,14 +325,14 @@ All of the following must hold, or the run is not done.
 | Rationalization | Reality |
 |---|---|
 | "Each file in the import is its own thing, file them as singles." | Bundle is the default for thematically related material. Singles are the exception. |
-| "I'll create a new instance-bundle even though the theme bundle already exists." | Existing bundle wins for the same theme. Append, do not sibling. A focus instance is the only legitimate sibling because it is instance-specific. |
+| "I'll create a new instance-bundle even though the bundle already exists." | Existing bundle wins for the same bundle. Append, do not sibling. A workbench piece is the only legitimate sibling because it is instance-specific. |
 | "I'll use `Write` directly because `zanmai.py` is one more layer." | `zanmai.py` is the only legal path. It deterministically handles created-date, source field, INDEX, master INDEX and activity-log. Direct writes miss those and produce drift. |
 | "The source body has a typo, let me fix it." | No. Body verbatim. Typos live in the user's content. |
 | "Three options as equals so the user picks." | If one is recommended, mark it as such with a reason. If they are truly equal, the question is malformed, drop it or use a smart default. |
 | "The user did not ask about contacts so I will not propose any." | Detection plus stub is the skill's job. Persons and organisations in the imported material are surfaced in the plan, with stubs by default per Directive 18. |
 | "I'll add a question about the images, or about moving versus copying, or about which structure." | The candidates are mode, scope and conflict, and only where the state leaves them open. Anything else is smart-default. A fourth question violates Hank's operating discipline. Attachments are handled by the Step 1 embed scan, not by asking. |
 | "I'll skip Q1 mode because the user clearly wants the convention." | An impression is not an answer. Q1 drops only when the target bundle already exists and carries the conventions itself (Directive 5). Otherwise it stays, convention marked as recommended, one keystroke to confirm. |
-| "I'll write the plan into a file because that is what we used to do." | The current contract is TL;DR-in-chat: Hank returns the four-part TL;DR (tree, axis, counts, notable) as the subagent's final message. Steve relays. No file in the vault, no plan file. The chat is the gate. |
+| "I'll write the plan into a file because that is what we used to do." | The current contract is TL;DR-in-chat: Hank returns the four-part TL;DR (tree, axis, counts, notable) as the subagent's final message. Steve relays. No file in the space, no plan file. The chat is the gate. |
 | "The greeting can use the user's first name from session history." | Greet from `zanmai/user.md`'s `preferred_address` or `first_name` field, freshly read by the hook. No inference from email, no recall from prior sessions. |
 
 ## Stop and look again
@@ -335,7 +343,7 @@ All of the following must hold, or the run is not done.
 - Execution has started, but no TL;DR was returned to Steve and no user approval was received.
 - Source had N files, mapping has M entries, the inventory said K. Recount.
 - Person or organisation names in the source body were not surfaced as stubs or in the TL;DR's notable section.
-- `import/` still contains the imported files after Step 7 was skipped silently.
+- `inbox/` still contains the imported files after Step 7 was skipped silently.
 - Truth file of the primary bundle still has a `## Plan` section after Step 5c.
 
 ## Files
@@ -343,5 +351,5 @@ All of the following must hold, or the run is not done.
 - `zanmai/system/scripts/zanmai.py`: the executor.
 - `zanmai/system/skills/classify-note/SKILL.md`: kind decision for unclear cases.
 - `zanmai/system/skills/snapshot/SKILL.md`: mandatory before risky writes.
-- `zanmai/system/templates/focus-bundle.md` and the other templates: used by `zanmai.py`.
+- `zanmai/system/templates/life-bundle.md` and the other templates: used by `zanmai.py`.
 - `zanmai/system/schema/frontmatter-v1.yaml`: schema `zanmai.py` enforces.

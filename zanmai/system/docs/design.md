@@ -2,7 +2,9 @@
 
 # Designing documents
 
-Flyers, one-pagers, slide decks and longer documents built in your organisation's own visual language.
+**Read this when:** a document has to be designed rather than only written, and where the brand is kept.
+
+Zanmai builds flyers, one-pagers, decks and longer documents in your organisation's own visual language. That language is read once from material you already have, because it cannot be guessed.
 
 ## What Zanmai needs from you
 
@@ -12,7 +14,7 @@ Three things are settled with you before it starts: who the piece is for, what i
 
 ## How the piece is built
 
-Your templates are read for their concrete values: the exact colours, type sizes, spacing rhythm, block geometry and recurring motifs. Those become a reusable kit for that brand and format, kept in the vault rather than next to the finished file, which is why a second piece in the same style comes faster than the first and why the third is better than the second.
+Your templates are read for their concrete values: the exact colours, type sizes, spacing rhythm, block geometry and recurring motifs. Those become a reusable kit for that brand and format, kept in the space rather than next to the finished file, which is why a second piece in the same style comes faster than the first and why the third is better than the second.
 
 Part of that kit is a limit on how many forms each element may have: two kinds of quote, not five. It sounds like a restriction and it is the opposite. A reader recognises structure because things repeat, so a document where every quote looks different has no quote form at all, only forty individual decisions. Where a case fits none of the existing forms, one form is widened for every place it appears rather than a new one invented on the spot.
 
@@ -30,7 +32,7 @@ With it comes the check result as it came out, what the run has cost so far and 
 
 ## What you get
 
-By default a rendered page: a file for the screen, or a print-ready PDF with the fonts embedded and verified rather than merely referenced. Page size comes from context, A4 in Europe, Letter in the US, or whatever the piece calls for. Everything lands in `doing`, one folder per piece, ready to pull out. The drafts stay beside the finished file, because they are the same matter.
+By default a rendered page: a file for the screen, or a print-ready PDF with the fonts embedded and verified rather than merely referenced. Page size comes from context, A4 in Europe, Letter in the US, or whatever the piece calls for. Everything lands in `workbench`, one folder per piece, ready to pull out. The drafts stay beside the finished file, because they are the same matter.
 
 When you need a file you can keep editing yourself, the piece is built natively in Affinity or PowerPoint instead. Say so up front, because it changes how it is made.
 
@@ -46,6 +48,7 @@ Your originals are not touched; Zanmai works on copies and writes new files, and
 
 - [Generating images and video](images.md), when the piece needs imagery that does not exist yet
 - [Folder architecture](folder-architecture.md), where finished work lands and why
+- [Documents written for you](writing.md), when the words come first
 
 ---
 

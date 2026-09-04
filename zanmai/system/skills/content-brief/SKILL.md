@@ -25,7 +25,7 @@ Make the neutral content substrate. Read the source, sort it by meaning, record 
 | Approve | Only when a live user dialog exists (Steve running this inline): show the draft as a plan, write after OK. Inside a dispatched production run (Carol) there is no mid-run chat, the dispatch brief is the approval; note the substrate in the return TL;DR instead. |
 | Write | To `knowledge/<product>/` as reusable product knowledge; source kept by reference; only the allowed fields. Never hand-write into a bundle, draft the substrate in the task's work area, then persist via the CLI: `zanmai.py bundle create` (kind `knowledge`) when the product bundle does not exist yet, `zanmai.py bundle add-file` for the substrate note. The script carries the schema frontmatter and the index duties. |
 
-`zanmai.py <subcommand>` is shorthand for `<python_cmd> zanmai/system/scripts/zanmai.py <subcommand>` run from the vault root, with `<python_cmd>` read from `zanmai/user.md`.
+`zanmai.py <subcommand>` is shorthand for `<python_cmd> zanmai/system/scripts/zanmai.py <subcommand>` run from the space root, with `<python_cmd>` read from `zanmai/user.md`.
 
 ## Substrate, the only legal write form
 
@@ -41,4 +41,4 @@ Sort by the question a piece answers: a problem or need → Problem; what the so
 
 ## Writing baseline (all produced copy follows this)
 
-Produced copy follows the human-voice discipline in `operating-principles.md` §7 (constructions, not one glyph). Its voice target is the brand's samples (`design.md`) and the source's tone samples captured in the substrate above, never an invented voice.
+Produced copy follows the human-voice discipline in `operating-principles.md` principle:surfaces (constructions, not one glyph). Its voice target is the brand's samples (`design.md`) and the source's tone samples captured in the substrate above, never an invented voice.

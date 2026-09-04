@@ -2,7 +2,9 @@
 
 # Editing video
 
-Raw footage and a rough idea in, a finished cut out. Luis does this work.
+**Read this when:** footage has to become a finished cut.
+
+Raw footage and a rough idea in, a finished cut out: trimmed, levelled, captioned, and in the format you need it for.
 
 ## What you hand over
 
@@ -12,7 +14,7 @@ Then: what the video is for and who watches it, which format or formats you want
 
 ## You see the plan before the work
 
-Transcribing is cheap and it gives Luis the content, so you get a proposal in plain words first: how long the piece is and what character it has, how tight the cut should be as an actual number, what treatment is recommended and what would be left alone, and for every place something would be added, what kind and why. Where footage would be generated, the shot is described before it exists, with what it costs.
+Transcribing is cheap and it gives the editor the content, so you get a proposal in plain words first: how long the piece is and what character it has, how tight the cut should be as an actual number, what treatment is recommended and what would be left alone, and for every place something would be added, what kind and why. Where footage would be generated, the shot is described before it exists, with what it costs.
 
 You read that and say go, or change it. Nobody should be surprised by a finished render.
 

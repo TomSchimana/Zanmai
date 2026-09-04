@@ -353,7 +353,7 @@
       "size_mb": 29
     },
     "whisper": {
-      "purpose": "Turns speech into text on this machine, with no network and no key, which is what a spoken journal entry needs. Used for a dropped voice note and for Reed's video and audio pipeline. Takes an initial prompt, which is how the vault's own names bias the recognition.",
+      "purpose": "Turns speech into text on this machine, with no network and no key, which is what a spoken journal entry needs. Used for a dropped voice note and for Reed's video and audio pipeline. Takes an initial prompt, which is how the space's own names bias the recognition.",
       "kind": "binary",
       "tier": "on-demand",
       "needed_by": [
@@ -543,11 +543,11 @@
         "method": "wong",
         "command": "zanmai.py media signer ensure (generates via the cryptography lib and stores cert.pem/key.pem; media mark also establishes on demand)",
         "recipe": "P-256 (prime256v1) key in PKCS#8 + cert with keyUsage=digitalSignature, EKU=emailProtection, CA:FALSE, AND subjectKeyIdentifier + authorityKeyIdentifier (c2pa REJECTS a signing cert lacking SKI/AKI, verified 2026-07-20).",
-        "storage": "user config dir OUTSIDE the vault (XDG_CONFIG_HOME/APPDATA), chmod 600, never in the vault (LD6)."
+        "storage": "user config dir OUTSIDE the space (XDG_CONFIG_HOME/APPDATA), chmod 600, never in the space (LD6)."
       }
     },
     "secret_store": {
-      "purpose": "Hold connection secrets and the signer key outside the vault (LD6).",
+      "purpose": "Hold connection secrets and the signer key outside the space (LD6).",
       "kind": "os-native",
       "tier": "on-demand",
       "needed_by": [
@@ -570,7 +570,7 @@
       "detect": {
         "method": "which"
       },
-      "fallback": "gitignored.env outside the vault, chmod 600, masked."
+      "fallback": "gitignored.env outside the space, chmod 600, masked."
     },
     "mcp_magnific": {
       "purpose": "Loki image/video backend.",
@@ -704,21 +704,21 @@
       "os": {
         "macos": {
           "install_hint": {
-            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the vault's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
+            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the space's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
             "guide": "docs/voice.md"
           },
           "verified": true
         },
         "linux": {
           "install_hint": {
-            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the vault's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
+            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the space's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
             "guide": "docs/voice.md"
           },
           "verified": false
         },
         "windows": {
           "install_hint": {
-            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the vault's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
+            "text": "Zanmai fetches it: `tools ensure whisper-model`. One file of about 1.6 GB over HTTPS, once, into the space's machine-local runtime folder. Nothing is unpacked and nothing is uploaded.",
             "guide": "docs/voice.md"
           },
           "verified": false
@@ -798,7 +798,7 @@
         "version_pin": "0.7.104",
         "root": "zanmai/runtime/node",
         "into": "zanmai/runtime/node/node_modules/.bin",
-        "note": "Needs node 22 or newer. Installed into the vault's runtime tree, not globally."
+        "note": "Needs node 22 or newer. Installed into the space's runtime tree, not globally."
       }
     },
     "libreoffice": {
@@ -869,7 +869,7 @@
     }
   },
   "capabilities": {
-    "_meta": "Per-expert, per-path REQUIRED tool ids. `tools preflight <expert> --capability <cap>` gates only on the required set, so a job takes only what that path needs (a screen flyer over html needs the renderer, not the Affinity MCP). Without --capability, preflight falls back to the expert's full needed_by (coarse). Optional refinements stay in needed_by and are surfaced by the expert, not gated. A capability under `shared` belongs to no single expert and is resolved for any of them that does not define its own: motion graphics are needed by whoever produces timed visuals, a cut today and a web page tomorrow, and a copy per expert is how two copies drift apart.",
+    "_meta": "Per-expert, per-path REQUIRED tool ids. `tools preflight <expert> --capability <cap>` gates only on the required set, so a job takes only what that path needs (a screen flyer over html needs the renderer, not the Affinity MCP). Without --capability, preflight falls back to the expert's full needed_by (coarse). Optional refinements stay in needed_by and are surfaced by the expert, not gated. A capability under `shared` belongs to no single expert and is resolved for any of them that does not define its own: motion graphics are needed by whoever produces timed visuals, a cut today and a web page tomorrow, and a copy per expert is how two copies drift apart. Every on-demand tool belongs to exactly one capability here, and that is what makes the question answerable: a person can say whether they want voice notes turned into text, and cannot say whether they want a rasteriser. Where a tool sits in no capability, the offer falls back to naming the library, which is the shape nobody can answer.",
     "shared": {
       "motion": {
         "required": [
@@ -899,6 +899,17 @@
         "required": [
           "python_pptx"
         ]
+      },
+      "print": {
+        "required": [
+          "poppler",
+          "ghostscript"
+        ]
+      },
+      "deck-render": {
+        "required": [
+          "libreoffice"
+        ]
       }
     },
     "luis": {
@@ -921,6 +932,52 @@
         "required": [
           "ffmpeg",
           "ffprobe"
+        ]
+      }
+    },
+    "loki": {
+      "images": {
+        "required": [
+          "pillow",
+          "pymupdf",
+          "numpy",
+          "color_matcher",
+          "rawpy",
+          "scikit_image"
+        ]
+      },
+      "marking": {
+        "required": [
+          "c2pa",
+          "cryptography",
+          "c2patool",
+          "c2pa_signer"
+        ]
+      }
+    },
+    "reed": {
+      "sources": {
+        "required": [
+          "yt_dlp",
+          "ffmpeg",
+          "whisper",
+          "whisper-model"
+        ]
+      }
+    },
+    "steve": {
+      "voice": {
+        "required": [
+          "ffmpeg",
+          "whisper",
+          "whisper-model"
+        ]
+      }
+    },
+    "wong": {
+      "credentials": {
+        "required": [
+          "secret_store"
         ]
       }
     }

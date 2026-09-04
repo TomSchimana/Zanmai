@@ -1,12 +1,12 @@
 ---
 name: zanmai:create-launcher
-description: Build a double-clickable starter for this vault. Triggers on any ask for an icon, app, launcher or shortcut to start Zanmai, and once as an optional step after setup.
+description: Build a double-clickable starter for this space. Triggers on any ask for an icon, app, launcher or shortcut to start Zanmai, and once as an optional step after setup.
 ---
 
 # create-launcher
 
 Not opening a terminal, finding the right folder, and knowing to type `claude` is a real barrier for
-someone who did not set the vault up themselves. This turns that into one click.
+someone who did not set the space up themselves. This turns that into one click.
 
 ## Directive
 
@@ -19,20 +19,20 @@ guess what is installed.
 
 - The user asks, in their own words, for an icon, an app, a launcher, a shortcut, or "something to
   click" that starts Zanmai. This is the direct trigger and works at any point in a session.
-- Offered once, as an optional last step of the `setup` skill (its Step 3d), after the vault is fully
+- Offered once, as an optional last step of the `setup` skill (its Step 3d), after the space is fully
   set up. A "no" there is not final: the user can ask for this anytime afterward the same way.
 
 ## When not to use
 
-- The vault is not set up yet (no `zanmai/user.md`). Run `setup` first.
-- The user wants to change vault folders or rename things. That is a manual operation, unrelated to
+- The space is not set up yet (no `zanmai/user.md`). Run `setup` first.
+- The user wants to change space folders or rename things. That is a manual operation, unrelated to
   this skill.
 
 ## The workflow
 
 ### Step 1: find out what is installed
 
-Run `zanmai.py launcher detect-terminals` from the vault root. It prints `id<TAB>name` pairs, one per
+Run `zanmai.py launcher detect-terminals` from the space root. It prints `id<TAB>name` pairs, one per
 line, and it is the only source of truth for what to offer; do not guess what terminal apps exist.
 
 - **Exactly one result** (always the case on Windows, and on a macOS machine with nothing but Terminal):
@@ -44,7 +44,7 @@ line, and it is the only source of truth for what to offer; do not guess what te
 
 ### Step 2: name it
 
-The default is always the vault folder's own name, read from the path, for example `Zanmai-dev` or
+The default is always the space folder's own name, read from the path, for example `Zanmai-dev` or
 `Second Brain`, never a fixed product name. State the default in one line and ask whether that is fine
 or whether the user wants a different name; a free name is always allowed. This is the inline-question
 mode from the `setup` skill's "How to ask the user" section, not a menu, there is nothing to choose
@@ -53,7 +53,7 @@ between beyond default vs. override.
 ### Step 3: build it
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py launcher create <vault_root> --name "<name>" --terminal <id>
+<python_cmd> zanmai/system/scripts/zanmai.py launcher create <space_root> --name "<name>" --terminal <id>
 ```
 
 On success it prints the path the starter was written to. On failure (a name already taken under
@@ -73,7 +73,7 @@ small, self-explanatory result.
 |---|---|
 | "The user already said no once during setup, I will not offer this again." | A "no" during setup is about that moment, not a standing refusal. Build it the moment they ask. |
 | "I know this machine has Ghostty from earlier in the conversation, I can skip detection." | Run detection every time. What was installed five minutes ago is not guaranteed to still be, and a stale assumption produces an icon for an app that is not there. |
-| "The vault is called `Zanmai-dev`, but the product is `Zanmai`, I will suggest the product name." | The default is the folder's own name, always. A hardcoded product name is wrong the moment two vaults exist on one machine (a private one and a work one, for example) and both get the same suggested name. |
+| "The space is called `Zanmai-dev`, but the product is `Zanmai`, I will suggest the product name." | The default is the folder's own name, always. A hardcoded product name is wrong the moment two spaces exist on one machine (a private one and a work one, for example) and both get the same suggested name. |
 | "Only Terminal is installed, I will still ask which terminal, options can't hurt." | A one-item list is not a choice. Use it and say so in the confirmation, do not ask. |
 
 ## Files

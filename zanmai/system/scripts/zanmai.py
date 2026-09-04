@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""zanmai.py: the single CLI for Zanmai vault operations.
+"""zanmai.py: the single CLI for Zanmai space operations.
 
 Replaces AI-tool-call sequences (Write+Edit+Write+...) with deterministic
 state-changes. AI decides (classification, plan); script executes.
 
 Subcommand groups:
     setup, first-time install and validation (init/validate/update)
-    snapshot, vault snapshots (create)
+    snapshot, space snapshots (create)
     bundle, bundle operations (create, add-file, add-truth, rename)
     asset, non-markdown files into the bundle they belong to (add)
     contact, person and organisation contacts (create)
-    notes, daily, weekly and monthly notes (daily, weekly, monthly)
+    journal, one entry per day (path, append, read, list)
     file, file moves to system folders (trash, archive)
     plan, plan-section maintenance on bundle truth files (clear-section)
     review, read-once briefings on the desk (archive)
     update, bundle-level index touches (wikilinks, embeds, master-index)
-    index, vault-index and pattern queries (rebuild, patterns, find, inspect)
+    index, space-index and pattern queries (rebuild, patterns, find, inspect)
     memory, briefing and operation reports (briefing, report)
 
 Conventions:
@@ -31,6 +31,7 @@ import argparse
 import contextlib
 import io
 import fnmatch
+import glob
 import json
 import os
 import re
@@ -45,11 +46,11 @@ from pathlib import Path
 
 
 # ----------------------------------------------------------------------------
-# Vault folder names. This is the only place they are spelled out.
+# Space folder names. This is the only place they are spelled out.
 #
 # Every path this file builds starts from one of these names, never from a
 # literal typed at the call site. Rename a folder here and a run over an empty
-# vault carries the new name everywhere, which is what makes a rename a change
+# space carries the new name everywhere, which is what makes a rename a change
 # instead of a project: the same string used to sit in some two hundred path
 # expressions, and each one was a chance to miss one.
 #
@@ -57,7 +58,7 @@ from pathlib import Path
 # the documentation describe a structure rather than address a file, and a
 # renamed folder changes the sentence, not one word inside it. Those are
 # rewritten by hand, in the same operation that changes a value here. A value
-# changed on its own would ship a vault that describes something other than
+# changed on its own would ship a space that describes something other than
 # what it does.
 #
 # A folder-shaped word that means something else keeps its literal, and there
@@ -65,34 +66,50 @@ from pathlib import Path
 # and `file trash` are commands, and the command keeps its name when the folder
 # it writes to is renamed. `inbox` is also an ordinary word, one entry in the
 # list of generic folder names the naming heuristic ignores, and that list is
-# about what people call folders, not about what this vault calls its own.
-# Neither is this vault's folder, so neither moves when a folder moves.
+# about what people call folders, not about what this space calls its own.
+# Neither is this space's folder, so neither moves when a folder moves.
 # ----------------------------------------------------------------------------
 
 SYSTEM_DIR = "zanmai"           # what the machine keeps; the user never opens it by hand
-IMPORT_DIR = "import"           # drop something in and it gets taken up
-ARCHIVE_DIR = "archive"         # finished and kept; answers no question any more
-# What has to be kept, or is worth keeping: contracts, policies, tax papers, certificates, receipts
-# with a warranty on them. The difference to the archive is not age and not tidiness, it is duty.
-# An archive holds what answers no question any more and may therefore be thrown away; this holds
-# what a law, a contract or a later need says must stay, and throwing any of it away is a decision
-# with a date attached. That is also why it is a root of its own rather than a folder inside the
-# archive: nesting it would inherit permission to clear it out, which is exactly backwards.
-RECORDS_DIR = "records"         # kept because it must be, with a term on each piece
 HOST_DIR = ".claude"            # what the host reads: skills, agents, settings
 
-# The five that describe what is going on in a head, not where a file type belongs.
-FOCUS_DIR = "focus"             # what I want to reach and what I am looking at
-DOING_DIR = "doing"             # the desk: work that has an end. The one place that empties.
-HABITS_DIR = "habits"           # what has a beat
-KNOWLEDGE_DIR = "knowledge"     # everything gathered, no ranking, and it may contradict itself
-TRUSTED_DIR = "trusted"         # what I have settled on. Small, curated, one answer.
-# The one area inside `trusted/` the system knows by name, because four experts read it by path.
+# ----------------------------------------------------------------------------
+# The areas. Each is defined by what happens to what lies in it, not by what
+# kind of thing it is: that is what makes a misfiling visible instead of a
+# matter of taste. A desk gets cleared, a filing cabinet does not.
+# ----------------------------------------------------------------------------
+
+INBOX_DIR = "inbox"             # where everything lands, however it got there. Empties daily.
+# The desk. Only work that has an end belongs here, and the test is a plain one: name the event
+# that closes it. "Bathroom finished" is an event, "the flat" is not. Without such an event a
+# piece is not a workbench piece and belongs in a room that is not meant to empty.
+WORKBENCH_DIR = "workbench"     # where the work happens. The one room that empties.
+# What is mine and matters to me now, at work or at home: health, money, family, the flat, the
+# car, hobbies, my own role, the team, a standing responsibility. The folders someone keeps open
+# rather than a set of categories. The line against the archive is whether I still act on it, and
+# the line against knowledge is whether it is mine: the research goes to knowledge, what I do with
+# it lives here.
+LIFE_DIR = "life"
+# What would still be right for someone else. Not everything gathered: what could be looked up
+# again or rebuilt from scratch, the way a memory holds a thing you can reproduce. A write-up of
+# my own machine is not knowledge, a comparison of the best games for a C64 is.
+KNOWLEDGE_DIR = "knowledge"
+# The folder in the cupboard, the boxes in the cellar. Not "never needed again": it is kept
+# precisely because it is taken out again - an invoice, a policy, a certificate. Nothing is
+# actively worked on here, and nothing changes except when something is added or an error turns
+# up. Every piece carries a date and a keeping reminder. The reminder reminds; it never deletes,
+# nothing is removed without the owner seeing it and saying so.
+ARCHIVE_DIR = "archive"
+# The one bundle inside `life/` the system knows by name, because four experts read it by path.
 # Created empty at setup: without the folder there is nowhere for an approved piece to land, and
 # every run starts from nothing again. Measured: a first build of two slides took 26
 # minutes and 76 tool calls, the correction of the same two 2.5 minutes and 11, and the only
 # difference was that the way was known the second time.
-BRANDS_DIR = f"{TRUSTED_DIR}/brands"
+# The brand lives under the system folder, not in the user's own areas. It is read by four
+# specialists by path and written by exactly one, so it is machine state with the user's content in
+# it rather than material they file. It stayed in `life/` for a while and that split the brand in
+# two: the command that counts brands read one place and the specialist who writes them wrote the
+# other. Update-immune, so nothing here is ever replaced by a release.
 
 # Inside the system folder.
 SYSTEM_MATERIAL_DIR = f"{SYSTEM_DIR}/system"        # distribution, replaced on update
@@ -100,6 +117,7 @@ EXTENSIONS_DIR = f"{SYSTEM_DIR}/extensions"
 CONNECTIONS_DIR = f"{SYSTEM_DIR}/connections"
 MEMORY_DIR = f"{SYSTEM_DIR}/memory"
 DESIGN_DIR = f"{SYSTEM_DIR}/design"   # one folder per brand, update-immune, written by the design work
+BRANDS_DIR = DESIGN_DIR              # the same place; two names for it split the brand in two once
 LOGS_DIR = f"{SYSTEM_DIR}/logs"
 HISTORY_DIR = f"{SYSTEM_DIR}/history"       # the snapshot repository, a git dir of its own
 RUNTIME_DIR = f"{SYSTEM_DIR}/runtime"
@@ -120,7 +138,7 @@ ACTIVITY_LOG_FILE = f"{MEMORY_DIR}/activity-log.md"
 # a binary file is the thing that loses a merge.
 OPEN_DIR = f"{SYSTEM_DIR}/open"
 WORK_FILE = "open.json"
-# Where it used to live. Read once by `setup update` to carry an existing vault across, and by
+# Where it used to live. Read once by `setup update` to carry an existing space across, and by
 # nothing else.
 LEGACY_OPEN_DIR = f"{SYSTEM_DIR}/open.base"
 
@@ -129,33 +147,47 @@ PEOPLE_DIR = f"{CONTACTS_DIR}/people"
 ORGANISATIONS_DIR = f"{CONTACTS_DIR}/organisations"
 CONTACT_FOLDERS = (PEOPLE_DIR, ORGANISATIONS_DIR)
 
-# The journal: the time axis. One bundle per period, four kinds, split by kind rather than nested by
-# time, because a week runs across a month boundary and any time-nesting breaks exactly there. The
-# year folder under daily, weekly and monthly is grouping only and carries no note of its own; the
-# year as a thing is `yearly/<year>/`.
+# The journal: the time axis. One entry per day, named by its date, filed under its year: `journal/2026/2026-08-31.md`. There
+# used to be four layers with a rollup writing the one above from the one below, and that rollup was
+# the only place in the system that wrote into the user's own text without being asked. A month is
+# thirty short files and reads in a second, so the summary is a question anybody can ask rather than
+# a file somebody has to keep true.
 JOURNAL_DIR = "journal"
-DAILY_DIR = f"{JOURNAL_DIR}/daily"
-WEEKLY_DIR = f"{JOURNAL_DIR}/weekly"
-MONTHLY_DIR = f"{JOURNAL_DIR}/monthly"
-YEARLY_DIR = f"{JOURNAL_DIR}/yearly"
+DAILY_DIR = JOURNAL_DIR
+
+# The one list for what has to be done and belongs to no matter in the space: book a haircut, take
+# the tablets at nine, the thing somebody mentioned in passing. In `life/`, because that is the area
+# for what is yours and matters now, and loose in it rather than as a bundle of its own, because a
+# bundle is a matter and this is a list. A plain file, so it can be edited, sorted and ticked off by
+# hand in any editor. A task that does belong to a matter stays in that matter's bundle, next to the
+# material it is about; this file is for everything with no such home, which used to be scattered
+# across journal days, one line each, in the day it happened to be asked for.
+TASKS_FILE = f"{LIFE_DIR}/task.md"
 
 
 # Schema-required and -optional fields per kind. Sync with schema/frontmatter-v1.yaml.
 COMMON_REQUIRED = ("kind", "slug", "created")
 COMMON_OPTIONAL = ("updated", "source", "source_detail", "tags", "mentioned_in")
 KIND_FIELDS = {
-    "focus": {"required": ("goal", "status"), "optional": ("due",)},
     # The desk. It asks for nothing beyond the common fields on purpose: what clears a bundle off
     # the desk is read from the file dates, not from a field somebody has to keep true.
-    "doing": {"required": (), "optional": ("status", "due")},
-    "habit": {"required": ("cadence",), "optional": ("last_done", "status")},
+    "workbench": {"required": (), "optional": ("status", "due")},
+    # What is mine and matters now. Nothing is required: a goal and a plain folder of papers both
+    # live here, and demanding a goal of the folder of papers would only teach people to write one
+    # that means nothing.
+    #
+    # `cadence` and `last_done` stood here as options and were removed: they could be written and
+    # were carried along by every move, and no line of code ever read them. A field that promises a
+    # rhythm and reports nothing when the rhythm breaks is worse than no field, because somebody
+    # fills it in and believes the space is watching. Nothing in any space had one.
+    "life": {"required": (), "optional": ("goal", "status", "due")},
     "knowledge": {"required": (), "optional": ("topic", "status")},
-    # A kept document. Nothing is required beyond the common fields, and that is deliberate: a scan
-    # that arrives before anyone has worked out what it is still has to be filable. What turns it
-    # into a record with a term on it is `retention_policy`, and that is set once somebody knows.
-    "record": {"required": (), "optional": ("doc_type", "lifecycle", "retention_policy",
-                                            "retention_until", "relates_to", "relates_via",
-                                            "source_path", "status", "due")},
+    # Something kept. Nothing is required beyond the common fields, and that is deliberate: a scan
+    # that arrives before anyone has worked out what it is still has to be filable. What gives it a
+    # keeping reminder is `retention_policy`, and that is set once somebody knows.
+    "archive": {"required": (), "optional": ("doc_type", "lifecycle", "retention_policy",
+                                             "retention_until", "relates_to", "relates_via",
+                                             "source_path", "status", "due")},
     "contact/person": {"required": (), "optional": ("nickname", "role", "org", "email", "phone", "birthday", "address", "website")},
     "contact/organization": {"required": (), "optional": ("kind_of", "website")},
 }
@@ -176,11 +208,22 @@ RECORD_LIFECYCLE = {
 # to a document is whether it can go yet, and disks are cheap while a missing paper is not: so
 # anything a real rule would put at one or two years sits in `four-years`, and anything a real rule
 # would put beyond ten sits in `forever`, because past ten years the difference is theoretical.
-RECORD_RETENTION = {
-    "forever": "never goes; `retention_until` stays empty",
-    "ten-years": "money and contracts; ten years from the document's date",
-    "four-years": "everyday proof with no contract behind it; four years from the document's date",
-}
+# The categories are not typed out here. They come from the shipped suggestions, and in a space that
+# has confirmed its own terms they come from those. A list in the code beside a file that claims to
+# hold the same thing is the shape that fails: one space carried a category its user had added, the
+# filing command could not offer it, and the entry sat in the file doing nothing.
+def _record_retention() -> dict:
+    """Category to its reason, from the shipped suggestions."""
+    daten = _retention_defaults()
+    return {str(e.get("category")): str(e.get("why") or "")
+            for e in daten.get("terms", []) if e.get("category")}
+
+
+def _retention_categories(space: Path) -> list[str]:
+    """What this space may set as a term: its own confirmed ones, else the shipped suggestions."""
+    eigen = _retention(space)
+    quelle = eigen or _retention_defaults()
+    return [str(e["category"]) for e in quelle.get("terms", []) if e.get("category")]
 
 # How one document relates to another. A closed vocabulary, because the point of naming a relation
 # is that it can be asked about: which invoice paid this, what cancelled that, which version this
@@ -219,24 +262,23 @@ STATUS_VALUES = tuple(STATUS_LIFECYCLE) + STATUS_KIND_SPECIFIC
 STATUS_CLOSED = ("done", "cancelled")
 
 
-# A routine's frontmatter kind is singular (`habit`), its folder is plural (`habits/`). Every
-# other bundle kind spells both the same, which is why the mismatch stayed invisible for so long:
-# `bundle create` built its path straight from the kind value and quietly created a second
-# `habit/` beside the real one, while the index build, the briefing scan and the structure check
-# only ever looked in the plural. A live vault ended up with a filled `habit/` next to an empty
-# `habits/`, and the user's routines were invisible to half the system (found 2026-08-05).
-# These two functions are the only place that knows about the difference. The previous shape - a
-# hand-kept folder list in five places plus one local `kind_map` patch - is exactly what drifted.
-# It then happened a second time, for record/records, and the same way: a new kind was added and
-# this map was not. So the map is no longer the safeguard, the check below is. Anything that has a
-# home under a root folder says so here; a kind whose folder is not a root at all is one that does
-# not get a folder of its own, and those are listed rather than inferred, so that forgetting an
-# entry fails loudly instead of quietly creating a folder next to the real one.
-KIND_FOLDERS = {"habit": "habits", "record": "records"}
-BUNDLE_KINDS = ("focus", "doing", "habit", "knowledge")
+# A kind whose folder is not simply its own name. Empty since every room and the kind that lives in
+# it carry the same word. The map stays because the check below needs somewhere to look, and because
+# the next kind that differs has a place to be written down instead of being remembered: twice a
+# kind was added and its mapping was not, and both times a folder in the singular sat next to the
+# real one, filled, while everything that reads the space looked in the plural.
+KIND_FOLDERS: dict[str, str] = {}
+BUNDLE_KINDS = ("workbench", "life", "knowledge", "archive")
 # Kinds that deliberately have no root folder of their own: a contact is a single file under
 # `contacts/`, never a bundle. Listed so the check can tell "no folder" from "folder forgotten".
 FOLDERLESS_KINDS = ("contact/person", "contact/organization")
+# Kinds that exist as a bundle but are not opened with `bundle create`, because their own command
+# does more than make a folder. Naming the command in the refusal is the whole point: a bare "not
+# allowed" sends the next run looking for a way around instead of to the door that is open.
+KINDS_WITH_OWN_COMMAND = {
+    "archive": "A matter is opened with `archive matter new`, which also gives it its chronology "
+               "and its counterparty.",
+}
 
 
 def _tags_arg(value: str | None) -> list[str] | None:
@@ -260,7 +302,7 @@ def _check_kind_folders() -> None:
 
     Twice now a kind was added and its folder mapping was not, and both times the result was a
     folder in the singular sitting next to the real one, filled, while everything that reads the
-    vault looked in the plural. A map that has to be remembered is not a safeguard; failing at
+    space looked in the plural. A map that has to be remembered is not a safeguard; failing at
     import time is. This costs one dict lookup per kind at startup.
     """
     fehlend = [k for k in KIND_FIELDS
@@ -268,33 +310,33 @@ def _check_kind_folders() -> None:
     if fehlend:
         raise SystemExit(
             f"zanmai.py is inconsistent with itself: kind(s) {', '.join(fehlend)} map to a folder "
-            f"that is not a vault root. Add the mapping to KIND_FOLDERS, or the kind to "
+            f"that is not a space root. Add the mapping to KIND_FOLDERS, or the kind to "
             f"FOLDERLESS_KINDS where it is not meant to have a folder.")
 
 
-def _vault_mkdir(vault: Path, ziel: Path, **kw) -> None:
-    """Create a directory inside the vault, refusing to invent a new root folder.
+def _space_mkdir(space: Path, ziel: Path, **kw) -> None:
+    """Create a directory inside the space, refusing to invent a new root folder.
 
-    The vault has nine user folders and they are the whole list. Twice a write path was built from
+    The space has nine user folders and they are the whole list. Twice a write path was built from
     data, once from a kind value and once from a routing target, and each time it created a folder
-    in the singular next to the real one: filled, invisible to everything that reads the vault, and
+    in the singular next to the real one: filled, invisible to everything that reads the space, and
     only noticed because a person saw it in the sidebar. Both times the code was correct in its own
     terms, and both times the wrong folder appeared anyway, because nothing checked the one thing
     that matters, which is whether the path lands somewhere that exists. So the check sits here,
     where the directory is actually made, and it fails loudly instead of building quietly.
     """
     try:
-        rel = ziel.resolve().relative_to(vault.resolve())
+        rel = ziel.resolve().relative_to(space.resolve())
     except (ValueError, OSError):
-        ziel.mkdir(**kw)      # outside the vault: not this function's business
+        ziel.mkdir(**kw)      # outside the space: not this function's business
         return
     # A dotted folder at the root is somebody else's business by design, the host config, the
     # editor, git. The failure this guards against is a visible folder next to a visible folder.
     if (rel.parts and not rel.parts[0].startswith(".")
-            and rel.parts[0] not in _VAULT_ROOT_ALLOWED_DIRS):
+            and rel.parts[0] not in _SPACE_ROOT_ALLOWED_DIRS):
         raise SystemExit(
-            f"fail: {rel.parts[0]}/ is not a folder this vault has, so nothing was created. The "
-            f"vault's folders are: {', '.join(sorted(_VAULT_ROOT_ALLOWED_DIRS))}. A path that "
+            f"fail: {rel.parts[0]}/ is not a folder this space has, so nothing was created. The "
+            f"space's folders are: {', '.join(sorted(_SPACE_ROOT_ALLOWED_DIRS))}. A path that "
             f"lands anywhere else is a bug in whatever built it, not a folder to add.")
     ziel.mkdir(**kw)
 
@@ -318,13 +360,10 @@ BUNDLE_FOLDERS = tuple(_kind_folder(k) for k in BUNDLE_KINDS)
 # there has been taken up yet, and so is the system folder, which is the machine's.
 USER_ROOTS = (
     JOURNAL_DIR,
-    FOCUS_DIR,
-    DOING_DIR,
-    HABITS_DIR,
+    WORKBENCH_DIR,
+    LIFE_DIR,
     KNOWLEDGE_DIR,
-    TRUSTED_DIR,
     ARCHIVE_DIR,
-    RECORDS_DIR,
     CONTACTS_DIR,
 )
 
@@ -344,6 +383,43 @@ _UMLAUT_MAP = {
     "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
     "Ä": "Ae", "Ö": "Oe", "Ü": "Ue",
 }
+
+
+# German words written without their umlauts, in the shape a keyboard-shy run produces: `fuer`,
+# `zurueck`, `naechste`. Only words that exist in no other language this way, so a match is a match
+# and never a guess. A slug may be spelled like this, a file name may be; a sentence the user reads
+# back may not, and that is the whole distinction this list carries.
+#
+# It exists because text entered through a command is text somebody typed under quoting pressure,
+# and the shell is where umlauts get dropped for convenience. The space then shows that sentence
+# back at every session start, in the user's own language, misspelled, and nothing ever corrects it
+# because nothing ever looks. A word list is deterministic; asking a run to remember is not.
+_OHNE_UMLAUT = (
+    "fuer", "dafuer", "hierfuer", "wofuer", "ueber", "darueber", "gegenueber", "ueberhaupt",
+    "zurueck", "natuerlich", "moeglich", "unmoeglich", "moeglichkeit", "noetig", "spaeter",
+    "naechste", "naechsten", "naechster", "haeufig", "taeglich", "waehrend", "waehlen",
+    "auswaehlen", "gewaehlt", "koennen", "koennte", "koennten", "moechte", "moechten",
+    "muessen", "muesste", "duerfen", "duerfte", "gehoert", "hoeren", "erklaeren", "aendern",
+    "geaendert", "aenderung", "loeschen", "geloescht", "pruefen", "ueberpruefen", "fuehren",
+    "gefuehrt", "einfuehren", "durchfuehren", "buendel", "ausloeser", "groesse", "groesser",
+    "stueck", "zurueckgeben", "verfuegbar", "beduerfnis", "ueblich", "schliesslich",
+)
+_OHNE_UMLAUT_RE = re.compile(r"\b(" + "|".join(_OHNE_UMLAUT) + r")\b", re.IGNORECASE)
+
+
+def _umlaut_verlust(text: str) -> list[str]:
+    """German words in this text that lost their umlauts. Empty where there are none."""
+    return sorted({m.group(0) for m in _OHNE_UMLAUT_RE.finditer(text or "")})
+
+
+def _refuse_umlaut_verlust(text: str, feld: str) -> str:
+    """The refusal for text the user will read back, or "" where the text is fine."""
+    treffer = _umlaut_verlust(text)
+    if not treffer:
+        return ""
+    return (f"fail: {feld} carries German words without their umlauts: {', '.join(treffer)}. "
+            f"This text is shown back to the user, in their own language, so it is spelled the way "
+            f"they write it. Quote the argument and type the umlauts.")
 
 
 def _slugify(value: str) -> str:
@@ -369,7 +445,7 @@ def _slugify_bundle_path(value: str) -> tuple[list[str], str]:
     return segments, segments[-1]
 
 
-def _resolve_bundle_dir(vault: Path, bundle_slug: str, bundle_kind: str | None) -> tuple[Path | None, str | None, str]:
+def _resolve_bundle_dir(space: Path, bundle_slug: str, bundle_kind: str | None) -> tuple[Path | None, str | None, str]:
     """Find the bundle directory for a (possibly sub-pathed) slug.
 
     Returns (bundle_dir, bundle_kind, leaf_slug). bundle_dir is None when no
@@ -382,11 +458,11 @@ def _resolve_bundle_dir(vault: Path, bundle_slug: str, bundle_kind: str | None) 
     # The caller passes a kind value, the folder may spell it differently, and what comes back is a
     # kind value again because it ends up in frontmatter.
     if bundle_kind:
-        candidate = vault / _kind_folder(bundle_kind) / Path(*segments)
+        candidate = space / _kind_folder(bundle_kind) / Path(*segments)
         return (candidate if candidate.is_dir() else None), bundle_kind, leaf
 
     for folder in BUNDLE_FOLDERS:
-        candidate = vault / folder / Path(*segments)
+        candidate = space / folder / Path(*segments)
         if candidate.is_dir():
             return candidate, _folder_kind(folder), leaf
     return None, None, leaf
@@ -543,8 +619,8 @@ def _render_original_metadata_block(leftover: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _append_activity_log(vault: Path, agent: str, what: str) -> None:
-    log = vault / MEMORY_DIR / "activity-log.md"
+def _append_activity_log(space: Path, agent: str, what: str) -> None:
+    log = space / MEMORY_DIR / "activity-log.md"
     if not log.exists():
         return
     line = f"\n## [{_timestamp_log()}] - {agent} - {what}\n"
@@ -598,7 +674,7 @@ def _append_index(index_path: Path, slug: str, summary: str = "") -> None:
     # the user's language carries that heading in their words and the members list is
     # the first section either way. Without that second pass the link landed at the
     # end of the file, below the activity log.
-    candidates = ["## Files in this bundle", "## Knowledge", "## Focus", "## Habits"]
+    candidates = ["## Files in this bundle", "## Knowledge", "## Life", "## Workbench"]
     first = re.search(r"^## .+$", text, re.MULTILINE)
     if first:
         candidates.append(first.group(0))
@@ -659,7 +735,7 @@ def _render_bundle_index(*, slug: str, title: str, bundle_kind: str = "knowledge
     # The schema does not require goal or status on INDEX files. The
     # kind-required hook exempts INDEX.md from the required-field check.
     #
-    # The two headings are passed in because this file is the user's, and a vault
+    # The two headings are passed in because this file is the user's, and a space
     # written in one language does not want two English headings in the middle of it.
     # The script cannot know the language, and a table of translations here would grow
     # with every language Zanmai meets, so the caller supplies the words; English is
@@ -672,7 +748,7 @@ def _render_bundle_index(*, slug: str, title: str, bundle_kind: str = "knowledge
     if is_sub_bundle:
         # No claim here about whether a truth file exists. It used to say there was
         # none, which `bundle add-truth` then made false without correcting it, and
-        # that is the documented path for a sub-bundle with its own theme.
+        # that is the documented path for a sub-bundle with its own identity.
         return _render_frontmatter(fm, list(fm.keys())) + (
             f"\n# {title}, index\n\n"
             f"## {heading_files}\n\n"
@@ -686,8 +762,34 @@ def _render_bundle_index(*, slug: str, title: str, bundle_kind: str = "knowledge
     )
 
 
+# A bundle is a place things accumulate, and its name has to leave room for the second thing. Three
+# words in a row is where a name stops being a subject and starts being the occasion that produced
+# the first file: `ki-coding-workflows` instead of `ai`, `italien-suedliche-regionen-september`
+# instead of `italien`. A bundle cut that tight can only ever hold the one file that named it, which
+# is why the empty-bundle finding exists at the other end of the same mistake. The file may be as
+# specific as it likes; the folder around it may not.
+#
+# Two words pass, because plenty of real subjects are two (`back-training`, `home-office`). A
+# deliberately narrow name is still available, it just has to be said out loud with `--narrow`,
+# which is the difference between a decision and a habit.
+_BUNDLE_NAME_WORTE = 2
+
+
+def _zu_enger_bundle_name(slug: str) -> str | None:
+    """The broader name this slug is hiding, or None where the slug is already a subject.
+
+    The head of the name is what stays: `ki-coding-workflows` is about `ki`, and `travel-italy-2026`
+    is about `travel`. Returning it lets the refusal name the alternative instead of asking the
+    caller to guess what "broader" means.
+    """
+    worte = [w for w in slug.split("-") if w]
+    if len(worte) <= _BUNDLE_NAME_WORTE:
+        return None
+    return worte[0]
+
+
 def cmd_create_bundle(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     kind = args.kind
     if kind in ("contact/person", "contact/organization"):
         print(
@@ -700,8 +802,10 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
         print(f"fail: unknown kind {kind}", file=sys.stderr)
         return 1
     if kind not in BUNDLE_KINDS:
-        print(f"fail: {kind} is not a bundle kind. A matter in the records area is created with "
-              f"`records matter new`, which also gives it its chronology and its counterparty.",
+        print(f"fail: {kind} is not a bundle kind.", file=sys.stderr)
+        return 1
+    if kind in KINDS_WITH_OWN_COMMAND:
+        print(f"fail: a {kind} bundle is not created here. {KINDS_WITH_OWN_COMMAND[kind]}",
               file=sys.stderr)
         return 1
     # Sub-bundle slugs are allowed via "/" (e.g. "computer/clippings"). Each
@@ -710,17 +814,25 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
     if not segments:
         print(f"fail: empty slug", file=sys.stderr)
         return 1
+    breiter = None if getattr(args, "narrow", False) else _zu_enger_bundle_name(slug)
+    if breiter:
+        print(f"fail: '{slug}' names the occasion, not the subject, so nothing else will ever fit "
+              f"in it and it stays a folder around one file. '{breiter}' is the subject here; "
+              f"the file keeps the long name. Check what is already there first "
+              f"(`index find --tokens {breiter}`), then either create '{breiter}' or, where the "
+              f"narrow cut is really what is wanted, say so with --narrow.", file=sys.stderr)
+        return 1
     folder = _kind_folder(kind)
-    bundle_dir = vault / folder / Path(*segments)
+    bundle_dir = space / folder / Path(*segments)
     if bundle_dir.exists():
         print(f"fail: bundle already exists: {bundle_dir}", file=sys.stderr)
         return 1
-    _vault_mkdir(vault, bundle_dir, parents=True)
+    _space_mkdir(space, bundle_dir, parents=True)
     bundle_rel = f"{folder}/{'/'.join(segments)}"
     is_sub_bundle = len(segments) > 1
 
     additions: dict = {"_title": args.title or slug.replace("-", " ").title()}
-    for key in ("source", "source_detail", "goal", "status", "cadence", "due", "topic", "last_done"):
+    for key in ("source", "source_detail", "goal", "status", "due", "topic"):
         v = getattr(args, key, None)
         if v:
             additions[key] = v
@@ -731,9 +843,9 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
     # Sub-bundles get no truth file from this command by default. Two shapes
     # coexist:
     #   - Organisational sub-folder: container for loose items of a narrow
-    #     shape inside the parent theme. The parent's truth carries the
-    #     theme; the sub-folder is just a grouping. Stays as-is (no truth).
-    #   - Thematic sub-bundle: the sub-theme has its own identity. Add the
+    #     shape inside the parent bundle. The parent's truth carries the
+    #     matter; the sub-folder is just a grouping. Stays as-is (no truth).
+    #   - Thematic sub-bundle: the sub-bundle has its own identity. Add the
     #     truth file with a "Part of [[parent]]" wikilink afterwards via
     #     `zanmai.py bundle add-truth`. Kept as a separate command so
     #     the caller decides shape per bundle, not by name convention.
@@ -752,33 +864,45 @@ def cmd_create_bundle(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
 
-    _append_activity_log(vault, "zanmai.py", f"created bundle {bundle_rel}/")
-    _update_master_index(vault)
+    _append_activity_log(space, "zanmai.py", f"created bundle {bundle_rel}/")
+    _update_master_index(space)
 
     print(f"ok: bundle created at {bundle_rel}/")
-    # A sub-bundle with a theme of its own needs a truth file, and two runs on two different days
+    # What already exists, at the moment a new one is made. Filing happens one folder at a time and
+    # each one looks right on its own; the shape nobody chose appears between them, and by the time
+    # anybody notices there are four bundles for one matter. The names are printed across every
+    # area, not just the one being written to, because the same matter often already has a home
+    # somewhere else. Nothing is refused and nothing is proposed here: the list is the whole point,
+    # and reading it is the job of whoever asked for the bundle.
+    if not is_sub_bundle:
+        # From one upwards here, not from two as in the sweep. An area holding a single bundle is
+        # often exactly the home being looked for: research about travel sits alone in knowledge
+        # while the trips pile up in life, and a threshold of two hides precisely that.
+        for zeile in _area_shape(space, ab=1):
+            print(f"  {zeile}")
+    # A sub-bundle with an identity of its own needs a truth file, and two runs on two different days
     # created one, found it missing and reached for `bundle add-truth` afterwards. Doing it here
     # spares the second call; saying so spares the search for why the folder looks half-built.
     if is_sub_bundle and getattr(args, "truth", False):
         return cmd_create_sub_bundle_truth(argparse.Namespace(
-            vault=str(vault), kind=kind, bundle_slug=args.slug, title=args.title,
+            space=str(space), kind=kind, bundle_slug=args.slug, title=args.title,
             **{k: getattr(args, k, None)
-               for k in ("goal", "status", "cadence", "due", "topic", "last_done")}))
+               for k in ("goal", "status", "due", "topic")}))
     if is_sub_bundle:
-        print(f"note: no truth file, because a sub-bundle is a grouping unless it carries a theme "
+        print(f"note: no truth file, because a sub-bundle is a grouping unless it carries a matter of its own "
               f"of its own. Where it does, `bundle create --truth` writes one in the same call, or "
               f"`bundle add-truth --kind {kind} --bundle-slug {args.slug}` adds it now.")
     return 0
 
 
 def cmd_copy_into_bundle(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     source = Path(args.source).resolve()
     if not source.exists() or not source.is_file():
         print(f"fail: source not a file: {source}", file=sys.stderr)
         return 1
 
-    bundle_dir, bundle_kind, leaf_slug = _resolve_bundle_dir(vault, args.bundle_slug, args.bundle_kind)
+    bundle_dir, bundle_kind, leaf_slug = _resolve_bundle_dir(space, args.bundle_slug, args.bundle_kind)
     if not bundle_dir:
         print(f"fail: bundle '{args.bundle_slug}' not found", file=sys.stderr)
         return 1
@@ -827,8 +951,9 @@ def cmd_copy_into_bundle(args: argparse.Namespace) -> int:
     fm_text = _render_frontmatter(target_fm, target_order)
     leftover_block = _render_original_metadata_block(leftover)
     target.write_text(f"{fm_text}\n{body.rstrip()}\n{leftover_block}", encoding="utf-8")
+    _clear_inbox_source(space, source, target)
 
-    bundle_rel = target.parent.relative_to(vault).as_posix()
+    bundle_rel = target.parent.relative_to(space).as_posix()
     # The index line describes the member, so it takes the file's own topic or title
     # where it has one. The bare source stem told the reader nothing the wikilink did
     # not already say, and had to be replaced by hand afterwards.
@@ -841,13 +966,64 @@ def cmd_copy_into_bundle(args: argparse.Namespace) -> int:
                 break
     _append_index(bundle_dir / "INDEX.md", target_slug, summary=summary or source.stem)
     _append_activity_log(
-        vault, "zanmai.py",
+        space, "zanmai.py",
         f"copied {source.name} into {bundle_rel}/ (body verbatim, "
         f"frontmatter migrated, {len(leftover)} non-schema field(s) moved to body)"
     )
 
-    print(f"ok: copied to {target.relative_to(vault)}")
+    print(f"ok: copied to {target.relative_to(space)}")
     return 0
+
+
+def _clear_inbox_source(space: Path, source: Path, target: Path) -> None:
+    """Take a file out of the inbox once its content is filed, and say so.
+
+    The inbox is the one area whose whole purpose is to become empty, and until now nothing emptied
+    it: filing copied the file into its bundle and left the original lying there. The next session
+    found it waiting again, worked it a second time, and the day after that a third. There is no
+    time limit here and there should not be one, because the question is not how old the file is,
+    it is whether its content has arrived.
+
+    **Leaving is moving, not deleting**, and which of the two exits a file takes is a question about
+    the file rather than about tidiness: does it still carry something the result does not? A scanned
+    invoice does, so it goes to the matter it belongs to and lives there. A voice note saying "put
+    this on my list" does not, so it goes to the trash once the task exists. The run decides that by
+    reading; where the user has answered it once for a kind of file, the answer is in their routing
+    rule as `keep` and nobody is asked twice.
+
+    Nothing is deleted either way: the trash is restorable for thirty days, with the line in the log
+    saying where the content went.
+    """
+    try:
+        rel = source.resolve().relative_to(space.resolve()).as_posix()
+    except ValueError:
+        return  # came from outside the space; nothing of ours to clear
+    if not rel.startswith(f"{INBOX_DIR}/"):
+        return
+    ziel_rel = target.relative_to(space).as_posix()
+    # Where the file itself is still wanted, its home is beside what was made from it. Filing has
+    # usually put a copy there already, and then the one in the inbox is a second file that will
+    # drift from the first. Where it has not, this moves the file rather than discarding it, so a
+    # step that forgot to carry the original cannot lose it. Asked before the gate below, because
+    # that gate wants a destination that already holds the content, and here the file being moved
+    # is what arrives there.
+    quell_regel = _route_for_file(space, source)
+    behalten = str(quell_regel.get("keep") or "").lower()
+    ziel_ordner = target.parent if target.suffix else target
+    if behalten == "with-result" and not (ziel_ordner / source.name).exists():
+        ziel_ordner.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(ziel_ordner / source.name))
+        neu_rel = (ziel_ordner / source.name).relative_to(space).as_posix()
+        _append_activity_log(space, "zanmai.py", f"moved {rel} to {neu_rel} (kept with its result)")
+        print(f"ok: {rel} left {INBOX_DIR}/ and now sits with its result at {neu_rel}")
+        _routing_learn_keep(space, quell_regel, "with-result")
+        return
+    _grund, fehler = _import_exit(space, ziel_rel, source)
+    if fehler:
+        print(f"note: {rel} stays in {INBOX_DIR}/. {fehler.removeprefix('fail: ')}", file=sys.stderr)
+        return
+    if _move_into(space, source, TRASH_DIR, "trashed", dated=True, filed_to=ziel_rel) == 0:
+        print(f"ok: {rel} left {INBOX_DIR}/, its content is at {ziel_rel}")
 
 
 def cmd_copy_attachment(args: argparse.Namespace) -> int:
@@ -864,10 +1040,10 @@ def cmd_copy_attachment(args: argparse.Namespace) -> int:
     rather than a container. `--overwrite` allows replacement of an existing target; otherwise the
     new name gets an `-imported` suffix.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     source = Path(args.source).resolve()
 
-    bundle_dir, _kind, _leaf = _resolve_bundle_dir(vault, args.bundle_slug, args.bundle_kind)
+    bundle_dir, _kind, _leaf = _resolve_bundle_dir(space, args.bundle_slug, args.bundle_kind)
     if bundle_dir is None:
         print(f"fail: bundle '{args.bundle_slug}' not found", file=sys.stderr)
         print("hint: run `bundle create --kind <k> --slug <slug>` first", file=sys.stderr)
@@ -884,57 +1060,32 @@ def cmd_copy_attachment(args: argparse.Namespace) -> int:
         stem, dot, ext = target.name.rpartition(".")
         target = target.parent / (f"{stem}-imported.{ext}" if dot else f"{target.name}-imported")
     shutil.copy2(source, target)
+    _clear_inbox_source(space, source, target)
 
     # Record any rename (original -> final) so `update embeds` can resolve
     # plan-driven attachment renames automatically. Stable across import waves
     # until cleared via `update embeds --clear-rename-map`.
     if target.name != source.name:
-        _record_rename(vault, source.name, target.name)
+        _record_rename(space, source.name, target.name)
 
-    rel = target.relative_to(vault).as_posix()
-    _append_activity_log(vault, "zanmai.py", f"attachment {target.name} -> {rel}")
+    rel = target.relative_to(space).as_posix()
+    _append_activity_log(space, "zanmai.py", f"attachment {target.name} -> {rel}")
     print(f"ok: attachment at {rel}")
     return 0
 
 
-def _update_master_index(vault: Path) -> None:
-    """Regenerate vault-root INDEX.md from existing bundles."""
-    master = vault / "INDEX.md"
+def _update_master_index(space: Path) -> None:
+    """Regenerate space-root INDEX.md from existing bundles."""
+    master = space / "INDEX.md"
     if not master.exists():
         return
     text = master.read_text(encoding="utf-8")
 
-    def list_bundles(kind: str) -> list[str]:
-        kind_dir = vault / _kind_folder(kind)
-        if not kind_dir.is_dir():
-            return []
-        bundles = sorted(p.name for p in kind_dir.iterdir() if p.is_dir())
-        return bundles
-
-    def list_single_notes(kind: str) -> list[str]:
-        kind_dir = vault / _kind_folder(kind)
-        if not kind_dir.is_dir():
-            return []
-        return sorted(p.stem for p in kind_dir.iterdir() if p.is_file() and p.suffix == ".md")
-
     def list_contacts(sub: str) -> list[str]:
-        contacts_dir = vault / CONTACTS_DIR / sub
+        contacts_dir = space / CONTACTS_DIR / sub
         if not contacts_dir.is_dir():
             return []
         return sorted(p.stem for p in contacts_dir.iterdir() if p.is_file() and p.suffix == ".md")
-
-    def render_section(header: str, kind: str, intro: str) -> str:
-        bundles = list_bundles(kind)
-        singles = list_single_notes(kind)
-        lines = [f"## {header}", "", intro, ""]
-        if not bundles and not singles:
-            lines.append("(empty)")
-        else:
-            for b in bundles:
-                lines.append(f"- [[{b}]]")
-            for s in singles:
-                lines.append(f"- [[{s}]]")
-        return "\n".join(lines) + "\n"
 
     def render_contacts() -> str:
         people = list_contacts("people")
@@ -957,7 +1108,7 @@ def _update_master_index(vault: Path) -> None:
 
     def render_flat_root(header: str, folder: str, intro: str) -> str:
         """A root that holds bundles directly, with no kind folder in between."""
-        root = vault / folder
+        root = space / folder
         entries = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
         singles = sorted(p.stem for p in root.iterdir()
                          if p.is_file() and p.suffix == ".md" and p.stem != "INDEX") if root.is_dir() else []
@@ -969,46 +1120,24 @@ def _update_master_index(vault: Path) -> None:
                 lines.append(f"- [[{e}]]")
         return "\n".join(lines) + "\n"
 
-    new_focus = render_section("Focus", "focus",
-                               f"What you want to reach and what you are looking at. See `{FOCUS_DIR}/`.")
-    new_doing = render_flat_root(
-        "Doing", DOING_DIR,
-        "The desk: work that has an end, with every draft of it together in one bundle. You put "
-        f"things here and so does Zanmai. See `{DOING_DIR}/`.")
-    new_habits = render_section("Habits", "habit", f"What has a beat. See `{HABITS_DIR}/`.")
-    new_knowledge = render_section(
-        "Knowledge", "knowledge",
-        "Everything gathered, with no ranking, and it is allowed to contradict itself. The default "
-        "place for anything that does not clearly belong elsewhere, and the place where most of it "
-        f"stays. See `{KNOWLEDGE_DIR}/`.")
-    new_trusted = render_flat_root(
-        "Trusted", TRUSTED_DIR,
-        "What you have settled on and what cannot be worked out from the files themselves. Small, "
-        f"curated, one answer per question. See `{TRUSTED_DIR}/`.")
-    new_archive = render_flat_root(
-        "Archive", ARCHIVE_DIR,
-        "Finished and kept: the document from outside and your own completed piece. It answers no "
-        f"question any more, and nothing has to end up here. See `{ARCHIVE_DIR}/`.")
-    def render_records(header: str, intro: str) -> str:
-        """The matters, grouped by section, rather than the sections alone.
+    def render_grouped(header: str, folder: str, intro: str) -> str:
+        """Every bundle in an area, with whatever sits inside it listed under it.
 
-        A section is a filing drawer and nobody looks for one. What somebody looks for is the
-        contract, the policy, the case, and those live a level down, so listing only the drawers
-        makes the index say `vertraege` where the user is looking for `bahncard`.
+        Both levels appear, because both exist: an area holds bundles directly and a bundle may
+        hold bundles. Listing only the inner level hid every bundle without a sub-bundle, which
+        after setup is most of them, and the index then reported an area as empty while it held
+        four folders. The outer name is a link rather than a bold label for the same reason: it is
+        a bundle with a page of its own, not a drawer.
         """
-        root = vault / RECORDS_DIR
+        root = space / folder
         lines = [f"## {header}", "", intro, ""]
         if not root.is_dir():
             return "\n".join(lines + ["(empty)"]) + "\n"
         etwas = False
         for bereich in sorted(p for p in root.iterdir() if p.is_dir()):
-            sachen = sorted(s.name for s in bereich.iterdir() if s.is_dir())
-            if not sachen:
-                continue
             etwas = True
-            lines.append(f"**{bereich.name}**")
-            lines += [f"- [[{s}]]" for s in sachen]
-            lines.append("")
+            lines.append(f"- [[{bereich.name}]]")
+            lines += [f"  - [[{s}]]" for s in sorted(s.name for s in bereich.iterdir() if s.is_dir())]
         lose = sorted(s.stem for s in root.iterdir()
                       if s.is_file() and s.suffix == ".md" and s.stem != "INDEX")
         if lose:
@@ -1018,48 +1147,51 @@ def _update_master_index(vault: Path) -> None:
             lines.append("(empty)")
         return "\n".join(lines).rstrip() + "\n"
 
-    new_records = render_records(
-        "Records",
-        "What has to be kept, whether or not it is still of interest: contracts, invoices, "
-        "certificates, anything with a term on it. Each matter is a folder holding its documents "
-        f"and a note saying where it stands. See `{RECORDS_DIR}/`.")
+    new_workbench = render_flat_root(
+        "Workbench", WORKBENCH_DIR,
+        "The desk: work that has an end, with every draft of it together in one bundle. If you "
+        "cannot name the event that finishes a piece, it does not belong here. You put things here "
+        f"and so does Zanmai. See `{WORKBENCH_DIR}/`.")
+    new_life = render_grouped(
+        "Life", LIFE_DIR,
+        "What is yours and matters to you now, at work or at home. The research goes to knowledge; "
+        f"what you do with it lives here. See `{LIFE_DIR}/`.")
+    new_knowledge = render_grouped(
+        "Knowledge", KNOWLEDGE_DIR,
+        "What would still be right for someone else: what you could look up again or rebuild from "
+        f"scratch. See `{KNOWLEDGE_DIR}/`.")
+    new_archive = render_grouped(
+        "Archive", ARCHIVE_DIR,
+        "The folder in the cupboard: kept because you take it out again. Each piece carries a date "
+        f"and a keeping reminder, and nothing goes without you saying so. See `{ARCHIVE_DIR}/`.")
     new_contacts = render_contacts()
 
     # Each section is replaced up to the next heading, so the order here is the order in the file
     # that `_render_master_index` writes. A section whose successor heading is missing is left
     # alone rather than swallowing the rest of the file.
     for pattern, replacement in (
-        (r"## Focus\n.*?(?=\n## Doing)", new_focus),
-        (r"## Doing\n.*?(?=\n## Habits)", new_doing),
-        (r"## Habits\n.*?(?=\n## Knowledge)", new_habits),
-        (r"## Knowledge\n.*?(?=\n## Trusted)", new_knowledge),
-        (r"## Trusted\n.*?(?=\n## Archive)", new_trusted),
-        (r"## Archive\n.*?(?=\n## Records|\n## Contacts)", new_archive),
-        (r"## Records\n.*?(?=\n## Contacts)", new_records),
-        (r"## Contacts\n.*?(?=\n## Import)", new_contacts),
+        (r"## Workbench\n.*?(?=\n## Life)", new_workbench),
+        (r"## Life\n.*?(?=\n## Knowledge)", new_life),
+        (r"## Knowledge\n.*?(?=\n## Archive)", new_knowledge),
+        (r"## Archive\n.*?(?=\n## Contacts)", new_archive),
+        (r"## Contacts\n.*?(?=\n## Inbox)", new_contacts),
     ):
         text = re.sub(pattern, replacement + "\n", text, flags=re.DOTALL)
-
-    # An index written before the records area existed has no heading for it, and a replacement
-    # that finds nothing to replace leaves it out for ever. So the heading is put in once, ahead of
-    # contacts, and filled on this same pass.
-    if "\n## Records\n" not in text and "\n## Contacts\n" in text:
-        text = text.replace("\n## Contacts\n", f"\n{new_records}\n\n## Contacts\n", 1)
 
     master.write_text(text, encoding="utf-8")
 
 
 def cmd_update_master_index(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
-    _update_master_index(vault)
-    _append_activity_log(vault, "zanmai.py", "master INDEX.md regenerated from existing bundles")
+    space = Path(args.space).resolve()
+    _update_master_index(space)
+    _append_activity_log(space, "zanmai.py", "master INDEX.md regenerated from existing bundles")
     print("ok: master INDEX updated")
     return 0
 
 
 # Hard-exclude paths for all wikilink operations (write-time sweep AND
 # read-time aggregation). These paths hold content that must not be mutated
-# retroactively (sweeps) and must not surface as user-vault "issues"
+# retroactively (sweeps) and must not surface as user-space "issues"
 # (aggregations like broken-wikilinks reporting):
 #   - the system material: distribution files, replaced on update.
 #   - the snapshot history: immutable rollback points, must stay bit-identical.
@@ -1075,7 +1207,7 @@ _WIKILINK_OPS_EXCLUDED_PREFIXES = (
     f"{SYSTEM_MATERIAL_DIR}/",
     f"{HISTORY_DIR}/",
     f"{LOGS_DIR}/",
-    f"{IMPORT_DIR}/",
+    f"{INBOX_DIR}/",
     f"{TRASH_DIR}/",
     f"{ARCHIVE_DIR}/",
 )
@@ -1085,7 +1217,7 @@ _WIKILINK_OPS_EXCLUDED_FILES = (
 
 
 def _is_excluded_from_wikilink_ops(rel_path: str) -> bool:
-    """True if a vault-relative path must not be touched by wikilink sweeps
+    """True if a space-relative path must not be touched by wikilink sweeps
     and must not be counted by wikilink aggregations (e.g. broken-wikilinks
     reporting in briefing.md)."""
     rel = rel_path.replace("\\", "/")
@@ -1102,13 +1234,13 @@ def cmd_update_wikilinks(args: argparse.Namespace) -> int:
     `[[new-slug|Display Text]]`. Does not touch embed-paths or non-link
     occurrences.
 
-    Scope: defaults to the whole vault, because the user's material is no longer under one folder.
+    Scope: defaults to the whole space, because the user's material is no longer under one folder.
     Pass `--scope <path>` to narrow it. Hard-excluded paths (see
     `_WIKILINK_OPS_EXCLUDED_PREFIXES` and `_WIKILINK_OPS_EXCLUDED_FILES`) are never rewritten
     regardless of the requested scope: the history, the logs, the activity log, the trash, the
     archive and the import folder must stay verbatim.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     old_slug = args.old.strip()
     new_slug = args.new.strip()
     if not old_slug or not new_slug:
@@ -1118,7 +1250,7 @@ def cmd_update_wikilinks(args: argparse.Namespace) -> int:
         print("ok: nothing to do (old == new)")
         return 0
 
-    scope_root = vault / args.scope if args.scope else vault
+    scope_root = space / args.scope if args.scope else space
     if not scope_root.exists():
         print(f"fail: scope does not exist: {scope_root}", file=sys.stderr)
         return 1
@@ -1128,7 +1260,7 @@ def cmd_update_wikilinks(args: argparse.Namespace) -> int:
     occurrences = 0
 
     for md in scope_root.rglob("*.md"):
-        rel = md.relative_to(vault).as_posix()
+        rel = md.relative_to(space).as_posix()
         if _is_excluded_from_wikilink_ops(rel):
             continue
         text = md.read_text(encoding="utf-8")
@@ -1141,14 +1273,21 @@ def cmd_update_wikilinks(args: argparse.Namespace) -> int:
             occurrences += count
 
     _append_activity_log(
-        vault, "zanmai.py",
+        space, "zanmai.py",
         f"wikilink rename [[{old_slug}]] -> [[{new_slug}]] "
         f"({occurrences} occurrence(s) in {len(files_touched)} file(s))"
     )
-    if files_touched:
+    # The file list is on stdout only when it was asked for. It used to print always, and what a
+    # command prints is what gets read out loud: a person asking for one rename was handed the
+    # paths of every file that happened to mention it, which is the machine's bookkeeping and not
+    # an answer. The count is the answer. The paths stay available for a run that has to check.
+    if args.verbose and files_touched:
         for f in files_touched:
             print(f"  {f}")
-    print(f"ok: {occurrences} occurrence(s) rewritten in {len(files_touched)} file(s)")
+    # Called as a step inside a rename, the count is that step's bookkeeping and the rename says the
+    # result once. Two success lines for one operation is how a technical one ends up being read out.
+    if not getattr(args, "quiet", False):
+        print(f"ok: {occurrences} occurrence(s) rewritten in {len(files_touched)} file(s)")
     return 0
 
 
@@ -1217,42 +1356,42 @@ def cmd_bundle_set_body(args: argparse.Namespace) -> int:
     section 2) and a silent overwrite is the one mistake this whole tool exists to
     prevent.
     """
-    vault = Path(args.vault).resolve()
-    target = _resolve_vault_file(vault, args.file)
+    space = Path(args.space).resolve()
+    target = _resolve_space_file(space, args.file)
     if target is None:
-        print(f"fail: no such file in the vault: {args.file}", file=sys.stderr)
+        print(f"fail: no such file in the space: {args.file}", file=sys.stderr)
         return 1
     new_body = (Path(args.body_file).read_text(encoding="utf-8")
                 if args.body_file else sys.stdin.read())
     text = target.read_text(encoding="utf-8")
     fm, order, old_body = _split_frontmatter(text)
     if not fm:
-        print(f"fail: {target.relative_to(vault)} has no frontmatter; refusing to write a body into it",
+        print(f"fail: {target.relative_to(space)} has no frontmatter; refusing to write a body into it",
               file=sys.stderr)
         return 1
     meaningful = [ln for ln in old_body.splitlines() if ln.strip() and not ln.startswith("#")]
     if meaningful and not args.replace:
-        print(f"fail: {target.relative_to(vault)} already has {len(meaningful)} line(s) of body. "
+        print(f"fail: {target.relative_to(space)} already has {len(meaningful)} line(s) of body. "
               f"Pass --replace to overwrite, and be sure it is not the user's own writing.",
               file=sys.stderr)
         return 1
     if not new_body.startswith("\n"):
         new_body = "\n" + new_body
     target.write_text(_render_frontmatter(fm, order) + new_body.rstrip() + "\n", encoding="utf-8")
-    _append_activity_log(vault, args.agent or "zanmai.py",
-                         f"wrote body of {target.relative_to(vault)} "
+    _append_activity_log(space, args.agent or "zanmai.py",
+                         f"wrote body of {target.relative_to(space)} "
                          f"({len(meaningful)} line(s) replaced, {len(new_body.splitlines())} written)")
-    print(f"ok: body written to {target.relative_to(vault)} "
+    print(f"ok: body written to {target.relative_to(space)} "
           f"({len(meaningful)} line(s) replaced, {len(new_body.splitlines())} written)")
     return 0
 
 
 def cmd_bundle_edit_file(args: argparse.Namespace) -> int:
     """Correct frontmatter fields of an existing file in place. Body untouched."""
-    vault = Path(args.vault).resolve()
-    target = _resolve_vault_file(vault, args.file)
+    space = Path(args.space).resolve()
+    target = _resolve_space_file(space, args.file)
     if target is None:
-        print(f"fail: no such file in the vault: {args.file}", file=sys.stderr)
+        print(f"fail: no such file in the space: {args.file}", file=sys.stderr)
         return 1
     try:
         sets = _parse_set_pairs(args.set)
@@ -1263,10 +1402,10 @@ def cmd_bundle_edit_file(args: argparse.Namespace) -> int:
     for note in notes:
         print(f"  {note}")
     if changed:
-        _append_activity_log(vault, args.agent or "zanmai.py",
-                             f"edited frontmatter of {target.relative_to(vault)} ({changed} field(s))")
+        _append_activity_log(space, args.agent or "zanmai.py",
+                             f"edited frontmatter of {target.relative_to(space)} ({changed} field(s))")
     print(f"ok: {changed} of {len(sets) + len(args.remove or [])} requested field(s) changed "
-          f"in {target.relative_to(vault)}")
+          f"in {target.relative_to(space)}")
     return 1 if notes and not changed else 0
 
 
@@ -1276,8 +1415,8 @@ def cmd_contact_update(args: argparse.Namespace) -> int:
     The path a stub takes from auto-created to filled in. Appending never rewrites
     what is already in the body.
     """
-    vault = Path(args.vault).resolve()
-    candidates = [vault / folder / f"{args.slug}.md" for folder in CONTACT_FOLDERS]
+    space = Path(args.space).resolve()
+    candidates = [space / folder / f"{args.slug}.md" for folder in CONTACT_FOLDERS]
     target = next((c for c in candidates if c.is_file()), None)
     if target is None:
         print(f"fail: no contact '{args.slug}' under {CONTACTS_DIR}/", file=sys.stderr)
@@ -1297,7 +1436,7 @@ def cmd_contact_update(args: argparse.Namespace) -> int:
         target.write_text(text.rstrip() + "\n\n" + addition + "\n", encoding="utf-8")
         appended = len(args.append)
     if changed or appended:
-        _append_activity_log(vault, args.agent or "zanmai.py",
+        _append_activity_log(space, args.agent or "zanmai.py",
                              f"updated contact {args.slug} ({changed} field(s), {appended} line(s) appended)")
     print(f"ok: contact {args.slug}: {changed} of {len(sets) + len(args.remove or [])} "
           f"field(s) changed, {appended} line(s) appended")
@@ -1311,7 +1450,7 @@ def cmd_contact_update(args: argparse.Namespace) -> int:
 # log) only ever grows and is read by grep, so it wants rotating by month and never
 # reading whole. A rules file (an agent's lessons, the general memory) is read at the
 # start of every run, so its size is paid for on every dispatch: measured on a real
-# vault after three days of use, one agent's lessons had reached 48 KB across 42
+# space after three days of use, one agent's lessons had reached 48 KB across 42
 # entries, and that whole file went into the run's context each time.
 #
 # The move that works on the rules file is NOT rotating by date. A standing rule has
@@ -1390,6 +1529,12 @@ _REGEL_BULLET = re.compile(r"^- \*\*(?P<kopf>.+?)\*\*(?P<rest>.*)$")
 # flagging those turns the report into noise, which is how a check stops being read.
 _LAGE_WOERTER = ("heute", "für diesen lauf", "in dieser sitzung", "diesmal", "vorerst",
                  "today", "for this run", "this session", "for now", "for today")
+# A calendar date or a running instance's own name in a rule is the same failure by another
+# route: both tie a supposedly standing rule to one moment or one machine. "Stand 2026-09-02" and
+# "dev0602" read as precise, which is exactly what let them slip past a word list built for vaguer
+# phrasing like "heute".
+_MEMORY_RULE_DATE_RE = re.compile(r"\b(?:stand|as of)\s+\d{4}-\d{2}-\d{2}\b", re.IGNORECASE)
+_MEMORY_RULE_INSTANCE_RE = re.compile(r"\bdev\d+\b", re.IGNORECASE)
 
 
 def _regel_eintraege(text: str) -> list[tuple[str, str, str]]:
@@ -1415,7 +1560,7 @@ _REGEL_GLEICH = 0.6   # how much of the shorter headline has to appear in the lo
 _REGEL_MIN_WOERTER = 4  # below this a headline is too short for the overlap to mean anything
 # When a rules file is worth reading through. Not a limit and nothing is dropped at it: it is the
 # point where nobody reads the file as a whole any more, and unread rules are the same as absent
-# ones. A live vault reached 21 in four weeks.
+# ones. A live space reached 21 in four weeks.
 _REGELN_MARKE = 20
 
 
@@ -1426,7 +1571,7 @@ def _regel_doppelungen(eintraege: list[tuple[str, str, str]]) -> list[tuple[str,
     two entries about one rule cite different examples.
 
     What this finds is a repetition, not a contradiction and not a rule stated twice in different
-    words. Four entries in a live vault said "do not act unasked" in four vocabularies, and no
+    words. Four entries in a live space said "do not act unasked" in four vocabularies, and no
     amount of word counting reaches that: it is a judgement about meaning and it belongs to the
     close, which is why the count below exists to trigger a reading rather than to replace it.
     """
@@ -1467,10 +1612,10 @@ def cmd_memory_curate(args: argparse.Namespace) -> int:
          Confirming or striking it is a judgement, and quietly dropping an unconfirmed
          lesson would lose exactly the ones that were never checked.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     source = Path(args.file)
     if not source.is_absolute():
-        source = vault / args.file
+        source = space / args.file
     if not source.is_file():
         print(f"fail: no such memory file: {args.file}", file=sys.stderr)
         return 1
@@ -1506,7 +1651,7 @@ def cmd_memory_curate(args: argparse.Namespace) -> int:
                 print(f"    {kopf[:70]}")
         if not doppel and not lage:
             # Said plainly, because "nothing found" reads as "nothing there". What this pass sees
-            # is repeated wording and words like "today". Four entries in a live vault said "do not
+            # is repeated wording and words like "today". Four entries in a live space said "do not
             # act unasked" in four vocabularies and none of them said "today"; no count reaches
             # either. Reading the file is what reaches them.
             print("  no repeated wording and no time words. That is not the same as no repetition: "
@@ -1514,7 +1659,7 @@ def cmd_memory_curate(args: argparse.Namespace) -> int:
 
     preamble, entries = _split_lesson_entries(text)
     if not entries:
-        print(f"ok: {source.relative_to(vault)} has no dated entries, nothing to curate "
+        print(f"ok: {source.relative_to(space)} has no dated entries, nothing to curate "
               f"({len(text.splitlines())} line(s))")
         return 0
 
@@ -1573,13 +1718,13 @@ def cmd_memory_curate(args: argparse.Namespace) -> int:
         if archived:
             out.append(f"Older reasoning and struck entries: `{_archive_dir(source).name}/`\n")
         source.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
-        _append_activity_log(vault, args.agent or "zanmai.py",
-                             f"curated {source.relative_to(vault)} "
+        _append_activity_log(space, args.agent or "zanmai.py",
+                             f"curated {source.relative_to(space)} "
                              f"({moved_out} struck moved out, {trimmed} reasoning block(s) archived)")
 
     before = len(text.splitlines())
     after = len(source.read_text(encoding="utf-8").splitlines()) if not args.dry_run else before
-    print(f"ok: {source.relative_to(vault)}: {len(entries)} entry/entries, {len(kept)} still stand, "
+    print(f"ok: {source.relative_to(space)}: {len(entries)} entry/entries, {len(kept)} still stand, "
           f"{moved_out} struck moved out, {trimmed} reasoning block(s) archived, "
           f"{before} lines to {after}")
     if provisional_old:
@@ -1597,10 +1742,10 @@ def cmd_memory_rotate(args: argparse.Namespace) -> int:
     is what the activity log is. Nothing is lost; it moves to where the search still
     finds it and the read at session start does not.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     source = Path(args.file)
     if not source.is_absolute():
-        source = vault / args.file
+        source = space / args.file
     if not source.is_file():
         print(f"fail: no such log: {args.file}", file=sys.stderr)
         return 1
@@ -1621,7 +1766,7 @@ def cmd_memory_rotate(args: argparse.Namespace) -> int:
         by_month.setdefault(current, []).append(line)
     old = {m: ls for m, ls in by_month.items() if m < cutoff}
     if not old:
-        print(f"ok: nothing older than {cutoff} in {source.relative_to(vault)} "
+        print(f"ok: nothing older than {cutoff} in {source.relative_to(space)} "
               f"({len(by_month)} month(s), {len(lines)} line(s)); nothing moved")
         return 0
     adir = _archive_dir(source)
@@ -1640,10 +1785,10 @@ def cmd_memory_rotate(args: argparse.Namespace) -> int:
                  + ", ".join(sorted(old)) + ")"]
         source.write_text("\n".join(header).rstrip() + "\n\n" + "\n".join(index) + "\n\n"
                           + "\n".join(rest).rstrip() + "\n", encoding="utf-8")
-        _append_activity_log(vault, "zanmai.py",
-                             f"rotated {source.relative_to(vault)} ({len(old)} month(s) archived)")
+        _append_activity_log(space, "zanmai.py",
+                             f"rotated {source.relative_to(space)} ({len(old)} month(s) archived)")
     moved = sum(len(ls) for ls in old.values())
-    print(f"ok: {source.relative_to(vault)}: {len(old)} month(s) moved to {adir.name}/ "
+    print(f"ok: {source.relative_to(space)}: {len(old)} month(s) moved to {adir.name}/ "
           f"({moved} line(s)), {len(by_month) - len(old)} month(s) left in place")
     return 0
 
@@ -1655,7 +1800,7 @@ MEMORY_READ_EVERY_RUN = (
 )
 
 
-def _memory_size_report(vault: Path) -> list[str]:
+def _memory_size_report(space: Path) -> list[str]:
     """Files that go into a run's context, and whether any has outgrown being read.
 
     A line budget rather than a byte one, because that is what a person editing the
@@ -1664,27 +1809,27 @@ def _memory_size_report(vault: Path) -> list[str]:
     """
     notes = []
     for pattern, limit in MEMORY_READ_EVERY_RUN:
-        for path in sorted(vault.glob(pattern)):
+        for path in sorted(space.glob(pattern)):
             if not path.is_file():
                 continue
             count = len(path.read_text(encoding="utf-8").splitlines())
             if count > limit:
                 notes.append(
-                    f"{path.relative_to(vault)} is {count} lines and is read at the start of a run. "
+                    f"{path.relative_to(space)} is {count} lines and is read at the start of a run. "
                     f"Over {limit} it is worth curating: `memory curate --file "
-                    f"{path.relative_to(vault)}` moves struck entries and old reasoning out and "
+                    f"{path.relative_to(space)}` moves struck entries and old reasoning out and "
                     "leaves the rules."
                 )
     return notes
 
 
 # ---------------------------------------------------------------------------
-# Voice notes: speech in, and the vault is what makes the transcript accurate.
+# Voice notes: speech in, and the space is what makes the transcript accurate.
 #
-# A dropped recording is the cheapest way to get something into the vault, and the
+# A dropped recording is the cheapest way to get something into the space, and the
 # worst thing about it is always the same: speech to text mangles exactly the words
 # that carry the meaning, the names. A person, a nickname, a product, a project.
-# Zanmai has an advantage no general transcriber has, and it grows with use: the vault
+# Zanmai has an advantage no general transcriber has, and it grows with use: the space
 # already holds those names. So they are handed to the recogniser BEFORE it starts, as
 # an initial prompt, which biases it toward the words that occur in this life rather
 # than the words that are common in general. What it still gets wrong is corrected
@@ -1692,7 +1837,7 @@ def _memory_size_report(vault: Path) -> list[str]:
 # silently rewriting what someone said is worse than the error.
 #
 # Local, not a service. A spoken journal entry is the most private material in the
-# vault, so it is transcribed on this machine, with no key and nothing uploaded.
+# space, so it is transcribed on this machine, with no key and nothing uploaded.
 # ---------------------------------------------------------------------------
 
 AUDIO_EXTS = (".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac",
@@ -1705,18 +1850,18 @@ AUDIO_EXTS = (".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac",
 LEXICON_BUDGET_CHARS = 800
 
 
-def _tool_path(vault: Path, tool_id: str) -> str | None:
+def _tool_path(space: Path, tool_id: str) -> str | None:
     """Where this machine's copy of a registered tool is, or None.
 
     Goes through the register rather than calling `which` on a hard-coded name, which
     is what the register is for: the invocation name differs per platform (a `.exe` on
-    Windows), and a tool this vault fetched itself sits in its own runtime tree and is
+    Windows), and a tool this space fetched itself sits in its own runtime tree and is
     not on PATH at all. Asking `which` for one spelling gets both of those wrong.
     """
     spec = (_load_register().get("tools") or {}).get(tool_id)
     if not spec:
         return shutil.which(tool_id)
-    found = _detect_tool(vault, tool_id, spec, _current_os())
+    found = _detect_tool(space, tool_id, spec, _current_os())
     if found.get("present") and found.get("path"):
         return found["path"]
     if found.get("present"):
@@ -1725,20 +1870,20 @@ def _tool_path(vault: Path, tool_id: str) -> str | None:
     return None
 
 
-def _recordings_dir(vault: Path) -> Path:
+def _recordings_dir(space: Path) -> Path:
     """Recordings wait in the import folder like everything else.
 
     There is no `recordings/` sub-folder any more: the folder is the automation, and the type of a
     file decides its route, not where somebody happened to put it. A phone that syncs into a folder
     of its own is fine, because the scan walks whatever structure it finds.
     """
-    d = vault / IMPORT_DIR
+    d = space / INBOX_DIR
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def _audio_duration(path: Path, vault: Path | None = None) -> float | None:
-    probe = (_tool_path(vault, "ffprobe") if vault else None) or shutil.which("ffprobe")
+def _audio_duration(path: Path, space: Path | None = None) -> float | None:
+    probe = (_tool_path(space, "ffprobe") if space else None) or shutil.which("ffprobe")
     if not probe:
         return None
     try:
@@ -1846,9 +1991,9 @@ def _recording_date(path: Path) -> tuple[datetime, str]:
     return datetime.now(), "no date signal, using today"
 
 
-def _pending_recordings(vault: Path) -> list[Path]:
+def _pending_recordings(space: Path) -> list[Path]:
     """Every recording waiting in the import folder, sub-folders included."""
-    folder = _recordings_dir(vault)
+    folder = _recordings_dir(space)
     return sorted((f for f in folder.rglob("*")
                    if f.is_file() and f.suffix.lower() in AUDIO_EXTS),
                   key=_recording_order_key)
@@ -1923,7 +2068,7 @@ def _import_route(path: Path) -> tuple[str, str]:
 
 # Where incoming material goes, as a file the user can open rather than a rule in the code. What
 # lands where is a decision that accumulates: a spoken note goes into the day, a backup log goes
-# into its own place, a scanned invoice goes to the records. Written into skills and hooks, those
+# into its own place, a scanned invoice goes to the archive. Written into skills and hooks, those
 # decisions spread across a dozen files, none of which the user can read, and every new one needs a
 # release. Written here, the user changes a line.
 #
@@ -1943,28 +2088,28 @@ ROUTING_FILE = "routing.json"
 ROUTE_TEXT_CHARS = 20000
 
 
-def _routing_path(vault: Path) -> Path:
-    return vault / SYSTEM_DIR / ROUTING_FILE
+def _routing_path(space: Path) -> Path:
+    return space / SYSTEM_DIR / ROUTING_FILE
 
 
-def _routing(vault: Path) -> dict:
+def _routing(space: Path) -> dict:
     """The user's routing table, or an empty one. A missing file changes nothing.
 
-    Deliberately forgiving: this is read on every import, and a vault whose routing file was never
+    Deliberately forgiving: this is read on every import, and a space whose routing file was never
     written, or was broken by a hand edit, still has to work exactly as before. What it cannot do
     is fail silently in a way that looks like a decision, so a broken file is reported by
     `routing show` rather than swallowed here.
     """
     try:
-        daten = json.loads(_routing_path(vault).read_text(encoding="utf-8"))
+        daten = json.loads(_routing_path(space).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return daten if isinstance(daten, dict) else {}
 
 
-def _routing_rules(vault: Path) -> list[dict]:
+def _routing_rules(space: Path) -> list[dict]:
     """The user's rules, in the order they were written. First match wins, so order is a decision."""
-    regeln = _routing(vault).get("rules")
+    regeln = _routing(space).get("rules")
     if not isinstance(regeln, list):
         return []
     return [r for r in regeln if isinstance(r, dict) and r.get("name")]
@@ -1993,7 +2138,7 @@ def _rule_matches(regel: dict, path: Path, text_of) -> bool:
     return True
 
 
-def _route_for_file(vault: Path, path: Path) -> dict:
+def _route_for_file(space: Path, path: Path) -> dict:
     """The first rule that covers this file, or an empty rule where the user has not said yet."""
     gelesen: dict[str, str] = {}
 
@@ -2006,7 +2151,7 @@ def _route_for_file(vault: Path, path: Path) -> dict:
             gelesen["t"] = (text or "")[:ROUTE_TEXT_CHARS]
         return gelesen["t"]
 
-    for regel in _routing_rules(vault):
+    for regel in _routing_rules(space):
         if _rule_matches(regel, path, text_of):
             return regel
     return {}
@@ -2017,8 +2162,14 @@ def _rule_phrase(regel: dict) -> str:
     if not regel:
         return ""
     teile = [f"{regel.get('name', '?')} -> {regel.get('to') or '(no destination)'}"]
+    if regel.get("by"):
+        teile.append(f"done by {regel['by']}")
     if regel.get("do"):
         teile.append(str(regel["do"]))
+    if regel.get("keep") == "with-result":
+        teile.append("the file itself is kept, beside what is made from it")
+    elif regel.get("keep") == "discard":
+        teile.append("the file itself is not needed afterwards and goes to the trash")
     if regel.get("ask_first") is True:
         teile.append("ask first")
     elif regel.get("ask_first") is False:
@@ -2027,7 +2178,7 @@ def _rule_phrase(regel: dict) -> str:
 
 
 # The user's own keeping terms, and the suggestions they were built from. Two files on purpose: one
-# ships and is replaced by every update, the other belongs to the vault and is never touched.
+# ships and is replaced by every update, the other belongs to the space and is never touched.
 # A term that lives in the code cannot be corrected without a release, and terms do change: one
 # country shortened its figure for accounting vouchers from ten years to eight, and a table built
 # on the old number still said ten months afterwards, because nothing about it invited a look.
@@ -2043,16 +2194,35 @@ def _retention_defaults() -> dict:
         return {}
 
 
-def _retention(vault: Path) -> dict:
-    """What actually applies here. The user's file where there is one, otherwise nothing.
+def _retention(space: Path) -> dict:
+    """What actually applies here: the shipped periods, with whatever the user changed on top.
 
-    Deliberately not falling back to the shipped suggestions: a term nobody confirmed is a term
-    nobody chose, and a number applied behind somebody's back is worse than no number at all.
+    Nothing applies until the user has confirmed once, and that is the `_confirmed` line. A period
+    nobody confirmed is a period nobody chose, and a number applied behind somebody's back is worse
+    than no number at all.
+
+    The user's file holds the confirmation and their changes, not a copy of the three periods. It
+    used to hold the copy, and then there were two lists of the same thing: a space set up before a
+    change kept its old wording for ever, answered with figures the product had retired, and no
+    update could reach it because the file is the user's. Kept as a difference, an update improves
+    the wording of a period without touching what they decided.
     """
     try:
-        return json.loads((vault / SYSTEM_DIR / RETENTION_FILE).read_text(encoding="utf-8"))
+        eigen = json.loads((space / SYSTEM_DIR / RETENTION_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    if not isinstance(eigen, dict) or not eigen.get("_confirmed"):
+        return {}
+    zusammen = dict(_retention_defaults())
+    zusammen["_confirmed"] = eigen["_confirmed"]
+    if eigen.get("_checked"):
+        zusammen["_checked"] = eigen["_checked"]
+    # A period the user rewrote wins over the shipped one of the same name; one they added is added.
+    eigene_zeiten = {str(e.get("category")): e for e in eigen.get("terms", []) if e.get("category")}
+    if eigene_zeiten:
+        zeiten = [eigene_zeiten.pop(str(e.get("category")), e) for e in zusammen.get("terms", [])]
+        zusammen["terms"] = zeiten + list(eigene_zeiten.values())
+    return zusammen
 
 
 # The searchable copy of what is kept. Derived, never a source: it is built from the files and can
@@ -2063,17 +2233,27 @@ def _retention(vault: Path) -> dict:
 # document, and a hundred and twenty pay slips became a hundred and twenty files that turned up in
 # every search for years afterwards. The meaning of a matter belongs in a note somebody reads; the
 # words of five thousand documents belong somewhere nobody looks unless they are searching.
-RECORDS_DB = "records.sqlite3"
+ARCHIVE_DB = "archive.sqlite3"
 # What can be read as text at all, and how.
 _TEXT_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".tsv", ".log")
 _MAIL_SUFFIXES = (".eml", ".msg")
 _OCR_SUFFIXES = (".png", ".jpg", ".jpeg", ".tiff", ".tif", ".heic", ".webp")
 
 
-def _records_db(vault: Path):
+def _index_name_words(rel: str) -> str:
+    """The path as words, the way the index holds it.
+
+    One function because two places produce it: the read that fills the index, and the migration
+    that moves a row to a new area. They drifted apart once already, which left the old area name
+    sitting in the searchable text of every document while the path column was correct.
+    """
+    return " ".join(re.split(r"[^\w]+", rel.replace("/", " ")))
+
+
+def _archive_db(space: Path):
     """The index, opened and ready. Created on first use, schema included."""
     import sqlite3
-    pfad = vault / RUNTIME_DIR / RECORDS_DB
+    pfad = space / RUNTIME_DIR / ARCHIVE_DB
     pfad.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(str(pfad))
     db.executescript("""
@@ -2300,7 +2480,7 @@ _CHRONO_HEADER = ("| Date | What happened | Amount | With |\n"
 
 # A matter note is the user's file, not a system file, so its headings belong in the language they
 # write in. The house rule already draws that line, the generator did not: notes came out with
-# English column headings in a vault kept in another language. Only the languages the distribution
+# English column headings in a space kept in another language. Only the languages the distribution
 # actually speaks are here; anything else falls back to English rather than to a guess.
 _CHRONO_WORDS = {
     "de": ("## Verlauf", "| Datum | Was geschah | Betrag | Mit wem |\n|---|---|---|---|"),
@@ -2308,24 +2488,24 @@ _CHRONO_WORDS = {
 }
 
 
-def _chrono_words(vault: Path) -> tuple[str, str]:
-    """Heading and table header for a matter note, in the language the vault is kept in."""
+def _chrono_words(space: Path) -> tuple[str, str]:
+    """Heading and table header for a matter note, in the language the space is kept in."""
     try:
-        fm = _session_parse_frontmatter((vault / SYSTEM_DIR / "user.md").read_text(encoding="utf-8"))
+        fm = _session_parse_frontmatter((space / SYSTEM_DIR / "user.md").read_text(encoding="utf-8"))
     except OSError:
         return _CHRONO_WORDS["en"]
     sprache = str(fm.get("language", "") or "").strip().lower()[:2]
     return _CHRONO_WORDS.get(sprache, _CHRONO_WORDS["en"])
 
 
-def _matter_path(vault: Path, slug: str, bereich: str = "") -> Path:
-    ordner = vault / RECORDS_DIR / bereich / slug if bereich else vault / RECORDS_DIR / slug
+def _matter_path(space: Path, slug: str, bereich: str = "") -> Path:
+    ordner = space / ARCHIVE_DIR / bereich / slug if bereich else space / ARCHIVE_DIR / slug
     return ordner / f"{slug}.md"
 
 
-def _find_matter(vault: Path, slug: str) -> Path | None:
-    """The matter note for this slug, wherever in the records tree it sits."""
-    wurzel = vault / RECORDS_DIR
+def _find_matter(space: Path, slug: str) -> Path | None:
+    """The matter note for this slug, wherever in the archive it sits."""
+    wurzel = space / ARCHIVE_DIR
     if not wurzel.is_dir():
         return None
     treffer = [p for p in wurzel.rglob(f"{slug}.md") if p.is_file()]
@@ -2340,17 +2520,17 @@ def _find_matter(vault: Path, slug: str) -> Path | None:
 ALIASES_FILE = "aliases.json"
 
 
-def _aliases(vault: Path) -> dict:
+def _aliases(space: Path) -> dict:
     try:
-        daten = json.loads((vault / SYSTEM_DIR / ALIASES_FILE).read_text(encoding="utf-8"))
+        daten = json.loads((space / SYSTEM_DIR / ALIASES_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return daten if isinstance(daten, dict) else {}
 
 
-def _alias_lookup(vault: Path, name: str) -> tuple[str, list[str]]:
+def _alias_lookup(space: Path, name: str) -> tuple[str, list[str]]:
     """(canonical, near misses). An exact hit resolves; near misses are for a person to settle."""
-    tabelle = _aliases(vault).get("counterparties") or {}
+    tabelle = _aliases(space).get("counterparties") or {}
     gesucht = _slugify(name)
     for kanon, eintrag in tabelle.items():
         schreibweisen = {_slugify(s) for s in ([kanon] + list(eintrag.get("seen") or []))}
@@ -2362,29 +2542,33 @@ def _alias_lookup(vault: Path, name: str) -> tuple[str, list[str]]:
     return "", nah
 
 
-def cmd_records_who(args: argparse.Namespace) -> int:
+def cmd_archive_who(args: argparse.Namespace) -> int:
     """Resolve a counterparty name, or say what it might be."""
-    vault = _work_vault(args)
-    kanon, nah = _alias_lookup(vault, args.name)
+    space = _work_space(args)
+    kanon, nah = _alias_lookup(space, args.name)
     if kanon:
         print(kanon)
         return 0
     if nah:
         print(f"unresolved: {args.name!r} is not listed. Close to: {', '.join(nah)}. "
               f"Ask whether it is one of those before filing anything against it; "
-              f"`records who {args.name} --same-as <canonical>` records the answer.", file=sys.stderr)
+              f"`archive who {args.name} --same-as <canonical>` records the answer.", file=sys.stderr)
         return 1
-    print(f"unknown: {args.name!r} is new here. `records who {args.name} --new` adds it.",
+    print(f"unknown: {args.name!r} is new here. `archive who {args.name} --new` adds it.",
           file=sys.stderr)
     return 1
 
 
-def cmd_records_who_set(args: argparse.Namespace) -> int:
+def cmd_archive_who_set(args: argparse.Namespace) -> int:
     """Record the answer: this spelling is that counterparty, or this one is new."""
-    vault = _work_vault(args)
-    daten = _aliases(vault)
-    daten.setdefault("_comment", "One canonical name per counterparty, and the spellings seen for "
-                                 "it. Written by `zanmai.py records who`, never merged silently.")
+    space = _work_space(args)
+    daten = _aliases(space)
+    # Assigned rather than defaulted, and the difference matters after a rename. `setdefault` writes
+    # it once and never again, so a space carries the sentence of the version that created the file
+    # for ever: this one still named a command family that had been renamed, in a file no update
+    # touches. The line describes the machine's own file, so the machine owns it and rewrites it.
+    daten["_comment"] = ("One canonical name per counterparty, and the spellings seen for "
+                         "it. Written by `zanmai.py archive who`, never merged silently.")
     tabelle = daten.setdefault("counterparties", {})
     if args.same_as:
         kanon = _slugify(args.same_as)
@@ -2400,29 +2584,37 @@ def cmd_records_who_set(args: argparse.Namespace) -> int:
         tabelle.setdefault(kanon, {"seen": [], "note": args.note or ""})
         if args.note:
             tabelle[kanon]["note"] = args.note
-    ziel = vault / SYSTEM_DIR / ALIASES_FILE
+    ziel = space / SYSTEM_DIR / ALIASES_FILE
     ziel.parent.mkdir(parents=True, exist_ok=True)
     ziel.write_text(json.dumps(daten, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
                     encoding="utf-8")
-    _append_activity_log(vault, args.agent or "zanmai.py", f"records: counterparty {kanon}")
+    _append_activity_log(space, args.agent or "zanmai.py", f"records: counterparty {kanon}")
     print(f"ok: {args.name} -> {kanon}")
     return 0
 
 
-def cmd_records_matter_new(args: argparse.Namespace) -> int:
+def cmd_archive_matter_new(args: argparse.Namespace) -> int:
     """Open a matter: the thing documents belong to.
 
     Written before the first document is filed against it rather than derived afterwards, because
     the decision it records, that these papers are one matter, is exactly what nobody can
     reconstruct later from a folder full of scans.
     """
-    vault = _work_vault(args)
+    space = _work_space(args)
     slug = _slugify(args.slug or args.title)
-    if _find_matter(vault, slug) and not args.force:
+    if _find_matter(space, slug) and not args.force:
         print(f"fail: a matter '{slug}' already exists. Use it, or pass --force to make a second "
               f"one and say in its body why they are not the same matter.", file=sys.stderr)
         return 1
-    ziel = _matter_path(vault, slug, args.area or "")
+    if args.retention:
+        erlaubt = _retention_categories(space)
+        if args.retention not in erlaubt:
+            eigen = "this space's confirmed terms" if _retention(space) else "the shipped suggestions"
+            print(f"fail: '{args.retention}' is not a keeping term in {eigen}. Available: "
+                  f"{', '.join(erlaubt) or 'none, run `retention adopt` first'}. A term the user "
+                  f"never confirmed applies to nobody.", file=sys.stderr)
+            return 1
+    ziel = _matter_path(space, slug, args.into or "")
     ziel.parent.mkdir(parents=True, exist_ok=True)
     zeilen = ["---", "kind: record", f"slug: {slug}", f"created: {_today()}",
               f"doc_type: {_matter_doc_type(args.doc_type)}",
@@ -2436,12 +2628,12 @@ def cmd_records_matter_new(args: argparse.Namespace) -> int:
     zeilen += ["---", "", f"# {args.title}", ""]
     if args.about:
         zeilen += [args.about, ""]
-    ueberschrift, kopf = _chrono_words(vault)
+    ueberschrift, kopf = _chrono_words(space)
     zeilen += [ueberschrift, "", kopf, ""]
     ziel.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
-    _append_activity_log(vault, args.agent or "zanmai.py",
-                         f"records: opened matter {ziel.relative_to(vault)}")
-    print(f"ok: {ziel.relative_to(vault)}")
+    _append_activity_log(space, args.agent or "zanmai.py",
+                         f"records: opened matter {ziel.relative_to(space)}")
+    print(f"ok: {ziel.relative_to(space)}")
     return 0
 
 
@@ -2483,7 +2675,7 @@ def _as_iso_date(roh: str) -> str:
     return f"{jahr}-{int(monat):02d}-{int(tag):02d}"
 
 
-def _matter_add_documents(vault: Path, notiz: Path, slug: str, dokumente: list[Path],
+def _matter_add_documents(space: Path, notiz: Path, slug: str, dokumente: list[Path],
                           args: argparse.Namespace) -> int:
     """Hang documents on a matter, the chronology filled from what was read out of them.
 
@@ -2491,10 +2683,10 @@ def _matter_add_documents(vault: Path, notiz: Path, slug: str, dokumente: list[P
     out and `_extract` found the shape in it. Asking a person to type them again per document is
     asking them to redo work a machine has done, and on a real pile that is where the hours go.
     """
-    db = _records_db(vault)
+    db = _archive_db(space)
     kandidaten = []
     for datei in dokumente:
-        rel = datei.relative_to(vault).as_posix()
+        rel = datei.relative_to(space).as_posix()
         treffer = db.execute("SELECT body FROM content WHERE path = ?", (rel,)).fetchone()
         form = _extract(treffer[0]) if treffer else {}
         # The name first, then the text. A date in a filename was put there deliberately, by the
@@ -2513,7 +2705,7 @@ def _matter_add_documents(vault: Path, notiz: Path, slug: str, dokumente: list[P
     db.close()
 
     text = notiz.read_text(encoding="utf-8")
-    ueberschrift, kopf = _chrono_words(vault)
+    ueberschrift, kopf = _chrono_words(space)
     if ueberschrift not in text and _CHRONO_HEADING not in text:
         text = text.rstrip() + f"\n\n{ueberschrift}\n\n{kopf}\n"
     zeilen = text.rstrip().split("\n")
@@ -2524,25 +2716,25 @@ def _matter_add_documents(vault: Path, notiz: Path, slug: str, dokumente: list[P
         zeilen.append(f"| {datum} | [{name}]({rel}) | {betrag} | {wer} |")
         zugefuegt += 1
     notiz.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
-    _append_activity_log(vault, args.agent or "zanmai.py",
+    _append_activity_log(space, args.agent or "zanmai.py",
                          f"{zugefuegt} document(s) hung on matter {slug}")
-    print(f"ok: {zugefuegt} document(s) on {notiz.relative_to(vault)}"
+    print(f"ok: {zugefuegt} document(s) on {notiz.relative_to(space)}"
           + (f", {len(kandidaten) - zugefuegt} were already there"
              if zugefuegt < len(kandidaten) else ""))
     return 0
 
 
-def cmd_records_matter_add(args: argparse.Namespace) -> int:
+def cmd_archive_matter_add(args: argparse.Namespace) -> int:
     """Hang a document on its matter: a line in the chronology, and the link back.
 
     Both directions in one step on purpose. A document that names its matter while the matter does
     not list it is half a link, and half a link is what makes an archive stop being answerable.
     """
-    vault = _work_vault(args)
+    space = _work_space(args)
     slug = _slugify(args.matter)
-    notiz = _find_matter(vault, slug)
+    notiz = _find_matter(space, slug)
     if notiz is None:
-        print(f"fail: no matter '{slug}'. Open it first with `records matter new`; a document "
+        print(f"fail: no matter '{slug}'. Open it first with `archive matter new`; a document "
               f"without a matter is one nobody finds again.", file=sys.stderr)
         return 1
     if args.via not in RECORD_RELATIONS:
@@ -2557,13 +2749,13 @@ def cmd_records_matter_add(args: argparse.Namespace) -> int:
     # part worth a person's time.
     dokumente: list[Path] = []
     if args.path:
-        einer = _resolve_vault_file(vault, args.path)
+        einer = _resolve_space_file(space, args.path)
         if einer is None:
             print(f"fail: no such file: {args.path}", file=sys.stderr)
             return 1
         dokumente = [einer]
     elif args.folder:
-        ordner = vault / args.folder
+        ordner = space / args.folder
         if not ordner.is_dir():
             print(f"fail: no such folder: {args.folder}", file=sys.stderr)
             return 1
@@ -2573,7 +2765,7 @@ def cmd_records_matter_add(args: argparse.Namespace) -> int:
             print(f"nothing to add: {args.folder} holds no documents")
             return 0
     if dokumente:
-        return _matter_add_documents(vault, notiz, slug, dokumente, args)
+        return _matter_add_documents(space, notiz, slug, dokumente, args)
     if not args.what:
         print("fail: say what happened, or point at a document with --path or --folder.",
               file=sys.stderr)
@@ -2582,7 +2774,7 @@ def cmd_records_matter_add(args: argparse.Namespace) -> int:
     text = notiz.read_text(encoding="utf-8")
     zeile = (f"| {args.date or _today()} | {args.what} | {args.amount or ''} | "
              f"{args.with_whom or ''} |")
-    ueberschrift, kopf = _chrono_words(vault)
+    ueberschrift, kopf = _chrono_words(space)
     if ueberschrift not in text and _CHRONO_HEADING not in text:
         text = text.rstrip() + f"\n\n{ueberschrift}\n\n{kopf}\n"
     zeilen = text.rstrip().split("\n")
@@ -2594,7 +2786,7 @@ def cmd_records_matter_add(args: argparse.Namespace) -> int:
 
     # And the other direction, where the document has a note of its own.
     if args.document:
-        dok = _resolve_vault_file(vault, args.document)
+        dok = _resolve_space_file(space, args.document)
         if dok is None:
             print(f"fail: no such file: {args.document}", file=sys.stderr)
             return 1
@@ -2602,23 +2794,23 @@ def cmd_records_matter_add(args: argparse.Namespace) -> int:
             dok, {"relates_to": slug, "relates_via": args.via}, [])
         for n in notes:
             print(f"  {n}")
-    _append_activity_log(vault, args.agent or "zanmai.py",
+    _append_activity_log(space, args.agent or "zanmai.py",
                          f"records: {args.what[:60]} -> {slug} ({args.via})")
-    print(f"ok: added to {notiz.relative_to(vault)} ({args.via})")
+    print(f"ok: added to {notiz.relative_to(space)} ({args.via})")
     return 0
 
 
-def cmd_records_matter_show(args: argparse.Namespace) -> int:
+def cmd_archive_matter_show(args: argparse.Namespace) -> int:
     """One matter, whole: what it is, where it stands, and everything under it."""
-    vault = _work_vault(args)
+    space = _work_space(args)
     slug = _slugify(args.matter)
-    notiz = _find_matter(vault, slug)
+    notiz = _find_matter(space, slug)
     if notiz is None:
         print(f"unknown: no matter '{slug}'", file=sys.stderr)
         return 1
     text = notiz.read_text(encoding="utf-8")
     fm, _o, _b = _split_frontmatter(text)
-    print(f"{notiz.relative_to(vault)}")
+    print(f"{notiz.relative_to(space)}")
     print(f"  state     {fm.get('lifecycle', '(not stated)')}")
     if fm.get("retention_policy"):
         print(f"  kept      {fm['retention_policy']}"
@@ -2682,7 +2874,7 @@ def _extract(text: str, limit: int = 400) -> dict:
 def cmd_survey(args: argparse.Namespace) -> int:
     """What a pile of files is, established by machine, for anybody who has to decide about them.
 
-    Not tied to the records area, because the problem is not: an expert handed twenty sources, a
+    Not tied to the archive, because the problem is not: an expert handed twenty sources, a
     folder of scans, a mail export, all face the same question first, which is what these things
     are. That question does not need understanding, it needs shape, and shape is free.
 
@@ -2691,10 +2883,10 @@ def cmd_survey(args: argparse.Namespace) -> int:
     Over a few thousand documents that is the difference between an afternoon and a minute, and the
     answer to "what is this and where does it belong" is the same either way.
     """
-    vault = _work_vault(args)
+    space = _work_space(args)
     wurzel = Path(args.path)
     if not wurzel.is_absolute():
-        wurzel = vault / args.path
+        wurzel = space / args.path
     if not wurzel.exists():
         print(f"fail: no such path: {args.path}", file=sys.stderr)
         return 1
@@ -2712,8 +2904,8 @@ def cmd_survey(args: argparse.Namespace) -> int:
     ausgabe, stumm = [], 0
     for f in dateien:
         art, text = _read_as_text(f)
-        eintrag = {"path": (f.relative_to(vault).as_posix()
-                            if f.is_relative_to(vault) else str(f)),
+        eintrag = {"path": (f.relative_to(space).as_posix()
+                            if f.is_relative_to(space) else str(f)),
                    "kind": art or f.suffix.lstrip(".").lower() or "unknown"}
         merkmale = _extract(text or "", limit=args.opening)
         for feld in ("dates", "amounts", "parties", "opening"):
@@ -2742,22 +2934,22 @@ def cmd_survey(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_records_survey(args: argparse.Namespace) -> int:
+def cmd_archive_survey(args: argparse.Namespace) -> int:
     """One line per document, from the index, for something else to decide on.
 
     The point of this command is what it is *not*: it is not a model reading files. It is the
     machine handing over what it could establish for free, so that whoever decides what to do with
     five thousand documents reads five thousand short lines instead of five thousand documents.
 
-    `--scope` takes the same folder `records index --scope` was given, and it is not a convenience.
+    `--scope` takes the same folder `archive index --scope` was given, and it is not a convenience.
     The two are named in one sentence wherever the reading pass is described, so a run reads them as
     a pair: index this folder, then survey it. Without the argument here, the pair silently became
-    "index the drop area, then survey the entire archive", which on a real one is thousands of lines
-    about documents nobody asked about. Two runs typed `records survey --scope import` on the same
+    "index the inbox, then survey the entire archive", which on a real one is thousands of lines
+    about documents nobody asked about. Two runs typed `archive survey --scope import` on the same
     day and both got an argparse error, which is the honest reading of a sentence that offers it.
     """
-    vault = _work_vault(args)
-    db = _records_db(vault)
+    space = _work_space(args)
+    db = _archive_db(space)
     bereich = (args.scope or "").strip("/") if getattr(args, "scope", None) else ""
     if bereich:
         zeilen = db.execute(
@@ -2771,10 +2963,10 @@ def cmd_records_survey(args: argparse.Namespace) -> int:
     db.close()
     if not zeilen:
         if bereich:
-            print(f"empty: nothing indexed under {bereich}/. `records index --scope {bereich}` "
+            print(f"empty: nothing indexed under {bereich}/. `archive index --scope {bereich}` "
                   f"reads it in first, mechanically and without a model.")
         else:
-            print(f"empty: nothing indexed yet. `records index --scope <folder>` reads it in first, "
+            print(f"empty: nothing indexed yet. `archive index --scope <folder>` reads it in first, "
                   f"mechanically and without a model.")
         return 1
     ausgabe = []
@@ -2811,7 +3003,7 @@ def cmd_records_survey(args: argparse.Namespace) -> int:
     return 0
 
 
-def _records_db_repath(db, alt_rel: str, neu_rel: str) -> None:
+def _archive_db_repath(db, alt_rel: str, neu_rel: str) -> None:
     """Carry index entries over to where something now lies, for one file or a whole section.
 
     A prefix rewrite rather than a single-row update, because a section is renamed about as often as
@@ -2826,29 +3018,29 @@ def _records_db_repath(db, alt_rel: str, neu_rel: str) -> None:
                    (neu_rel, len(alt_rel) + 1, f"{alt_rel}/%"))
 
 
-def _records_relocate(vault: Path, quelle: Path, ziel: Path, agent: str, was: str) -> int:
-    """Move a document or a whole section inside `records/`, index entry included.
+def _archive_relocate(space: Path, quelle: Path, ziel: Path, agent: str, was: str) -> int:
+    """Move a document or a whole section inside `archive/`, index entry included.
 
-    Both `records rename` and `records move` end here, because they are the same operation with a
+    Both `archive rename` and `archive move` end here, because they are the same operation with a
     different target: the file changes place, the index has to follow, and the activity log has to
     say so. Neither existed, so every real run ended in a hand-rolled `mv`, which moves the file and
     leaves the index pointing at where it used to be.
 
-    Only inside `records/`. Taking something out of what is kept is a different decision with a
+    Only inside `archive/`. Taking something out of what is kept is a different decision with a
     different command, and letting this do it quietly would make discarding look like tidying.
     """
     for name, p in (("--path", quelle), ("the target", ziel)):
-        if not p.is_relative_to(vault):
-            print(f"fail: {name} '{p}' is not inside the vault.", file=sys.stderr)
+        if not p.is_relative_to(space):
+            print(f"fail: {name} '{p}' is not inside the space.", file=sys.stderr)
             return 1
-        rel = p.relative_to(vault).as_posix()
-        if rel != RECORDS_DIR and not rel.startswith(f"{RECORDS_DIR}/"):
-            print(f"fail: {name} '{rel}' lies outside {RECORDS_DIR}/. This moves things within what "
+        rel = p.relative_to(space).as_posix()
+        if rel != ARCHIVE_DIR and not rel.startswith(f"{ARCHIVE_DIR}/"):
+            print(f"fail: {name} '{rel}' lies outside {ARCHIVE_DIR}/. This moves things within what "
                   f"is kept. To take something out, use `file archive` or `file trash`.",
                   file=sys.stderr)
             return 1
-    alt_rel = quelle.relative_to(vault).as_posix()
-    neu_rel = ziel.relative_to(vault).as_posix()
+    alt_rel = quelle.relative_to(space).as_posix()
+    neu_rel = ziel.relative_to(space).as_posix()
     if not quelle.exists():
         print(f"fail: nothing at {alt_rel}", file=sys.stderr)
         return 1
@@ -2863,52 +3055,52 @@ def _records_relocate(vault: Path, quelle: Path, ziel: Path, agent: str, was: st
         print(f"fail: {neu_rel} lies inside {alt_rel}, so this would move a folder into itself.",
               file=sys.stderr)
         return 1
-    _vault_mkdir(vault, ziel.parent, parents=True, exist_ok=True)
+    _space_mkdir(space, ziel.parent, parents=True, exist_ok=True)
     shutil.move(str(quelle), str(ziel))
-    db = _records_db(vault)
-    _records_db_repath(db, alt_rel, neu_rel)
+    db = _archive_db(space)
+    _archive_db_repath(db, alt_rel, neu_rel)
     db.commit()
     db.close()
-    _append_activity_log(vault, agent or "zanmai.py", f"{was} {alt_rel} -> {neu_rel}")
+    _append_activity_log(space, agent or "zanmai.py", f"{was} {alt_rel} -> {neu_rel}")
     print(f"ok: {was} {alt_rel} -> {neu_rel}")
     return 0
 
 
-def cmd_records_rename(args: argparse.Namespace) -> int:
+def cmd_archive_rename(args: argparse.Namespace) -> int:
     """Give a kept document or a section a name that says what it is.
 
     A scan arrives called `scan-0007.pdf` and nothing about that name helps anybody find it again.
     The name is the user's to choose, so it is taken as typed rather than slugified; only a path
     separator is refused, because that is a move and says so.
     """
-    vault = _work_vault(args)
-    quelle = vault / args.path
+    space = _work_space(args)
+    quelle = space / args.path
     name = args.to.strip().strip("/")
     if not name:
         print("fail: --to needs a name.", file=sys.stderr)
         return 1
     if "/" in name or "\\" in name:
         print(f"fail: --to takes a name, not a path. To put it somewhere else, use "
-              f"`records move --path {args.path} --to <folder>`.", file=sys.stderr)
+              f"`archive move --path {args.path} --to <folder>`.", file=sys.stderr)
         return 1
     # A rename that silently drops `.pdf` makes the file unopenable for the tool that reads it.
     if quelle.is_file() and quelle.suffix and not Path(name).suffix:
         name += quelle.suffix
-    return _records_relocate(vault, quelle, quelle.parent / name, args.agent, "renamed")
+    return _archive_relocate(space, quelle, quelle.parent / name, args.agent, "renamed")
 
 
-def cmd_records_move(args: argparse.Namespace) -> int:
-    """Put a kept document or a whole section somewhere else inside `records/`."""
-    vault = _work_vault(args)
-    quelle = vault / args.path
-    return _records_relocate(vault, quelle, vault / args.to.strip("/") / quelle.name,
+def cmd_archive_move(args: argparse.Namespace) -> int:
+    """Put a kept document or a whole section somewhere else inside `archive/`."""
+    space = _work_space(args)
+    quelle = space / args.path
+    return _archive_relocate(space, quelle, space / args.to.strip("/") / quelle.name,
                              args.agent, "moved")
 
 
-def cmd_records_file(args: argparse.Namespace) -> int:
-    """Move documents into the records area, or within it, a pile at a time, and read them there.
+def cmd_archive_intake(args: argparse.Namespace) -> int:
+    """Move documents into the archive, or within it, a pile at a time, and read them there.
 
-    The source is any folder in the vault, not only `import/`: moving a pile that is already filed
+    The source is any folder in the space, not only `inbox/`: moving a pile that is already filed
     onto a different section is the same operation and uses the same command. It was written as if
     it only pointed inwards, and the run that needed it went back to moving files by hand.
 
@@ -2921,16 +3113,16 @@ def cmd_records_file(args: argparse.Namespace) -> int:
     `telekom` and `insurance` has already answered the question of what belongs together, and
     rebuilding that from the content produces a different, worse answer at great expense.
     """
-    vault = _work_vault(args)
-    quelle = vault / args.source
+    space = _work_space(args)
+    quelle = space / args.source
     if not quelle.exists():
         print(f"fail: nothing at {args.source}", file=sys.stderr)
         return 1
-    # `--area ange/gesundheit` used to arrive as the single folder `ange-gesundheit`, because the
+    # `--into ange/gesundheit` used to arrive as the single folder `ange-gesundheit`, because the
     # plain slugifier eats the separator. A section inside a section is the normal shape of a real
     # archive, and the run that wanted one had to file flat and move by hand afterwards.
-    bereich = "/".join(_slugify_bundle_path(args.area)[0]) if args.area else ""
-    ziel_wurzel = vault / RECORDS_DIR / bereich if bereich else vault / RECORDS_DIR
+    bereich = "/".join(_slugify_bundle_path(args.into)[0]) if args.into else ""
+    ziel_wurzel = space / ARCHIVE_DIR / bereich if bereich else space / ARCHIVE_DIR
 
     dateien = [p for p in ([quelle] if quelle.is_file() else sorted(quelle.rglob("*")))
                if p.is_file() and p.name not in _SYSTEM_LITTER]
@@ -2943,28 +3135,28 @@ def cmd_records_file(args: argparse.Namespace) -> int:
     for f in dateien:
         ziel = ziel_wurzel / f.relative_to(basis)
         if ziel.exists():
-            print(f"fail: {ziel.relative_to(vault)} is already there. Deal with that copy first, "
+            print(f"fail: {ziel.relative_to(space)} is already there. Deal with that copy first, "
                   f"nothing was moved.", file=sys.stderr)
             return 1
         paare.append((f, ziel))
 
     if args.dry_run:
         for f, ziel in paare:
-            print(f"  {f.relative_to(vault)} -> {ziel.relative_to(vault)}")
+            print(f"  {f.relative_to(space)} -> {ziel.relative_to(space)}")
         print(f"{len(paare)} document(s) would be filed. Nothing was moved.")
         return 0
 
     # The index entry moves with the file. Its content did not change, only where it lies, and
     # reading a filed archive again costs minutes it does not need to cost. Whatever this misses,
     # the index run below picks up.
-    db = _records_db(vault)
+    db = _archive_db(space)
     for f, ziel in paare:
-        _vault_mkdir(vault, ziel.parent, parents=True, exist_ok=True)
+        _space_mkdir(space, ziel.parent, parents=True, exist_ok=True)
         shutil.move(str(f), str(ziel))
-        _records_db_repath(db, f.relative_to(vault).as_posix(), ziel.relative_to(vault).as_posix())
+        _archive_db_repath(db, f.relative_to(space).as_posix(), ziel.relative_to(space).as_posix())
     db.commit()
     db.close()
-    # The source folders are left behind empty, and an empty folder in `import/` is read again at
+    # The source folders are left behind empty, and an empty folder in `inbox/` is read again at
     # every session start as if something were waiting there.
     if quelle.is_dir():
         # A folder holding nothing but a `.DS_Store` is an empty folder to everyone except the
@@ -2980,36 +3172,36 @@ def cmd_records_file(args: argparse.Namespace) -> int:
             except OSError:
                 pass
 
-    _append_activity_log(vault, args.agent or "zanmai.py",
-                         f"{len(paare)} document(s) filed into {RECORDS_DIR}/{bereich}")
-    print(f"ok: {len(paare)} document(s) filed into {RECORDS_DIR}/{bereich or ''}".rstrip("/"))
+    _append_activity_log(space, args.agent or "zanmai.py",
+                         f"{len(paare)} document(s) filed into {ARCHIVE_DIR}/{bereich}")
+    print(f"ok: {len(paare)} document(s) filed into {ARCHIVE_DIR}/{bereich or ''}".rstrip("/"))
     # Reading them now rather than later, because a document that is filed but not readable is a
     # document the search cannot answer about, and nobody comes back to run a second command.
-    return cmd_records_index(argparse.Namespace(
-        vault=str(vault), scope=f"{RECORDS_DIR}/{bereich}" if bereich else RECORDS_DIR,
+    return cmd_archive_index(argparse.Namespace(
+        space=str(space), scope=f"{ARCHIVE_DIR}/{bereich}" if bereich else ARCHIVE_DIR,
         rebuild=False, agent=args.agent))
 
 
-def cmd_records_index(args: argparse.Namespace) -> int:
+def cmd_archive_index(args: argparse.Namespace) -> int:
     """Read what is kept, once each, into the searchable copy.
 
     Incremental by size and modification time: a second run over five thousand files touches only
     what changed. That is not an optimisation, it is what makes the thing usable at all, because a
     full read of a real archive is measured in hours once scans are in it.
     """
-    vault = _work_vault(args)
-    wurzel = vault / (args.scope or RECORDS_DIR)
+    space = _work_space(args)
+    wurzel = space / (args.scope or ARCHIVE_DIR)
     if not wurzel.is_dir():
-        print(f"fail: no such folder: {wurzel.relative_to(vault) if wurzel.is_relative_to(vault) else wurzel}",
+        print(f"fail: no such folder: {wurzel.relative_to(space) if wurzel.is_relative_to(space) else wurzel}",
               file=sys.stderr)
         return 1
-    db = _records_db(vault)
+    db = _archive_db(space)
     bekannt = {p: (s, m) for p, s, m in db.execute("SELECT path, size, mtime FROM documents")}
     gelesen, uebersprungen, leer = 0, 0, 0
     for datei in sorted(f for f in wurzel.rglob("*") if f.is_file()):
         if datei.name.startswith("."):
             continue
-        rel = datei.relative_to(vault).as_posix()
+        rel = datei.relative_to(space).as_posix()
         try:
             stat = datei.stat()
         except OSError:
@@ -3028,9 +3220,8 @@ def cmd_records_index(args: argparse.Namespace) -> int:
         # broken output of a fax from 2008, and the one word somebody will actually type is on the
         # file, not in it. Searching for the exact name of a file and being told there is no such
         # thing is the answer that makes people stop trusting a search.
-        namensteile = " ".join(re.split(r"[^\w]+", rel.replace("/", " ")))
         db.execute("INSERT INTO content (path, body) VALUES (?, ?)",
-                   (rel, f"{namensteile}\n{text}"))
+                   (rel, f"{_index_name_words(rel)}\n{text}"))
         db.execute("INSERT INTO documents (path, size, mtime, kind, read_at, note) "
                    "VALUES (?, ?, ?, ?, ?, COALESCE((SELECT note FROM documents WHERE path = ?), '')) "
                    "ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, "
@@ -3044,10 +3235,10 @@ def cmd_records_index(args: argparse.Namespace) -> int:
     # does not fix that, because reading only ever adds. The index is a copy of what is there, so
     # what is not there any more leaves it, and only inside the scope that was just walked, since
     # nothing outside it was looked at.
-    praefix = f"{(args.scope or RECORDS_DIR).strip('/')}/"
+    praefix = f"{(args.scope or ARCHIVE_DIR).strip('/')}/"
     tot = [pfad for (pfad,) in db.execute("SELECT path FROM documents WHERE path LIKE ?",
                                           (praefix + "%",))
-           if not (vault / pfad).exists()]
+           if not (space / pfad).exists()]
     for pfad in tot:
         db.execute("DELETE FROM documents WHERE path = ?", (pfad,))
         db.execute("DELETE FROM content WHERE path = ?", (pfad,))
@@ -3085,10 +3276,10 @@ def _fts_query(roh: str) -> str:
     return " ".join('"' + w.replace('"', '""') + '"' for w in worte)
 
 
-def cmd_records_search(args: argparse.Namespace) -> int:
+def cmd_archive_search(args: argparse.Namespace) -> int:
     """Find a word in what is kept, and say where it stands."""
-    vault = _work_vault(args)
-    db = _records_db(vault)
+    space = _work_space(args)
+    db = _archive_db(space)
     try:
         treffer = db.execute(
             "SELECT c.path, d.kind, snippet(content, 1, '[', ']', ' ... ', 12) "
@@ -3099,10 +3290,18 @@ def cmd_records_search(args: argparse.Namespace) -> int:
         print(f"fail: {fehler}", file=sys.stderr)
         db.close()
         return 1
+    gelesen = db.execute("SELECT count(*) FROM documents").fetchone()[0]
     db.close()
     if not treffer:
-        print(f"nothing found for {args.query!r}. The index holds what `records index` has read; "
-              f"a document that arrived since then is not in it yet.")
+        # An index that was never filled and an index without this word give the same empty
+        # result, and the same sentence for both sent a search past a database that had lost its
+        # content: it read as an archive nobody had indexed yet. The count separates the two.
+        if gelesen == 0:
+            print(f"the index is empty: nothing has been read yet, so no search can find "
+                  f"anything. Run `archive index` first.")
+        else:
+            print(f"nothing found for {args.query!r}. The index holds the {gelesen} document(s) "
+                  f"`archive index` has read; one that arrived since then is not in it yet.")
         return 1
     for pfad, art, stelle in treffer:
         print(f"  {pfad}  [{art or '?'}]")
@@ -3114,16 +3313,20 @@ def cmd_records_search(args: argparse.Namespace) -> int:
 
 def cmd_retention_show(args: argparse.Namespace) -> int:
     """What applies here, or what would be proposed if nobody has decided yet."""
-    vault = _work_vault(args)
-    eigen = _retention(vault)
+    space = _work_space(args)
+    eigen = _retention(space)
     quelle = eigen or _retention_defaults()
     if not quelle:
         print("no keeping terms available at all", file=sys.stderr)
         return 1
     if eigen:
         print(f"in force here (confirmed {eigen.get('_confirmed', 'date not stated')}):")
+        print("These are Zanmai's own periods, not statutory retention periods and not tied to any "
+              "country. Do not present them as deadlines or as what a law requires.")
     else:
-        print(f"nothing confirmed for this vault yet. These are suggestions, set on the generous "
+        print("These are Zanmai's own periods, not statutory retention periods and not tied to any "
+              "country. Do not present them as deadlines or as what a law requires.")
+        print(f"nothing confirmed for this space yet. These are suggestions, set on the generous "
               f"side on purpose, and they apply to nothing until the user has said whether they "
               f"fit:")
     for eintrag in quelle.get("terms", []):
@@ -3136,58 +3339,61 @@ def cmd_retention_show(args: argparse.Namespace) -> int:
 
 
 def cmd_retention_adopt(args: argparse.Namespace) -> int:
-    """Take the suggestions into this vault as the terms that apply.
+    """Take the suggestions into this space as the terms that apply.
 
     Written as a whole file rather than merged, so what is in force is always readable in one go.
     Editing single terms afterwards is a hand edit on purpose: it is rare, it is the user's
     decision, and it should feel like one.
     """
-    vault = _work_vault(args)
+    space = _work_space(args)
     vorschlag = _retention_defaults()
     if not vorschlag:
         print("fail: no suggestions shipped with this version", file=sys.stderr)
         return 1
-    ziel = vault / SYSTEM_DIR / RETENTION_FILE
+    ziel = space / SYSTEM_DIR / RETENTION_FILE
     if ziel.is_file() and not args.force:
-        print(f"fail: {ziel.relative_to(vault)} already exists. Pass --force to replace it, and "
+        print(f"fail: {ziel.relative_to(space)} already exists. Pass --force to replace it, and "
               f"be sure the user asked for that: what is in there was decided once.",
               file=sys.stderr)
         return 1
-    vorschlag["_confirmed"] = _today()
-    vorschlag["_comment"] = ("The keeping terms in force in this vault. Adopted from the shipped "
-                            "suggestions and changed by hand where they did not fit. Zanmai reads "
-                            "this file, never the shipped one.")
+    # Only the decision is written, never a copy of the periods. A copy would be a second list of
+    # the same thing: it ages where the shipped one is improved, and no update can reach it, because
+    # this file is the user's. What they change later is added here as a difference and wins.
+    entscheidung = {"_comment": ("What you confirmed about how long things are kept, and anything "
+                                 "you changed. The periods themselves ship with Zanmai and are "
+                                 "improved with it; only your decision lives here."),
+                    "_confirmed": _today()}
     ziel.parent.mkdir(parents=True, exist_ok=True)
-    ziel.write_text(json.dumps(vorschlag, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    _append_activity_log(vault, args.agent or "zanmai.py",
-                         f"retention terms adopted "
-                         f"({len(vorschlag.get('terms', []))} categories)")
+    ziel.write_text(json.dumps(entscheidung, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _append_activity_log(space, args.agent or "zanmai.py",
+                         f"retention terms confirmed "
+                         f"({len(vorschlag.get('terms', []))} periods in force)")
     print(f"ok: {len(vorschlag.get('terms', []))} term(s) now in force in "
-          f"{ziel.relative_to(vault)}. Change by hand what the user said did not fit; this file is "
+          f"{ziel.relative_to(space)}. Change by hand what the user said did not fit; this file is "
           f"the one that counts.")
     return 0
 
 
 def cmd_routing_show(args: argparse.Namespace) -> int:
     """Print the routing table, and say plainly where it is silent."""
-    vault = _work_vault(args)
-    pfad = _routing_path(vault)
+    space = _work_space(args)
+    pfad = _routing_path(space)
     if not pfad.is_file():
-        print(f"no routing table yet at {pfad.relative_to(vault)}. Every kind of material takes "
+        print(f"no routing table yet at {pfad.relative_to(space)}. Every kind of material takes "
               f"its default route. `routing set` writes the first rule.")
         return 0
     try:
         daten = json.loads(pfad.read_text(encoding="utf-8"))
     except ValueError as fehler:
-        print(f"fail: {pfad.relative_to(vault)} is not readable as JSON ({fehler}). Nothing is "
+        print(f"fail: {pfad.relative_to(space)} is not readable as JSON ({fehler}). Nothing is "
               f"routed by it until that is fixed; every kind takes its default route meanwhile.",
               file=sys.stderr)
         return 1
     regeln = [r for r in (daten.get("rules") or []) if isinstance(r, dict)]
     if not regeln:
-        print(f"{pfad.relative_to(vault)} exists and holds no rules.")
+        print(f"{pfad.relative_to(space)} exists and holds no rules.")
         return 0
-    print(f"{len(regeln)} rule(s) in {pfad.relative_to(vault)}, first match wins:")
+    print(f"{len(regeln)} rule(s) in {pfad.relative_to(space)}, first match wins:")
     for regel in regeln:
         when = regel.get("when") or {}
         bedingung = []
@@ -3203,6 +3409,15 @@ def cmd_routing_show(args: argparse.Namespace) -> int:
             print(f"      about  {regel['about']}")
         if regel.get("do"):
             print(f"      do     {regel['do']}")
+        if regel.get("by"):
+            print(f"      by     {regel['by']}")
+        # Printed even when unanswered, because that is the interesting state: it is the one
+        # question a rule of this kind leaves open, and a blank line here is what says it is coming.
+        behalten = regel.get("keep")
+        print(f"      keep   " + {
+            "with-result": "the file itself, beside what is made from it",
+            "discard": "nothing, the file goes to the trash once its content is filed",
+        }.get(behalten, "(not answered yet, so you are asked the first time one arrives)"))
     return 0
 
 
@@ -3212,14 +3427,14 @@ def cmd_routing_set(args: argparse.Namespace) -> int:
     A rule of the same name is replaced in place rather than appended: order decides which rule
     wins, and a correction that moved a rule to the end would quietly change which files it catches.
     """
-    vault = _work_vault(args)
-    pfad = _routing_path(vault)
-    daten = _routing(vault) or {}
-    daten.setdefault("_comment", "What incoming material is, and where it goes. Written by "
-                                 "`zanmai.py routing set`, read on every import. First match wins.")
+    space = _work_space(args)
+    pfad = _routing_path(space)
+    daten = _routing(space) or {}
+    daten["_comment"] = ("What incoming material is, and where it goes. Written by "
+                         "`zanmai.py routing set`, read on every import. First match wins.")
     regeln = daten.setdefault("rules", [])
     if not isinstance(regeln, list):
-        print(f"fail: 'rules' in {pfad.relative_to(vault)} is not a list. Fix that by hand first.",
+        print(f"fail: 'rules' in {pfad.relative_to(space)} is not a list. Fix that by hand first.",
               file=sys.stderr)
         return 1
     regel = next((r for r in regeln if isinstance(r, dict) and r.get("name") == args.name), None)
@@ -3239,26 +3454,30 @@ def cmd_routing_set(args: argparse.Namespace) -> int:
         regel["do"] = args.do
     if args.ask is not None:
         regel["ask_first"] = args.ask
+    if getattr(args, "keep", None):
+        regel["keep"] = args.keep
+    if getattr(args, "by", None):
+        regel["by"] = args.by
     if not when:
         print(f"note: '{args.name}' has no condition yet, so nothing matches it on its own. "
               f"Add --when-text or --when-name.")
     pfad.parent.mkdir(parents=True, exist_ok=True)
     pfad.write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    _append_activity_log(vault, args.agent or "zanmai.py",
+    _append_activity_log(space, args.agent or "zanmai.py",
                          f"routing: {args.name} -> {args.to}"
                          + ("" if neu_angelegt else " (rule rewritten)"))
     print(f"ok: {args.name} -> {args.to}")
     return 0
 
 
-def _import_pending(vault: Path) -> list[Path]:
+def _import_pending(space: Path) -> list[Path]:
     """Everything waiting in the import folder, oldest first, subfolders included.
 
     Subfolders are walked rather than respected. Whatever structure something arrives in is the
     sender's, not an instruction, and the point of the folder is that nobody has to sort before
     dropping.
     """
-    root = vault / IMPORT_DIR
+    root = space / INBOX_DIR
     if not root.is_dir():
         return []
     return sorted((f for f in root.rglob("*")
@@ -3275,10 +3494,10 @@ def cmd_import_scan(args: argparse.Namespace) -> int:
     Oldest first and read whole before anything is processed: several files dropped in a row are
     usually one train of thought, and the later one can withdraw the earlier.
     """
-    vault = Path(args.vault).resolve()
-    files = _import_pending(vault)
+    space = Path(args.space).resolve()
+    files = _import_pending(space)
     if not files:
-        print(f"empty: nothing waiting in {IMPORT_DIR}/")
+        print(f"empty: nothing waiting in {INBOX_DIR}/")
         return 0
     nach_art: dict[str, int] = {}
     ohne_regel: list[str] = []
@@ -3286,11 +3505,11 @@ def cmd_import_scan(args: argparse.Namespace) -> int:
         kind, verhalten = _import_route(f)
         nach_art[kind] = nach_art.get(kind, 0) + 1
         _rank, _value, basis, shown = _recording_order_key(f)
-        rel = f.relative_to(vault).as_posix()
+        rel = f.relative_to(space).as_posix()
         # The kind says how to read the file and nothing about where it goes. Where the user has
         # written a rule that covers this file, that is the answer, and it is printed with the file
         # rather than left in a table nobody opens.
-        regel = _route_for_file(vault, f)
+        regel = _route_for_file(space, f)
         if not regel:
             ohne_regel.append(rel)
         print(f"{shown:>16}  read as {kind:>10}  {rel}"
@@ -3298,14 +3517,14 @@ def cmd_import_scan(args: argparse.Namespace) -> int:
         if args.verbose:
             print(f"{'':>16}  {'':>18}  {verhalten}")
     zusammen = ", ".join(f"{count} {kind}" for kind, count in sorted(nach_art.items()))
-    print(f"ok: {len(files)} file(s) waiting in {IMPORT_DIR}/ (read as: {zusammen})")
+    print(f"ok: {len(files)} file(s) waiting in {INBOX_DIR}/ (read as: {zusammen})")
     print("    read all of them before processing any: the later one can withdraw the earlier.")
     if ohne_regel:
         print(f"    no rule yet for {len(ohne_regel)} of them: {', '.join(ohne_regel[:6])}"
               + (", and more" if len(ohne_regel) > 6 else "") + ". Ask the user what this sort of "
               f"thing is and where it belongs, once, then write it down with `routing set <name> "
               f"<destination> --when-text <a word that appears in it>` so the next one of its sort "
-              f"answers itself. Nothing leaves {IMPORT_DIR}/ before its content is in the vault.")
+              f"answers itself. Nothing leaves {INBOX_DIR}/ before its content is in the space.")
     clash = _recording_order_disagreement(files)
     if clash:
         print(f"    dates and names disagree ({clash}). Read the order out of the contents "
@@ -3319,9 +3538,9 @@ def cmd_voice_scan(args: argparse.Namespace) -> int:
     Oldest first because several notes recorded in a row are usually one train of
     thought, and the order they were spoken in is the order they make sense in.
     """
-    vault = Path(args.vault).resolve()
-    folder = _recordings_dir(vault)
-    files = _pending_recordings(vault)
+    space = Path(args.space).resolve()
+    folder = _recordings_dir(space)
+    files = _pending_recordings(space)
     other = sorted(f.name for f in folder.rglob("*")
                    if f.is_file() and f.suffix.lower() not in AUDIO_EXTS
                    and not f.name.startswith("."))
@@ -3335,7 +3554,7 @@ def cmd_voice_scan(args: argparse.Namespace) -> int:
         if seconds:
             total += seconds
         print(f"{shown:>16}  {length:>14}  ({basis})  {f.name}")
-    print(f"ok: {len(files)} recording(s) waiting in {IMPORT_DIR}/"
+    print(f"ok: {len(files)} recording(s) waiting in {INBOX_DIR}/"
           + (f", {_spoken_length(total)} in total" if total else "")
           + (f", {len(other)} other file(s) left alone" if other else ""))
     if files:
@@ -3351,29 +3570,29 @@ def cmd_voice_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_voice_lexicon(args: argparse.Namespace) -> int:
-    """The names this vault holds, as a head start for the recogniser.
+    """The names this space holds, as a head start for the recogniser.
 
     Second line of defence, deliberately small. The first line is reading the transcript
     and understanding it: a garbled word gets resolved the way a person resolves a typo,
     from the sense of the sentence, and that needs no list at all. What understanding
     cannot reach is a surname nobody could infer, a company spelled a particular way, a
-    term only this vault uses. That is what this is for, and it is worth having: measured,
+    term only this space uses. That is what this is for, and it is worth having: measured,
     it fixed every name in a note where full names were spoken. Measured on ten minutes of
     a real meeting it changed almost nothing, because people say first names in a room and
     a recogniser knows those. A fallback that costs a flag on a call which happens anyway
     is worth keeping even when it is rarely the thing that saves the day.
 
     The one thing worth getting right is which names, because a prompt holds a few
-    hundred characters and a vault holds hundreds of contacts. Ordered by how much the
-    vault links to each one: a name a dozen notes point at is someone this person works
-    with, a name nothing points at is a directory entry. Measured on a vault of
+    hundred characters and a space holds hundreds of contacts. Ordered by how much the
+    space links to each one: a name a dozen notes point at is someone this person works
+    with, a name nothing points at is a directory entry. Measured on a space of
     ninety-five contacts, filling alphabetically left out five of the six people in the
     recording being transcribed.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
 
     inbound: dict[str, int] = {}
-    patterns = vault / MEMORY_DIR / "patterns.json"
+    patterns = space / MEMORY_DIR / "patterns.json"
     if patterns.is_file():
         try:
             hubs = json.loads(patterns.read_text(encoding="utf-8")).get("wikilink_hubs") or {}
@@ -3391,17 +3610,17 @@ def cmd_voice_lexicon(args: argparse.Namespace) -> int:
     # An organisation's display name, so a person's `org` field does not put a slug
     # into a prompt: a hyphenated slug is not a word anybody says out loud.
     org_names: dict[str, str] = {}
-    org_folder = vault / ORGANISATIONS_DIR
+    org_folder = space / ORGANISATIONS_DIR
     if org_folder.is_dir():
         for f in sorted(org_folder.glob("*.md")):
             org_names[f.stem], _fm = read_name(f)
 
-    # (rank, term). The house names first: they work before the vault holds anything,
+    # (rank, term). The house names first: they work before the space holds anything,
     # and a spoken instruction names a specialist.
     ranked: list[tuple[int, str]] = [(10 ** 6, "Zanmai")]
     ranked += [(10 ** 6, name.capitalize()) for name, _a, _m in _ROSTER]
 
-    for folder, is_person in ((vault / PEOPLE_DIR, True),
+    for folder, is_person in ((space / PEOPLE_DIR, True),
                               (org_folder, False)):
         if not folder.is_dir():
             continue
@@ -3420,7 +3639,7 @@ def cmd_voice_lexicon(args: argparse.Namespace) -> int:
                     ranked.append((links, org_names.get(org.strip(), org.strip())))
 
     for kind in BUNDLE_FOLDERS:
-        folder = vault / kind
+        folder = space / kind
         if not folder.is_dir():
             continue
         for bundle in sorted(folder.iterdir()):
@@ -3447,8 +3666,8 @@ def cmd_voice_lexicon(args: argparse.Namespace) -> int:
     if args.out:
         out = Path(args.out)
         if not out.is_absolute():
-            out = vault / args.out
-        _vault_mkdir(vault, out.parent, parents=True, exist_ok=True)
+            out = space / args.out
+        _space_mkdir(space, out.parent, parents=True, exist_ok=True)
         out.write_text(prompt + "\n", encoding="utf-8")
     print(prompt)
     print(f"ok: {len(kept)} of {len(seen)} name(s) fit the prompt "
@@ -3456,25 +3675,25 @@ def cmd_voice_lexicon(args: argparse.Namespace) -> int:
     return 0
 
 
-def _whisper_model(vault: Path) -> Path | None:
-    folder = vault / RUNTIME_DIR / "whisper"
+def _whisper_model(space: Path) -> Path | None:
+    folder = space / RUNTIME_DIR / "whisper"
     models = sorted(folder.glob("ggml-*.bin")) if folder.is_dir() else []
     return models[0] if models else None
 
 
 def cmd_voice_transcribe(args: argparse.Namespace) -> int:
-    """One recording to text, on this machine, biased by the vault's own names."""
-    vault = Path(args.vault).resolve()
+    """One recording to text, on this machine, biased by the space's own names."""
+    space = Path(args.space).resolve()
     source = Path(args.file)
     if not source.is_absolute():
-        source = vault / args.file
+        source = space / args.file
     if not source.is_file():
         print(f"fail: no such recording: {args.file}", file=sys.stderr)
         return 1
 
-    ffmpeg = _tool_path(vault, "ffmpeg")
-    whisper = _tool_path(vault, "whisper")
-    model = _whisper_model(vault)
+    ffmpeg = _tool_path(space, "ffmpeg")
+    whisper = _tool_path(space, "whisper")
+    model = _whisper_model(space)
     missing = []
     if not ffmpeg:
         missing.append("ffmpeg, which turns what a phone recorded into what the recogniser reads")
@@ -3491,7 +3710,7 @@ def cmd_voice_transcribe(args: argparse.Namespace) -> int:
             print(f"  {item}", file=sys.stderr)
         return 1
 
-    work = vault / SCRATCH_DIR / "voice"
+    work = space / SCRATCH_DIR / "voice"
     work.mkdir(parents=True, exist_ok=True)
     wav = work / f"{source.stem}-16k.wav"
     subprocess.run([ffmpeg, "-y", "-i", str(source), "-ar", "16000", "-ac", "1",
@@ -3501,7 +3720,7 @@ def cmd_voice_transcribe(args: argparse.Namespace) -> int:
     if args.lexicon:
         lex = Path(args.lexicon)
         if not lex.is_absolute():
-            lex = vault / args.lexicon
+            lex = space / args.lexicon
         if lex.is_file():
             prompt = lex.read_text(encoding="utf-8").strip()
 
@@ -3526,9 +3745,9 @@ def cmd_voice_transcribe(args: argparse.Namespace) -> int:
     target.write_text(text + "\n", encoding="utf-8")
     print(text)
     print(f"ok: {len(text.split())} word(s) from {_spoken_length(seconds)}, language {detected}, "
-          + (f"biased by {len([x for x in prompt.split(',') if x.strip()])} vault name(s)"
-             if prompt else "no vault names given, so names are likely wrong")
-          + f"; text at {target.relative_to(vault)}", file=sys.stderr)
+          + (f"biased by {len([x for x in prompt.split(',') if x.strip()])} space name(s)"
+             if prompt else "no space names given, so names are likely wrong")
+          + f"; text at {target.relative_to(space)}", file=sys.stderr)
     return 0
 
 
@@ -3541,24 +3760,24 @@ def cmd_voice_archive(args: argparse.Namespace) -> int:
     to that day, and because keeping the original next to the reading is what makes a garbled word
     repairable years later.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     source = Path(args.file)
     if not source.is_absolute():
-        source = vault / args.file
+        source = space / args.file
     if not source.is_file():
         print(f"fail: no such recording: {args.file}", file=sys.stderr)
         return 1
     stamp = datetime.fromtimestamp(source.stat().st_mtime)
-    target_dir = vault / DAILY_DIR / stamp.strftime("%Y") / stamp.strftime("%Y-%m-%d")
+    target_dir = space / DAILY_DIR / stamp.strftime("%Y") / stamp.strftime("%Y-%m-%d")
     target_dir.mkdir(parents=True, exist_ok=True)
     name = f"{stamp.strftime('%Y-%m-%d-%H%M')}-{_slugify(source.stem)}{source.suffix.lower()}"
     target = target_dir / name
     if target.exists():
         target = target.with_name(f"{target.stem}-2{target.suffix}")
     shutil.move(str(source), str(target))
-    _append_activity_log(vault, args.agent or "zanmai.py",
-                         f"filed recording {target.relative_to(vault)}")
-    print(f"ok: recording kept at {target.relative_to(vault)}")
+    _append_activity_log(space, args.agent or "zanmai.py",
+                         f"filed recording {target.relative_to(space)}")
+    print(f"ok: recording kept at {target.relative_to(space)}")
     return 0
 
 
@@ -3570,15 +3789,15 @@ def cmd_voice_journal_append(args: argparse.Namespace) -> int:
     week later reads as if it happened on the wrong day. The date is derived here, from
     the recording itself, so the caller never has to work it out or remember to pass it.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     source = Path(args.file)
     if not source.is_absolute():
-        source = vault / args.file
+        source = space / args.file
     if not source.is_file():
         print(f"fail: no such recording: {args.file}", file=sys.stderr)
         return 1
     date, basis = _recording_date(source)
-    rel = _journal_append(vault, _journal_note(vault, "daily", date), args.text,
+    rel = _journal_append(space, _journal_note(space, date), args.text,
                           "voice journal append")
     print(f"ok: appended to {rel} (dated by {basis})")
     return 0
@@ -3590,34 +3809,34 @@ def cmd_memory_log(args: argparse.Namespace) -> int:
     Hand-written appends drifted in format, which broke the one thing the log is
     for: `grep "^## \["` parsing cleanly.
     """
-    vault = Path(args.vault).resolve()
-    log = vault / MEMORY_DIR / "activity-log.md"
+    space = Path(args.space).resolve()
+    log = space / MEMORY_DIR / "activity-log.md"
     if not log.exists():
-        print(f"fail: no activity log at {log.relative_to(vault)}", file=sys.stderr)
+        print(f"fail: no activity log at {log.relative_to(space)}", file=sys.stderr)
         return 1
-    _append_activity_log(vault, args.agent, args.activity)
+    _append_activity_log(space, args.agent, args.activity)
     print(f"ok: logged for {args.agent}")
     return 0
 
 
-def _resolve_vault_file(vault: Path, given: str) -> Path | None:
-    """Accept a vault-relative path or a bare basename that is unique in the vault."""
-    direct = (vault / given).resolve()
-    if direct.is_file() and str(direct).startswith(str(vault)):
+def _resolve_space_file(space: Path, given: str) -> Path | None:
+    """Accept a space-relative path or a bare basename that is unique in the space."""
+    direct = (space / given).resolve()
+    if direct.is_file() and str(direct).startswith(str(space)):
         return direct
     name = Path(given).name
     if not name.endswith(".md"):
         name += ".md"
-    hits = [p for p in vault.glob(f"**/{name}") if p.is_file() and not p.relative_to(vault).as_posix().startswith((f"{SYSTEM_DIR}/", ".claude/", ".git/"))]
+    hits = [p for p in space.glob(f"**/{name}") if p.is_file() and not p.relative_to(space).as_posix().startswith((f"{SYSTEM_DIR}/", ".claude/", ".git/"))]
     if len(hits) == 1:
         return hits[0]
     return None
 
 
 def cmd_index_search(args: argparse.Namespace) -> int:
-    """Search the vault's own text, and say how much was searched.
+    """Search the space's own text, and say how much was searched.
 
-    Why this exists as a command: the vault ships a `.gitignore` that excludes every
+    Why this exists as a command: the space ships a `.gitignore` that excludes every
     user folder, on purpose, so that a clone never commits private material. Both
     common search tools honour `.gitignore` by default, so a plain recursive search
     finds only the distribution and reports an empty result. An empty result is
@@ -3625,8 +3844,8 @@ def cmd_index_search(args: argparse.Namespace) -> int:
     falsehood. Walking the tree here cannot be configured wrong, and the count of
     files searched is printed so a zero is a measurement rather than a silence.
     """
-    vault = Path(args.vault).resolve()
-    roots = [vault / r for r in (args.root or USER_ROOTS + (IMPORT_DIR, SYSTEM_DIR))]
+    space = Path(args.space).resolve()
+    roots = [space / r for r in (args.root or USER_ROOTS + (INBOX_DIR, SYSTEM_DIR))]
     try:
         pattern = re.compile(args.pattern, 0 if args.case_sensitive else re.IGNORECASE)
     except re.error as exc:
@@ -3649,7 +3868,7 @@ def cmd_index_search(args: argparse.Namespace) -> int:
             for n, line in enumerate(text.splitlines(), 1):
                 if pattern.search(line):
                     hits += 1
-                    print(f"{f.relative_to(vault)}:{n}: {line.strip()[:200]}")
+                    print(f"{f.relative_to(space)}:{n}: {line.strip()[:200]}")
                     if args.max_hits and hits >= args.max_hits:
                         print(f"ok: stopped at {hits} hit(s); {searched} file(s) searched so far")
                         return 0
@@ -3684,20 +3903,20 @@ WORK_FIELDS = [
 ]
 
 
-# Sync-hosted vaults: the normal case, and what has to stay out of the copy.
+# Sync-hosted spaces: the normal case, and what has to stay out of the copy.
 #
-# A vault in a synced folder is not an edge case, it is how most people get a
+# A space in a synced folder is not an edge case, it is how most people get a
 # backup, and it should keep working. What must not travel is what is true of one
 # machine only: the provisioned interpreter and the record of which tools this
 # computer has. Carried to a second machine they claim tools that are not there;
 # carried into a restore they bring a runtime built for another platform. The
-# snapshots are the other one, because they are full copies of the vault and a
+# snapshots are the other one, because they are full copies of the space and a
 # backup does not need a backup inside it.
 MACHINE_LOCAL_PATHS = (RUNTIME_DIR, SCRATCH_DIR)
 BULKY_PATHS = (HISTORY_DIR,)
 
 SYNC_HOSTS = (
-    ("iCloud Drive", "exclude by renaming the folder so it ends in `.nosync`, or move the vault out of iCloud"),
+    ("iCloud Drive", "exclude by renaming the folder so it ends in `.nosync`, or move the space out of iCloud"),
     ("OneDrive", "the client has no per-folder ignore file: exclude the folders in OneDrive settings, Account, Choose folders"),
     ("Dropbox", "add the paths to a `.dropboxignore` file at the top of your Dropbox folder"),
     ("Nextcloud", "the client has no per-folder ignore file: add the paths to the client's ignore list, Settings, General, Edit ignored files"),
@@ -3705,16 +3924,16 @@ SYNC_HOSTS = (
 )
 
 
-def _detect_sync_host(vault: Path) -> str:
-    """Which sync client is this vault sitting under, if any. Path and marker based."""
-    text = str(vault).replace("\\", "/")
+def _detect_sync_host(space: Path) -> str:
+    """Which sync client is this space sitting under, if any. Path and marker based."""
+    text = str(space).replace("\\", "/")
     if "Library/Mobile Documents/com~apple~CloudDocs" in text or "/iCloud" in text:
         return "iCloud Drive"
     if "/OneDrive" in text:
         return "OneDrive"
     if "CloudStorage/GoogleDrive" in text or "/Google Drive" in text:
         return "Google Drive"
-    for parent in [vault, *vault.parents]:
+    for parent in [space, *space.parents]:
         try:
             names = {p.name for p in parent.iterdir()}
         except OSError:
@@ -3728,16 +3947,16 @@ def _detect_sync_host(vault: Path) -> str:
     return ""
 
 
-def _work_vault(args: argparse.Namespace) -> Path:
-    """The vault a work command acts on: the root, never the folder someone happens to stand in.
+def _work_space(args: argparse.Namespace) -> Path:
+    """The space a work command acts on: the root, never the folder someone happens to stand in.
 
-    Found on the live vault: a `work` call made from inside `doing/<slug>/` created a
+    Found on the live space: a `work` call made from inside `workbench/<slug>/` created a
     second, empty `zanmai/open` there, because the default was the literal `.`. A work object
     written into it would have been invisible to every later `work list`, which is the one thing
     this database exists to prevent.
     """
-    start = Path(args.vault) if getattr(args, "vault", None) else Path.cwd()
-    wurzel = _find_vault_root(start)
+    start = Path(args.space) if getattr(args, "space", None) else Path.cwd()
+    wurzel = _find_space_root(start)
     return wurzel if wurzel is not None else start.resolve()
 
 
@@ -3747,8 +3966,8 @@ def _work_wanted_id(args: argparse.Namespace) -> str:
     return (getattr(args, "id", None) or getattr(args, "id_pos", None) or "").strip()
 
 
-def _work_base(vault: Path) -> Path:
-    return vault / OPEN_DIR
+def _work_base(space: Path) -> Path:
+    return space / OPEN_DIR
 
 
 def _work_id(vorhanden: set[str]) -> str:
@@ -3769,9 +3988,9 @@ def _work_id(vorhanden: set[str]) -> str:
     raise SystemExit("fail: could not find a free work id, which should be impossible")
 
 
-def _work_ensure(vault: Path) -> Path:
+def _work_ensure(space: Path) -> Path:
     """Create the folder on first use and return the file the work objects live in."""
-    base = _work_base(vault)
+    base = _work_base(space)
     base.mkdir(parents=True, exist_ok=True)
     (base / "pages").mkdir(exist_ok=True)
     datei = base / WORK_FILE
@@ -3781,18 +4000,18 @@ def _work_ensure(vault: Path) -> Path:
     return datei
 
 
-def _work_read(vault: Path) -> tuple[list[dict], list[str]]:
+def _work_read(space: Path) -> tuple[list[dict], list[str]]:
     """Every work object, and the field order to write them back in.
 
     A file that will not parse is not treated as an empty list: this is the machine's record of what
     it still owes, and answering "nothing open" from a broken file is worse than failing. A field the
     file has not seen yet reads as empty, which is what makes adding one free.
     """
-    datei = _work_ensure(vault)
+    datei = _work_ensure(space)
     try:
         daten = json.loads(datei.read_text(encoding="utf-8"))
     except ValueError as fehler:
-        raise SystemExit(f"fail: {datei.relative_to(vault).as_posix()} will not parse as JSON "
+        raise SystemExit(f"fail: {datei.relative_to(space).as_posix()} will not parse as JSON "
                          f"({fehler}). Nothing is read from it until that is fixed, because "
                          f"answering 'nothing open' out of a broken file is the one wrong answer.")
     eintraege = daten.get("work") if isinstance(daten, dict) else None
@@ -3808,57 +4027,57 @@ def _work_read(vault: Path) -> tuple[list[dict], list[str]]:
     return rows, felder
 
 
-def _work_write(vault: Path, rows: list[dict], headers: list[str]) -> None:
+def _work_write(space: Path, rows: list[dict], headers: list[str]) -> None:
     """Write the whole list back. Empty fields are dropped rather than stored as empty strings."""
-    datei = _work_ensure(vault)
+    datei = _work_ensure(space)
     eintraege = [{h: row[h] for h in headers if str(row.get(h, "")).strip()} for row in rows]
     datei.write_text(json.dumps({"work": eintraege}, indent=2, ensure_ascii=False) + "\n",
                      encoding="utf-8")
 
 
-def _work_adopt_legacy(vault: Path) -> str:
-    """Carry a vault that still has the old `.base` folder across, once. Returns what it did.
+def _work_adopt_legacy(space: Path) -> str:
+    """Carry a space that still has the old `.base` folder across, once. Returns what it did.
 
     Reads the CSV rather than trusting the schema beside it: the schema described views, the CSV
     held the work. The pages move as they are, the old folder goes to the trash rather than being
-    deleted, and a vault that has already crossed is left alone.
+    deleted, and a space that has already crossed is left alone.
     """
-    alt_dir = vault / LEGACY_OPEN_DIR
+    alt_dir = space / LEGACY_OPEN_DIR
     alt_csv = alt_dir / "data.csv"
     if not alt_csv.is_file():
         return ""
-    neu_datei = _work_ensure(vault)
+    neu_datei = _work_ensure(space)
     import csv as _csv
     with alt_csv.open(newline="", encoding="utf-8") as fh:
         rows = [dict(r) for r in _csv.DictReader(fh)]
-    vorhanden, felder = _work_read(vault)
+    vorhanden, felder = _work_read(space)
     bekannt = {r.get("id") for r in vorhanden}
     dazu = [r for r in rows if r.get("id") and r.get("id") not in bekannt]
     for row in dazu:
         for name in row:
             if name not in felder:
                 felder.append(name)
-    _work_write(vault, vorhanden + [{k: (v or "") for k, v in r.items()} for r in dazu], felder)
+    _work_write(space, vorhanden + [{k: (v or "") for k, v in r.items()} for r in dazu], felder)
 
     seiten = 0
     alt_pages = alt_dir / "pages"
-    neu_pages = _work_base(vault) / "pages"
+    neu_pages = _work_base(space) / "pages"
     if alt_pages.is_dir():
         for seite in sorted(alt_pages.glob("*.md")):
             ziel = neu_pages / seite.name
             if not ziel.exists():
                 shutil.move(str(seite), str(ziel))
                 seiten += 1
-    # Deliberately not `.resolve()`: the vault path is taken as it was given, and resolving only
-    # this half of the comparison turns a symlinked parent into "outside the vault". Built as
-    # `vault / ...`, it is inside by construction.
-    if alt_dir.is_dir() and _move_into(vault, alt_dir, TRASH_DIR,
+    # Deliberately not `.resolve()`: the space path is taken as it was given, and resolving only
+    # this half of the comparison turns a symlinked parent into "outside the space". Built as
+    # `space / ...`, it is inside by construction.
+    if alt_dir.is_dir() and _move_into(space, alt_dir, TRASH_DIR,
                                        f"replaced by {OPEN_DIR}/", dated=True) != 0:
-        return (f"work objects were copied to {neu_datei.relative_to(vault).as_posix()}, but "
+        return (f"work objects were copied to {neu_datei.relative_to(space).as_posix()}, but "
                 f"{LEGACY_OPEN_DIR}/ could not be moved out of the way. Both lists exist until "
                 f"that is dealt with by hand.")
     return (f"work objects moved from {LEGACY_OPEN_DIR}/ to "
-            f"{neu_datei.relative_to(vault).as_posix()}: {len(dazu)} entry(s), {seiten} page(s)")
+            f"{neu_datei.relative_to(space).as_posix()}: {len(dazu)} entry(s), {seiten} page(s)")
 
 
 def _work_find(rows: list[dict], wanted: str) -> dict | None:
@@ -3870,14 +4089,19 @@ def _work_find(rows: list[dict], wanted: str) -> dict | None:
     return partial[0] if len(partial) == 1 else None
 
 
-def _work_page(vault: Path, row_id: str) -> Path:
-    return _work_base(vault) / "pages" / f"{row_id}.md"
+def _work_page(space: Path, row_id: str) -> Path:
+    return _work_base(space) / "pages" / f"{row_id}.md"
 
 
 def cmd_work_open(args: argparse.Namespace) -> int:
     """Open a work object. Returns its id, which every later call uses."""
-    vault = _work_vault(args)
+    space = _work_space(args)
     titel = (args.title or args.title_pos or "").strip()
+    for feld, wert in (("the title", titel), ("--goal", getattr(args, "goal", "") or "")):
+        meldung = _refuse_umlaut_verlust(wert, feld)
+        if meldung:
+            print(meldung, file=sys.stderr)
+            return 1
     if not titel:
         print("fail: no title. Give it as `work open \"the title\"` or as `--title \"the title\"`.",
               file=sys.stderr)
@@ -3885,7 +4109,7 @@ def cmd_work_open(args: argparse.Namespace) -> int:
     if args.due and not _task_date_ok(args.due):
         print("fail: --due expects YYYY-MM-DD", file=sys.stderr)
         return 1
-    rows, headers = _work_read(vault)
+    rows, headers = _work_read(space)
     row_id = _work_id({str(r.get("id", "")) for r in rows})
     row = {h: "" for h in headers}
     row.update({
@@ -3894,8 +4118,8 @@ def cmd_work_open(args: argparse.Namespace) -> int:
         "updated": _today(), "due": args.due or "",
     })
     rows.append(row)
-    _work_write(vault, rows, headers)
-    page = _work_page(vault, row_id)
+    _work_write(space, rows, headers)
+    page = _work_page(space, row_id)
     page.parent.mkdir(parents=True, exist_ok=True)
     page.write_text(
         f"# {titel}\n\n"
@@ -3908,7 +4132,7 @@ def cmd_work_open(args: argparse.Namespace) -> int:
         "## Log\n\n"
         f"- {_timestamp_log()} opened\n",
         encoding="utf-8")
-    _append_activity_log(vault, args.owner or "zanmai.py", f"opened work '{titel}' ({row_id[:8]})")
+    _append_activity_log(space, args.owner or "zanmai.py", f"opened work '{titel}' ({row_id[:8]})")
     print(f"ok: work opened, id {row_id}")
     print(f"    short id usable everywhere: {row_id[:8]}")
     return 0
@@ -3942,8 +4166,8 @@ def _work_append_section(page: Path, heading: str, text: str) -> None:
 
 def cmd_work_ask(args: argparse.Namespace) -> int:
     """Record something only the user can settle, and mark the object as waiting."""
-    vault = _work_vault(args)
-    rows, headers = _work_read(vault)
+    space = _work_space(args)
+    rows, headers = _work_read(space)
     wanted = _work_wanted_id(args)
     if not wanted:
         print("fail: no id. Give it as `work <cmd> <id>` or as `--id <id>`.", file=sys.stderr)
@@ -3955,8 +4179,8 @@ def cmd_work_ask(args: argparse.Namespace) -> int:
     row["state"] = "waiting on you"
     row["waiting for"] = args.question.split("\n")[0][:160]
     _work_touch(row)
-    _work_write(vault, rows, headers)
-    page = _work_page(vault, row["id"])
+    _work_write(space, rows, headers)
+    page = _work_page(space, row["id"])
     _work_append_section(page, "Waiting on you", f"- **{_today()}** {args.question}")
     _work_append_section(page, "Log", f"- {_timestamp_log()} asked: {args.question.splitlines()[0][:120]}")
     print(f"ok: {row['id'][:8]} is waiting on the user")
@@ -3972,8 +4196,8 @@ def cmd_work_ask(args: argparse.Namespace) -> int:
 
 def cmd_work_answer(args: argparse.Namespace) -> int:
     """Record the user's answer and put the object back to work."""
-    vault = _work_vault(args)
-    rows, headers = _work_read(vault)
+    space = _work_space(args)
+    rows, headers = _work_read(space)
     wanted = _work_wanted_id(args)
     if not wanted:
         print("fail: no id. Give it as `work <cmd> <id>` or as `--id <id>`.", file=sys.stderr)
@@ -3985,8 +4209,8 @@ def cmd_work_answer(args: argparse.Namespace) -> int:
     row["state"] = "open"
     row["waiting for"] = ""
     _work_touch(row)
-    _work_write(vault, rows, headers)
-    page = _work_page(vault, row["id"])
+    _work_write(space, rows, headers)
+    page = _work_page(space, row["id"])
     _work_append_section(page, "Decided", f"- **{_today()}** {args.answer}")
     _work_append_section(page, "Log", f"- {_timestamp_log()} answered")
     print(f"ok: {row['id'][:8]} answered and back to open")
@@ -3995,8 +4219,8 @@ def cmd_work_answer(args: argparse.Namespace) -> int:
 
 def cmd_work_log(args: argparse.Namespace) -> int:
     """Append one line to the object's log, and add up what the work has cost."""
-    vault = _work_vault(args)
-    rows, headers = _work_read(vault)
+    space = _work_space(args)
+    rows, headers = _work_read(space)
     wanted = _work_wanted_id(args)
     if not wanted:
         print("fail: no id. Give it as `work <cmd> <id>` or as `--id <id>`.", file=sys.stderr)
@@ -4021,16 +4245,16 @@ def cmd_work_log(args: argparse.Namespace) -> int:
             return 1
         row["due"] = args.due
     _work_touch(row)
-    _work_write(vault, rows, headers)
+    _work_write(space, rows, headers)
     who = f"{args.agent}: " if args.agent else ""
-    _work_append_section(_work_page(vault, row["id"]), "Log", f"- {_timestamp_log()} {who}{args.note}")
+    _work_append_section(_work_page(space, row["id"]), "Log", f"- {_timestamp_log()} {who}{args.note}")
     print(f"ok: logged on {row['id'][:8]} (tokens {row.get('tokens') or 0}, minutes {row.get('minutes') or 0})")
     return 0
 
 
 def cmd_work_done(args: argparse.Namespace) -> int:
-    vault = _work_vault(args)
-    rows, headers = _work_read(vault)
+    space = _work_space(args)
+    rows, headers = _work_read(space)
     wanted = _work_wanted_id(args)
     if not wanted:
         print("fail: no id. Give it as `work <cmd> <id>` or as `--id <id>`.", file=sys.stderr)
@@ -4042,9 +4266,9 @@ def cmd_work_done(args: argparse.Namespace) -> int:
     row["state"] = "done"
     row["waiting for"] = ""
     _work_touch(row)
-    _work_write(vault, rows, headers)
-    _work_append_section(_work_page(vault, row["id"]), "Log", f"- {_timestamp_log()} closed")
-    _append_activity_log(vault, args.agent or "zanmai.py", f"closed work '{row.get('work')}' ({row['id'][:8]})")
+    _work_write(space, rows, headers)
+    _work_append_section(_work_page(space, row["id"]), "Log", f"- {_timestamp_log()} closed")
+    _append_activity_log(space, args.agent or "zanmai.py", f"closed work '{row.get('work')}' ({row['id'][:8]})")
     print(f"ok: {row['id'][:8]} closed (tokens {row.get('tokens') or 0}, minutes {row.get('minutes') or 0})")
     return 0
 
@@ -4057,8 +4281,8 @@ def cmd_work_show(args: argparse.Namespace) -> int:
     and its full uuid, which is the machine's own filing and not something anyone should have to
     know. Found in practice: when a live session went looking for it and had to `ls` the folder.
     """
-    vault = _work_vault(args)
-    rows, _headers = _work_read(vault)
+    space = _work_space(args)
+    rows, _headers = _work_read(space)
     wanted = _work_wanted_id(args)
     if not wanted:
         print("fail: no id. Give it as `work show <id>` or as `--id <id>`.", file=sys.stderr)
@@ -4072,7 +4296,7 @@ def cmd_work_show(args: argparse.Namespace) -> int:
     for feld in ("state", "owner", "due", "updated", "deliverable", "workshop", "waiting for"):
         if row.get(feld):
             print(f"  {feld:9} {row[feld]}")
-    page = _work_page(vault, row["id"])
+    page = _work_page(space, row["id"])
     if page.is_file():
         print()
         print(page.read_text(encoding="utf-8").rstrip())
@@ -4083,8 +4307,8 @@ def cmd_work_show(args: argparse.Namespace) -> int:
 
 def cmd_work_list(args: argparse.Namespace) -> int:
     """What is open, and what is waiting on the user. Prints the denominator."""
-    vault = _work_vault(args)
-    rows, _headers = _work_read(vault)
+    space = _work_space(args)
+    rows, _headers = _work_read(space)
     wanted = (args.state or "").strip().lower()
     shown = 0
     for row in sorted(rows, key=lambda r: (r.get("state") != "waiting on you", r.get("updated") or "")):
@@ -4107,7 +4331,7 @@ def cmd_work_list(args: argparse.Namespace) -> int:
 # --- The brand, and the gate in front of it --------------------------------
 #
 # One brand file per brand, under the user's own folders because it is theirs to read and to
-# disagree with, and `trusted/` is already defined as what they have settled on. Shuri writes it;
+# disagree with, and `life/` is already defined as what they have settled on. Shuri writes it;
 # Carol, Loki and Luis read it and produce from it.
 #
 # The gate exists because a piece rendered against an invented colour looks finished and is wrong,
@@ -4118,20 +4342,20 @@ def cmd_work_list(args: argparse.Namespace) -> int:
 # empty field says "not decided yet", where a plausible default would quietly make a decision the
 # user never made, and nothing downstream could tell the two apart afterwards.
 
-BRAND_DIR = f"{TRUSTED_DIR}/brands"
+BRAND_DIR = f"{LIFE_DIR}/brands"
 _BRAND_PLACEHOLDER_RE = re.compile(r"<[^<>\n]{2,}>")
 
 
-def _brand_root(vault: Path) -> Path:
-    return vault / BRAND_DIR
+def _brand_root(space: Path) -> Path:
+    return space / BRAND_DIR
 
 
-def _brand_file(vault: Path, name: str) -> Path:
-    return _brand_root(vault) / name / "design.md"
+def _brand_file(space: Path, name: str) -> Path:
+    return _brand_root(space) / name / "design.md"
 
 
-def _brand_names(vault: Path) -> list[str]:
-    root = _brand_root(vault)
+def _brand_names(space: Path) -> list[str]:
+    root = _brand_root(space)
     if not root.is_dir():
         return []
     return sorted(d.name for d in root.iterdir() if (d / "design.md").is_file())
@@ -4306,9 +4530,9 @@ def _brand_gaps(text: str) -> list[str]:
 
 def cmd_brand_check(args: argparse.Namespace) -> int:
     """Is there a brand to build against? Exit 1 when there is none, so a caller can gate on it."""
-    vault = Path(args.vault).resolve()
-    namen = [n for n in _brand_names(vault)
-             if _brand_named(_brand_file(vault, n).read_text(encoding="utf-8"))]
+    space = Path(args.space).resolve()
+    namen = [n for n in _brand_names(space)
+             if _brand_named(_brand_file(space, n).read_text(encoding="utf-8"))]
     if args.brand:
         namen = [n for n in namen if n == args.brand]
     if not namen:
@@ -4320,11 +4544,11 @@ def cmd_brand_check(args: argparse.Namespace) -> int:
 
     unvollstaendig = 0
     for name in namen:
-        pfad = _brand_file(vault, name)
+        pfad = _brand_file(space, name)
         text = pfad.read_text(encoding="utf-8")
         gaps = _brand_gaps(text)
         befunde = _brand_findings(_brand_frontmatter(text))
-        rel = pfad.relative_to(vault).as_posix()
+        rel = pfad.relative_to(space).as_posix()
         if not gaps and not befunde:
             print(f"ok: {name} ({rel}), nothing left open")
             continue
@@ -4345,10 +4569,10 @@ def cmd_brand_check(args: argparse.Namespace) -> int:
 
 def cmd_brand_list(args: argparse.Namespace) -> int:
     """Every brand that exists, with where it lives."""
-    vault = Path(args.vault).resolve()
-    namen = _brand_names(vault)
+    space = Path(args.space).resolve()
+    namen = _brand_names(space)
     for name in namen:
-        print(f"{name}  {_brand_file(vault, name).relative_to(vault).as_posix()}")
+        print(f"{name}  {_brand_file(space, name).relative_to(space).as_posix()}")
     print(f"ok: {len(namen)} brand(s)")
     return 0
 
@@ -4372,11 +4596,11 @@ def cmd_brand_list(args: argparse.Namespace) -> int:
 
 _TASK_LINE_RE = re.compile(r"^(?P<indent>[ \t]*)(?P<bullet>[-*+][ \t]+\[)(?P<state>[ xX-])(?P<rest>\].*)$")
 # Three spellings, because three are in use. The brackets used to be required, and the bare
-# `due:2026-09-15` that the vault itself writes was therefore not a date at all: two live tasks sat
+# `due:2026-09-15` that the space itself writes was therefore not a date at all: two live tasks sat
 # in the undated pile from the day they were written, one of them a flight that expires.
 _TASK_DUE_RE = re.compile(r"(?:\U0001F4C5|\(?\bdue:?)\s*(\d{4}-\d{2}-\d{2})\)?")
 _TASK_HEADING = "## Tasks"
-_TASK_SKIP_ROOTS = (SYSTEM_DIR, HOST_DIR, IMPORT_DIR)
+_TASK_SKIP_ROOTS = (SYSTEM_DIR, HOST_DIR, INBOX_DIR)
 
 
 def _task_due(text: str) -> str:
@@ -4400,7 +4624,7 @@ def _task_date_ok(value: str) -> bool:
 DESK_IDLE_DAYS = 14
 
 
-def _desk_idle(vault: Path, days: int = DESK_IDLE_DAYS) -> list[dict]:
+def _desk_idle(space: Path, days: int = DESK_IDLE_DAYS) -> list[dict]:
     """Pieces on the desk nobody has touched for a while, oldest first.
 
     Left out: anything the truth file marks `done` or `cancelled`, and anything marked `waiting`
@@ -4408,7 +4632,7 @@ def _desk_idle(vault: Path, days: int = DESK_IDLE_DAYS) -> list[dict]:
     workshop three weeks out is a decision, and a decision that gets asked about every morning was
     not recorded, it was ignored.
     """
-    wurzel = vault / DOING_DIR
+    wurzel = space / WORKBENCH_DIR
     if not wurzel.is_dir():
         return []
     heute = datetime.now().date()
@@ -4418,18 +4642,28 @@ def _desk_idle(vault: Path, days: int = DESK_IDLE_DAYS) -> list[dict]:
         dateien = [f for f in ordner.rglob("*") if f.is_file()]
         if not dateien:
             continue
-        neueste = max(f.stat().st_mtime for f in dateien)
-        if neueste >= grenze:
-            continue
         wahrheit = ordner / f"{ordner.name}.md"
-        status, faellig = "", ""
+        status, faellig, angefasst = "", "", ""
         try:
             inhalt = wahrheit.read_text(encoding="utf-8")
             status = _status_of(inhalt)
             fm, _o, _b = _split_frontmatter(inhalt)
             faellig = str(fm.get("due") or "").strip()
+            angefasst = str(fm.get("updated") or "").strip()
         except (OSError, UnicodeDecodeError):
             pass
+        # When somebody last worked on this, not when a file was last written. An update rewrites
+        # a `kind:` line and moves a folder, which sets a fresh modification time on everything it
+        # touches. After an update every piece reads as touched today, and the reminder that exists
+        # to notice a forgotten one stays silent for another two weeks. The truth file's
+        # own `updated:` says what actually happened; the file time is the fallback where it is
+        # missing.
+        if angefasst and _task_date_ok(angefasst):
+            neueste = datetime.strptime(angefasst, "%Y-%m-%d").timestamp()
+        else:
+            neueste = max(f.stat().st_mtime for f in dateien)
+        if neueste >= grenze:
+            continue
         if status in STATUS_CLOSED:
             continue
         if status == "waiting" and faellig and _task_date_ok(faellig):
@@ -4437,7 +4671,7 @@ def _desk_idle(vault: Path, days: int = DESK_IDLE_DAYS) -> list[dict]:
                 continue
         raus.append({
             "slug": ordner.name,
-            "label": _buendel_titel(vault, f"{DOING_DIR}/{ordner.name}"),
+            "label": _buendel_titel(space, f"{WORKBENCH_DIR}/{ordner.name}"),
             "days": int((datetime.now().timestamp() - neueste) / 86400),
             "files": len(dateien),
             "status": status,
@@ -4462,20 +4696,20 @@ def _status_of(content: str) -> str:
     return ""
 
 
-def _task_scan(vault: Path, only_open: bool = True) -> list[dict]:
-    """Every task line in the user's part of the vault, wherever it sits.
+def _task_scan(space: Path, only_open: bool = True) -> list[dict]:
+    """Every task line in the user's part of the space, wherever it sits.
 
     Folder-independent on purpose, and that is the whole point of it. A deadline does not stop being
     one because the bundle around it was archived; the flight that made this necessary disappeared
-    from view the moment its trip bundle left `focus/`, with the money still in play. Left out are
+    from view the moment its trip bundle left `life/`, with the money still in play. Left out are
     the system folder (the machine's own files), the host folder, the import queue and database
     folders, which an editor writes and nobody types by hand.
     """
     treffer: list[dict] = []
-    for md in sorted(vault.rglob("*.md")):
+    for md in sorted(space.rglob("*.md")):
         if not md.is_file():
             continue
-        rel = md.relative_to(vault).as_posix()
+        rel = md.relative_to(space).as_posix()
         kopf = rel.split("/", 1)[0]
         if kopf in _TASK_SKIP_ROOTS or kopf.startswith("."):
             continue
@@ -4511,7 +4745,14 @@ def _task_scan(vault: Path, only_open: bool = True) -> list[dict]:
     return treffer
 
 
-def _task_due_soon(vault: Path, days: int, eintraege: list[dict] | None = None) -> list[dict]:
+# How far ahead a dated task counts as open. A week: near enough that doing it now is sensible, far
+# enough that Friday's deadline is visible on Monday. Beyond it the task exists and is findable, it
+# is simply not today's business, and reading it out every session until then trains the user to
+# skip the list. Anything already due, however old, stays open by definition.
+TASK_OPEN_HORIZON_DAYS = 7
+
+
+def _task_due_soon(space: Path, days: int, eintraege: list[dict] | None = None) -> list[dict]:
     """Open tasks whose date falls inside the window, overdue ones first. Undated ones stay out.
 
     Undated stay out because a list of everything open is read once and skipped forever after. What
@@ -4520,7 +4761,7 @@ def _task_due_soon(vault: Path, days: int, eintraege: list[dict] | None = None) 
     heute = datetime.now().date()
     grenze = heute + timedelta(days=days)
     faellig: list[dict] = []
-    for eintrag in (_task_scan(vault) if eintraege is None else eintraege):
+    for eintrag in (_task_scan(space) if eintraege is None else eintraege):
         if not eintrag["due"] or not _task_date_ok(eintrag["due"]):
             continue
         tag = datetime.strptime(eintrag["due"], "%Y-%m-%d").date()
@@ -4541,13 +4782,13 @@ _BRIEFING_DUE_DAYS = 14
 _DATEINAME_DATUM = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 
 
-def _dated_files_ahead(vault: Path, days: int) -> list[dict]:
+def _dated_files_ahead(space: Path, days: int) -> list[dict]:
     """Files whose own name carries a date from today onward, anywhere in the user's folders.
 
     The other three date sources are places the machine keeps itself: a task line it wrote, a bundle's
     `due:` field, a work object. A meeting prepared yesterday for tomorrow sits in none of them, and on
     2026-08-12 that is exactly what went missing from a greeting while the file for it lay in the
-    vault. A date in a filename is the user's own convention and costs one walk to read.
+    space. A date in a filename is the user's own convention and costs one walk to read.
 
     The system folder and the journal are skipped: a log or a daily entry named by its date is the
     date axis itself, not something coming up.
@@ -4555,10 +4796,10 @@ def _dated_files_ahead(vault: Path, days: int) -> list[dict]:
     heute = datetime.now().date()
     grenze = heute + timedelta(days=days)
     treffer: list[dict] = []
-    for pfad in vault.rglob("*.md"):
-        rel = pfad.relative_to(vault)
+    for pfad in space.rglob("*.md"):
+        rel = pfad.relative_to(space)
         erste = rel.parts[0]
-        if erste.startswith(".") or erste in (SYSTEM_DIR, IMPORT_DIR, JOURNAL_DIR):
+        if erste.startswith(".") or erste in (SYSTEM_DIR, INBOX_DIR, JOURNAL_DIR):
             continue
         m = _DATEINAME_DATUM.search(pfad.stem)
         if not m:
@@ -4587,11 +4828,11 @@ def _dated_files_ahead(vault: Path, days: int) -> list[dict]:
     return sorted(treffer, key=lambda e: e["days"])
 
 
-def _work_due_soon(vault: Path, days: int) -> list[dict]:
+def _work_due_soon(space: Path, days: int) -> list[dict]:
     """Unfinished work objects with a date inside the window, overdue first."""
     heute = datetime.now().date()
     grenze = heute + timedelta(days=days)
-    rows, _headers = _work_read(vault)
+    rows, _headers = _work_read(space)
     faellig = []
     for row in rows:
         wert = (row.get("due") or "").strip()
@@ -4602,24 +4843,77 @@ def _work_due_soon(vault: Path, days: int) -> list[dict]:
     return sorted(faellig, key=lambda r: abs((datetime.strptime(r["due"], "%Y-%m-%d").date() - heute).days))
 
 
-def _task_target(vault: Path, given: str | None) -> Path:
-    """Where a commissioned task goes: the file the user named, else today's journal entry."""
+# How often a recurring task comes back, and how far ahead that is. Kept as a table rather than as
+# a calculation, because a month is not thirty days and a quarter is not ninety: the next one falls
+# on the same day of the month, and where that day does not exist the month decides.
+_TASK_EVERY = {"weekly": 7, "monthly": 1, "quarterly": 3, "yearly": 12}
+
+
+def _task_next_due(due: str, every: str) -> str:
+    """The next occurrence after this one, or "" where there is none.
+
+    Days are added for a weekly one and months for the rest, which is why they are not the same
+    calculation. A 31st in a month that has thirty days lands on the last day of that month, the
+    way a person would read it, rather than sliding into the next.
+    """
+    if every not in _TASK_EVERY or not _task_date_ok(due):
+        return ""
+    tag = datetime.strptime(due, "%Y-%m-%d").date()
+    if every == "weekly":
+        return (tag + timedelta(days=7)).isoformat()
+    monate = _TASK_EVERY[every]
+    jahr, monat = tag.year + (tag.month - 1 + monate) // 12, (tag.month - 1 + monate) % 12 + 1
+    letzter = [31, 29 if (jahr % 4 == 0 and jahr % 100 != 0) or jahr % 400 == 0 else 28,
+               31, 30, 31, 30, 31, 31, 30, 31, 30, 31][monat - 1]
+    return f"{jahr:04d}-{monat:02d}-{min(tag.day, letzter):02d}"
+
+
+def _ensure_tasks_file(space: Path) -> Path:
+    """The one list for tasks that belong to no matter in the space, created if it is not there."""
+    datei = space / TASKS_FILE
+    if not datei.exists():
+        datei.parent.mkdir(parents=True, exist_ok=True)
+        datei.write_text(
+            "# Tasks\n\n"
+            "Everything to do that belongs to no particular matter in this space. Tasks that do "
+            "belong to one live in that bundle, next to the material they are about.\n\n"
+            "This is your file. Write in it, tick things off, delete lines, sort it how you like. "
+            "One task per line, starting `- [ ]`, and a date as `\U0001F4C5 YYYY-MM-DD` where "
+            "there is one.\n\n",
+            encoding="utf-8")
+    return datei
+
+
+def _task_target(space: Path, given: str | None, due: str = "") -> Path:
+    """Where a commissioned task goes: the file the user named, else the one task list.
+
+    A task that belongs to a matter goes into that matter's bundle, beside the material it is
+    about, and the caller names that file. Everything else lands in `TASKS.md` at the space root:
+    the haircut to book, the tablets at nine, the thing somebody said in passing. One file, at the
+    top, editable by hand in any editor.
+
+    It used to go into a journal day instead, today's for an undated task and the due day's for a
+    dated one. The second half was the mistake. A reminder for an anniversary eleven months out
+    created a journal entry in a year nobody had reached yet, holding one line, and the journal is
+    a record of days that happened rather than a place to file the future. The date now says when
+    something surfaces, not where it lives.
+    """
     if not given:
-        return _journal_note(vault, "daily", datetime.now())
-    bekannt = _resolve_vault_file(vault, given)
-    return bekannt if bekannt is not None else (vault / given)
+        return _ensure_tasks_file(space)
+    bekannt = _resolve_space_file(space, given)
+    return bekannt if bekannt is not None else (space / given)
 
 
 # How long a task line may be. Not a style preference: a line this long is no longer something you
 # can read and act on, and the material that makes it long is always material that already sits
-# somewhere else in the vault. Measured against real lines in a working vault, the longest
+# somewhere else in the space. Measured against real lines in a working space, the longest
 # legitimate one ran to about 120 characters.
 TASK_TEXT_MAX = 160
 
 
 def cmd_task_add(args: argparse.Namespace) -> int:
     """Write a task the user asked for onto one of their lists."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     due = (args.due or "").strip()
     if due and not _task_date_ok(due):
         print("fail: --due expects YYYY-MM-DD", file=sys.stderr)
@@ -4627,6 +4921,10 @@ def cmd_task_add(args: argparse.Namespace) -> int:
     text = args.text.strip()
     if not text:
         print("fail: a task needs words", file=sys.stderr)
+        return 1
+    meldung = _refuse_umlaut_verlust(text, "the task")
+    if meldung:
+        print(meldung, file=sys.stderr)
         return 1
     # A task is an action, in one line. Asked to merge four scattered lines about one flight into
     # one task, a run produced three lines carrying a booking number, a price, a phone number, a
@@ -4650,17 +4948,28 @@ def cmd_task_add(args: argparse.Namespace) -> int:
     verweis = (getattr(args, "see", "") or "").strip().strip("[]")
     if verweis:
         text = f"{text} ([[{verweis}]])"
-    target = _task_target(vault, args.file)
+    target = _task_target(space, args.file, due)
     if target.suffix.lower() not in (".md", ".markdown"):
         print(f"fail: a task belongs in a markdown file, not in {target.name}", file=sys.stderr)
         return 1
     try:
-        rel = target.resolve().relative_to(vault).as_posix()
+        rel = target.resolve().relative_to(space).as_posix()
     except ValueError:
-        print(f"fail: {args.file} is outside the vault", file=sys.stderr)
+        print(f"fail: {args.file} is outside the space", file=sys.stderr)
         return 1
 
-    zeile = f"- [ ] {text}" + (f" \U0001F4C5 {due}" if due else "")
+    jeder = (getattr(args, "every", "") or "").strip()
+    if jeder and jeder not in _TASK_EVERY:
+        print(f"fail: --every takes one of {', '.join(sorted(_TASK_EVERY))}", file=sys.stderr)
+        return 1
+    if jeder and not due:
+        print("fail: --every needs a --due to count from", file=sys.stderr)
+        return 1
+    # The repeat is written into the line itself, not into a list beside it. A second list would
+    # have to be kept in step with the first, and the day somebody edits the task by hand in their
+    # editor is the day the two stop agreeing.
+    zeile = (f"- [ ] {text}" + (f" \U0001F4C5 {due}" if due else "")
+             + (f" (every {jeder})" if jeder else ""))
     target.parent.mkdir(parents=True, exist_ok=True)
     bestand = target.read_text(encoding="utf-8") if target.is_file() else ""
     zeilen = bestand.splitlines()
@@ -4681,7 +4990,7 @@ def cmd_task_add(args: argparse.Namespace) -> int:
                 letzte += 1
         zeilen.insert(letzte + 1, zeile)
     target.write_text("\n".join(zeilen).rstrip("\n") + "\n", encoding="utf-8")
-    _append_activity_log(vault, args.agent or "zanmai.py",
+    _append_activity_log(space, args.agent or "zanmai.py",
                          f"task written for the user -> {rel}: {text}")
     print(f"ok: {rel}: {zeile}")
     return 0
@@ -4689,15 +4998,15 @@ def cmd_task_add(args: argparse.Namespace) -> int:
 
 def cmd_task_done(args: argparse.Namespace) -> int:
     """Tick a task off. One unmistakable match or nothing: a tick on the wrong line is a false report."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     muster = args.text.strip().lower()
-    kandidaten = [t for t in _task_scan(vault) if muster in t["text"].lower()]
+    kandidaten = [t for t in _task_scan(space) if muster in t["text"].lower()]
     if args.file:
-        gesucht = _task_target(vault, args.file)
+        gesucht = _task_target(space, args.file)
         try:
-            rel = gesucht.resolve().relative_to(vault).as_posix()
+            rel = gesucht.resolve().relative_to(space).as_posix()
         except ValueError:
-            print(f"fail: {args.file} is outside the vault", file=sys.stderr)
+            print(f"fail: {args.file} is outside the space", file=sys.stderr)
             return 1
         kandidaten = [t for t in kandidaten if t["path"] == rel]
     if not kandidaten:
@@ -4710,7 +5019,7 @@ def cmd_task_done(args: argparse.Namespace) -> int:
         return 1
 
     treffer = kandidaten[0]
-    pfad = vault / treffer["path"]
+    pfad = space / treffer["path"]
     zeilen = pfad.read_text(encoding="utf-8").splitlines()
     stelle = treffer["line"] - 1
     passt = _TASK_LINE_RE.match(zeilen[stelle])
@@ -4719,20 +5028,38 @@ def cmd_task_done(args: argparse.Namespace) -> int:
         return 1
     zeilen[stelle] = f"{passt.group('indent')}{passt.group('bullet')}x{passt.group('rest')}"
     pfad.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
-    _append_activity_log(vault, args.agent or "zanmai.py",
+    _append_activity_log(space, args.agent or "zanmai.py",
                          f"task ticked for the user -> {treffer['path']}: {treffer['text']}")
     print(f"ok: ticked in {treffer['path']}: {treffer['text']}")
+
+    # A recurring task writes its next occurrence the moment this one is ticked, into the journal
+    # day it falls on. Doing it here rather than on a schedule is what keeps it from being missed:
+    # there is no sweep to run and nothing to remember, and the day it comes round it is already
+    # standing in that day's entry, where somebody will be looking anyway.
+    alte_zeile = zeilen[stelle]
+    wieder = re.search(r"\(every (weekly|monthly|quarterly|yearly)\)", alte_zeile)
+    faellig = _task_due(alte_zeile)
+    if wieder and faellig:
+        naechste = _task_next_due(faellig, wieder.group(1))
+        if naechste:
+            roh = re.sub(r"^\s*[-*]\s*\[[ xX]\]\s*", "", alte_zeile).strip()
+            roh = _TASK_DUE_RE.sub("", roh)
+            roh = re.sub(r"\(every \w+\)", "", roh).strip()
+            weiter = argparse.Namespace(space=str(space), text=roh, file=None, due=naechste,
+                                        see=None, every=wieder.group(1),
+                                        agent=args.agent or "zanmai.py")
+            cmd_task_add(weiter)
     return 0
 
 
 def cmd_task_list(args: argparse.Namespace) -> int:
-    """What is open across the whole vault, dated first, with the deadline said in days."""
-    vault = Path(args.vault).resolve()
+    """What is open across the whole space, dated first, with the deadline said in days."""
+    space = Path(args.space).resolve()
     if args.due_within is not None:
-        eintraege = _task_due_soon(vault, args.due_within)
+        eintraege = _task_due_soon(space, args.due_within)
         gesamt = len(eintraege)
     else:
-        alle = _task_scan(vault)
+        alle = _task_scan(space)
         gesamt = len(alle)
         eintraege = sorted(alle, key=lambda e: (not e["due"], e["due"], e["path"]))
     for eintrag in eintraege[:args.limit]:
@@ -4756,14 +5083,14 @@ def cmd_create_sub_bundle_truth(args: argparse.Namespace) -> int:
     (sub-bundles are folders-with-members, not hub-with-children). When the
     user's mental model actually treats the sub-bundle as a thematic node
     that needs a body and a parent-link, as in the recently established
-    theme-hierarchy use (Niederlande > Zandvoort, Computer > Retrocomputing
+    bundle hierarchy use (Niederlande > Zandvoort, Computer > Retrocomputing
     > Maximite), this command adds the truth file without re-running
     `bundle create`.
 
     The body holds a one-line "Part of [[<parent>]]" reference and a short
     title heading. Additional content is added later via ordinary edits.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     kind = args.kind
     if kind not in KIND_FIELDS:
         print(f"fail: unknown kind {kind}", file=sys.stderr)
@@ -4772,21 +5099,21 @@ def cmd_create_sub_bundle_truth(args: argparse.Namespace) -> int:
     if len(segments) < 2:
         print(f"fail: '{args.bundle_slug}' is not a sub-bundle path (must be parent/child or deeper)", file=sys.stderr)
         return 1
-    bundle_dir = vault / _kind_folder(kind) / Path(*segments)
+    bundle_dir = space / _kind_folder(kind) / Path(*segments)
     if not bundle_dir.exists():
-        print(f"fail: sub-bundle folder does not exist: {bundle_dir.relative_to(vault)}", file=sys.stderr)
+        print(f"fail: sub-bundle folder does not exist: {bundle_dir.relative_to(space)}", file=sys.stderr)
         print("hint: run `bundle create --kind <k> --slug <parent>/<child>` first", file=sys.stderr)
         return 1
     truth_path = bundle_dir / f"{slug}.md"
     if truth_path.exists():
-        print(f"fail: truth file already exists: {truth_path.relative_to(vault)}", file=sys.stderr)
+        print(f"fail: truth file already exists: {truth_path.relative_to(space)}", file=sys.stderr)
         return 1
 
     parent_slug = segments[-2]
     title = args.title or slug.replace("-", " ").title()
 
     additions: dict = {"_title": title}
-    for key in ("goal", "status", "cadence", "due", "topic", "last_done"):
+    for key in ("goal", "status", "due", "topic"):
         v = getattr(args, key, None)
         if v:
             additions[key] = v
@@ -4824,12 +5151,12 @@ def cmd_create_sub_bundle_truth(args: argparse.Namespace) -> int:
             pass
         _append_index(index_path, slug, summary="the bundle's main file")
 
-    bundle_rel = bundle_dir.relative_to(vault).as_posix()
+    bundle_rel = bundle_dir.relative_to(space).as_posix()
     _append_activity_log(
-        vault, "zanmai.py",
+        space, "zanmai.py",
         f"created sub-bundle truth {bundle_rel}/{slug}.md (parent [[{parent_slug}]])"
     )
-    print(f"ok: sub-bundle truth at {truth_path.relative_to(vault)}, parent [[{parent_slug}]]")
+    print(f"ok: sub-bundle truth at {truth_path.relative_to(space)}, parent [[{parent_slug}]]")
     return 0
 
 
@@ -4838,12 +5165,12 @@ def cmd_create_sub_bundle_truth(args: argparse.Namespace) -> int:
 
 
 def cmd_rename_slug(args: argparse.Namespace) -> int:
-    """Atomic slug rename for an existing markdown file in the vault.
+    """Atomic slug rename for an existing markdown file in the space.
 
     Performs five steps as one operation:
       1. Rename the markdown file in place (`<old>.md` -> `<new>.md`).
       2. Update the frontmatter `slug:` field to the new value.
-      3. Rewrite vault-wide wikilinks via `update wikilinks` (honouring
+      3. Rewrite space-wide wikilinks via `update wikilinks` (honouring
          the default scope and hard-exclude rules).
       4. Refresh the master `INDEX.md`.
       5. Append one activity-log line.
@@ -4853,12 +5180,12 @@ def cmd_rename_slug(args: argparse.Namespace) -> int:
     update wikilinks). The manual sequence risked frontmatter corruption.
 
     The old slug is located either via `--bundle-slug`/`--bundle-kind` when
-    given, or by a vault-wide search for `<old>.md` filtered by the hard-
+    given, or by a space-wide search for `<old>.md` filtered by the hard-
     exclude set (no matches inside snapshots, logs, trash, archive, import,
     distribution). When the search returns multiple candidates, the command
     refuses and asks the caller to disambiguate.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     old_slug = args.old.strip()
     new_slug = args.new.strip()
     if not old_slug or not new_slug:
@@ -4870,24 +5197,24 @@ def cmd_rename_slug(args: argparse.Namespace) -> int:
 
     # 1. Locate the existing file
     if args.bundle_slug:
-        bundle_dir, _bundle_kind, _ = _resolve_bundle_dir(vault, args.bundle_slug, args.bundle_kind)
+        bundle_dir, _bundle_kind, _ = _resolve_bundle_dir(space, args.bundle_slug, args.bundle_kind)
         if not bundle_dir:
             print(f"fail: bundle '{args.bundle_slug}' not found", file=sys.stderr)
             return 1
         old_path = bundle_dir / f"{old_slug}.md"
         if not old_path.exists():
-            print(f"fail: file does not exist: {old_path.relative_to(vault)}", file=sys.stderr)
+            print(f"fail: file does not exist: {old_path.relative_to(space)}", file=sys.stderr)
             return 1
     else:
         candidates = [
-            m for m in vault.rglob(f"{old_slug}.md")
-            if not _is_excluded_from_wikilink_ops(m.relative_to(vault).as_posix())
+            m for m in space.rglob(f"{old_slug}.md")
+            if not _is_excluded_from_wikilink_ops(m.relative_to(space).as_posix())
         ]
         if not candidates:
-            print(f"fail: no file matching '{old_slug}.md' found in the active vault", file=sys.stderr)
+            print(f"fail: no file matching '{old_slug}.md' found in the active space", file=sys.stderr)
             return 1
         if len(candidates) > 1:
-            paths = "\n  ".join(str(c.relative_to(vault)) for c in candidates)
+            paths = "\n  ".join(str(c.relative_to(space)) for c in candidates)
             print(f"fail: ambiguous, multiple files match '{old_slug}.md':\n  {paths}", file=sys.stderr)
             print("hint: pass --bundle-slug <slug> --bundle-kind <kind> to disambiguate", file=sys.stderr)
             return 1
@@ -4895,7 +5222,7 @@ def cmd_rename_slug(args: argparse.Namespace) -> int:
 
     new_path = old_path.parent / f"{new_slug}.md"
     if new_path.exists():
-        print(f"fail: target already exists: {new_path.relative_to(vault)}", file=sys.stderr)
+        print(f"fail: target already exists: {new_path.relative_to(space)}", file=sys.stderr)
         return 1
 
     # 2. Update frontmatter slug field
@@ -4910,22 +5237,64 @@ def cmd_rename_slug(args: argparse.Namespace) -> int:
     new_path.write_text(new_text, encoding="utf-8")
     old_path.unlink()
 
-    bundle_rel = old_path.parent.relative_to(vault).as_posix()
+    # 4. A bundle carries its name twice, on its main file and on the folder around it. Renaming
+    # only the file leaves the folder saying the old thing, and the next run reaches for `mv` by
+    # hand, outside every check this command exists to run. So the folder comes along, and only
+    # where it really is this bundle's own: `<slug>/<slug>.md`.
+    ordner = old_path.parent
+    umbenannt = None
+    if ordner.name == old_slug and ordner != space:
+        ziel = ordner.parent / new_slug
+        if ziel.exists():
+            print(f"fail: {ziel.relative_to(space).as_posix()} already exists, so the folder "
+                  f"cannot follow the name. Nothing was changed.", file=sys.stderr)
+            # Put the file back, the operation is one thing or nothing.
+            new_path.rename(old_path)
+            return 1
+        ordner.rename(ziel)
+        umbenannt = ziel
+        new_path = ziel / new_path.name
+    bundle_rel = (umbenannt or ordner).relative_to(space).as_posix()
 
-    # 4. Update wikilinks vault-wide via the existing subcommand
-    wikilink_args = argparse.Namespace(vault=str(vault), old=old_slug, new=new_slug, scope=None)
+    # 5. Update wikilinks space-wide via the existing subcommand
+    wikilink_args = argparse.Namespace(space=str(space), old=old_slug, new=new_slug,
+                                      scope=None, verbose=False, quiet=True)
     cmd_update_wikilinks(wikilink_args)
 
-    # 5. Refresh master INDEX
-    _update_master_index(vault)
+    # 6. Refresh master INDEX
+    _update_master_index(space)
 
-    # 6. Activity log (one line capturing the whole atomic operation)
+    # 7. Activity log (one line capturing the whole atomic operation)
     _append_activity_log(
-        vault, "zanmai.py",
+        space, "zanmai.py",
         f"slug rename {old_slug} -> {new_slug} in {bundle_rel}"
     )
 
-    print(f"ok: renamed {old_slug}.md -> {new_slug}.md in {bundle_rel}")
+    # The old name can survive in running text, where no wikilink rewrite reaches it: a sentence in
+    # a neighbouring bundle's page, a description in an INDEX. Looking for that is the command's job
+    # and not the caller's, and this is why. A run that has to check for itself runs a search, sees
+    # its results, and then reports them, which is how a person ends up being told that a field
+    # called source_detail still carries the old name in a provenance note. That sentence asks
+    # nothing and means nothing to them. Whatever the history holds is history and is never counted:
+    # the same exclusion the wikilink rewrite uses decides what history is.
+    reste = []
+    for pfad in space.rglob("*.md"):
+        rel = pfad.relative_to(space).as_posix()
+        if _is_excluded_from_wikilink_ops(rel) or pfad == new_path:
+            continue
+        try:
+            if old_slug in pfad.read_text(encoding="utf-8", errors="ignore"):
+                reste.append(rel)
+        except OSError:
+            continue
+
+    # What this prints is what gets repeated to the user, so it says the result, the way back, and
+    # anything actually left to do. Not the files it touched: a list invites a run to read it out.
+    print(f"ok: {old_slug} is now {new_slug}, in {bundle_rel}")
+    print(f"undo: bundle rename --old {new_slug} --new {old_slug}")
+    if reste:
+        print(f"still says {old_slug} in running text, so it reads wrong now: "
+              f"{', '.join(reste[:5])}" + (f" and {len(reste) - 5} more" if len(reste) > 5 else ""))
     return 0
 
 
@@ -4949,19 +5318,19 @@ def cmd_inspect_scope(args: argparse.Namespace) -> int:
 
     Output is plain text, ~20 lines, intended to be visible in chat.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     scope_arg = args.scope or ""
     candidate = Path(scope_arg)
     if not candidate.is_absolute():
-        # Resolve relative scope against the vault, not the cwd.
-        candidate = vault / scope_arg
-    scope = candidate.resolve() if scope_arg else vault
+        # Resolve relative scope against the space, not the cwd.
+        candidate = space / scope_arg
+    scope = candidate.resolve() if scope_arg else space
     if not scope.exists() or not scope.is_dir():
         print(f"fail: scope is not a directory: {scope}", file=sys.stderr)
         return 1
 
     try:
-        scope_rel = scope.relative_to(vault).as_posix()
+        scope_rel = scope.relative_to(space).as_posix()
     except ValueError:
         scope_rel = str(scope)
 
@@ -5044,16 +5413,16 @@ _WIKI_EMBED_RE = re.compile(r"!\[\[([^\]|]+?)(\|[^\]]*)?\]\]")
 _MD_EMBED_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 
-def _rename_map_path(vault: Path) -> Path:
+def _rename_map_path(space: Path) -> Path:
     """Location of the attachment rename map. AI-internal state, not in the
-    user vault. Hidden so it does not appear in the user's file listings."""
-    return vault / MEMORY_DIR / ".embed-rename-map.json"
+    user space. Hidden so it does not appear in the user's file listings."""
+    return space / MEMORY_DIR / ".embed-rename-map.json"
 
 
-def _load_rename_map(vault: Path) -> dict[str, str]:
+def _load_rename_map(space: Path) -> dict[str, str]:
     """Read the attachment rename map (original-basename -> new-basename).
     Returns an empty dict when the file is missing or unreadable."""
-    path = _rename_map_path(vault)
+    path = _rename_map_path(space)
     if not path.exists():
         return {}
     try:
@@ -5065,23 +5434,23 @@ def _load_rename_map(vault: Path) -> dict[str, str]:
     return {}
 
 
-def _save_rename_map(vault: Path, mapping: dict[str, str]) -> None:
+def _save_rename_map(space: Path, mapping: dict[str, str]) -> None:
     """Write the attachment rename map. Creates the parent directory if
     needed."""
-    path = _rename_map_path(vault)
+    path = _rename_map_path(space)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _record_rename(vault: Path, original_name: str, new_name: str) -> None:
+def _record_rename(space: Path, original_name: str, new_name: str) -> None:
     """Record that an attachment was copied with a rename (original -> new).
     `update embeds` reads this map when the direct-basename and prefix-fallback
     lookups fail, so plan-driven renames at copy time get resolved automatically."""
     if not original_name or not new_name or original_name == new_name:
         return
-    mapping = _load_rename_map(vault)
+    mapping = _load_rename_map(space)
     mapping[original_name] = new_name
-    _save_rename_map(vault, mapping)
+    _save_rename_map(space, mapping)
 
 
 def cmd_update_embeds(args: argparse.Namespace) -> int:
@@ -5095,7 +5464,7 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
 
     The search stays inside the bundle because that is where attachments live: a bundle holds
     everything about one matter regardless of file type, so the picture a note embeds is a file
-    beside it, not an entry in a shared pool somewhere else in the vault.
+    beside it, not an entry in a shared pool somewhere else in the space.
 
     Resolution order per embed:
       1. Direct basename match in the bundle index.
@@ -5111,8 +5480,8 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
     at the end of an import wave to keep the map from growing across unrelated
     operations.
     """
-    vault = Path(args.vault).resolve()
-    bundle_dir, bundle_kind, _leaf = _resolve_bundle_dir(vault, args.bundle_slug, args.bundle_kind)
+    space = Path(args.space).resolve()
+    bundle_dir, bundle_kind, _leaf = _resolve_bundle_dir(space, args.bundle_slug, args.bundle_kind)
     if not bundle_dir:
         print(f"fail: bundle '{args.bundle_slug}' not found", file=sys.stderr)
         return 1
@@ -5134,11 +5503,11 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
         attachments_index[f.name] = f
 
     if not attachments_index:
-        rel_bundle = bundle_dir.relative_to(vault).as_posix()
+        rel_bundle = bundle_dir.relative_to(space).as_posix()
         print(f"ok: no attachments in {rel_bundle}/ (nothing this run could resolve against)")
         return 0
 
-    rename_map = _load_rename_map(vault)
+    rename_map = _load_rename_map(space)
     files_changed: list[str] = []
     embeds_rewritten = 0
     # Counted so a zero can be told apart from a nothing: "0 rewritten" is a result
@@ -5230,18 +5599,18 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
 
         if text != original:
             md.write_text(text, encoding="utf-8")
-            files_changed.append(str(md.relative_to(vault)))
+            files_changed.append(str(md.relative_to(space)))
 
     _append_activity_log(
-        vault, "zanmai.py",
-        f"updated embeds in {bundle_dir.relative_to(vault)} "
+        space, "zanmai.py",
+        f"updated embeds in {bundle_dir.relative_to(space)} "
         f"({embeds_rewritten} embed(s) in {len(files_changed)} file(s))"
     )
     if files_changed:
         for f in files_changed:
             print(f"  {f}")
     already = embeds_seen - embeds_rewritten - len(unresolved)
-    rel_bundle = bundle_dir.relative_to(vault).as_posix()
+    rel_bundle = bundle_dir.relative_to(space).as_posix()
     print(f"ok: {embeds_rewritten} of {embeds_seen} embed(s) rewritten in "
           f"{len(files_changed)} file(s); {already} already correct; "
           f"{len(unresolved)} unresolved; {len(attachments_index)} attachment(s) indexed")
@@ -5253,7 +5622,7 @@ def cmd_update_embeds(args: argparse.Namespace) -> int:
             print(f"  ambiguous: {name} exists {count}x in {rel_bundle}/, first one used")
 
     if getattr(args, "clear_rename_map", False) and rename_map:
-        _save_rename_map(vault, {})
+        _save_rename_map(space, {})
         print(f"  cleared rename map ({len(rename_map)} entry/entries removed)")
 
     return 0
@@ -5271,10 +5640,10 @@ def cmd_archive_review_item(args: argparse.Namespace) -> int:
     single decision. The user has read it, so it moves to the machine's own side, where it stays
     browsable without sitting on the desk. The desk is the one place that empties, and this is one
     of the ways it does. Frontmatter status flips to 'archived'."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     item_path = Path(args.item_path)
     if not item_path.is_absolute():
-        item_path = vault / item_path
+        item_path = space / item_path
     if not item_path.exists():
         print(f"fail: review item not found: {item_path}", file=sys.stderr)
         return 1
@@ -5283,11 +5652,11 @@ def cmd_archive_review_item(args: argparse.Namespace) -> int:
         return 1
 
     now = datetime.now()
-    target_dir = vault / LOGS_DIR / now.strftime("%Y") / now.strftime("%m")
+    target_dir = space / LOGS_DIR / now.strftime("%Y") / now.strftime("%m")
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / item_path.name
     if target.exists():
-        print(f"fail: archive target exists: {target.relative_to(vault)}", file=sys.stderr)
+        print(f"fail: archive target exists: {target.relative_to(space)}", file=sys.stderr)
         return 1
 
     text = item_path.read_text(encoding="utf-8")
@@ -5302,10 +5671,10 @@ def cmd_archive_review_item(args: argparse.Namespace) -> int:
     item_path.unlink()
 
     _append_activity_log(
-        vault, "zanmai.py",
-        f"archived review item {item_path.name} to {target.relative_to(vault)}"
+        space, "zanmai.py",
+        f"archived review item {item_path.name} to {target.relative_to(space)}"
     )
-    print(f"ok: review item archived to {target.relative_to(vault)}")
+    print(f"ok: review item archived to {target.relative_to(space)}")
     return 0
 
 
@@ -5315,15 +5684,15 @@ def cmd_archive_review_item(args: argparse.Namespace) -> int:
 def cmd_clear_plan_section(args: argparse.Namespace) -> int:
     """Remove the `## Plan` section from a bundle's truth file.
 
-    Used after a successful filing run: the plan-in-vault has served its purpose
+    Used after a successful filing run: the plan-in-space has served its purpose
     (user approval, execution), the truth file no longer needs it. The body
     above and below stays verbatim.
 
     Section boundary is `## Plan` (start) to the next top-level heading
     (`\\n## `) or end-of-file. Frontmatter is untouched.
     """
-    vault = Path(args.vault).resolve()
-    bundle_dir, _bundle_kind, _leaf = _resolve_bundle_dir(vault, args.bundle_slug, args.bundle_kind)
+    space = Path(args.space).resolve()
+    bundle_dir, _bundle_kind, _leaf = _resolve_bundle_dir(space, args.bundle_slug, args.bundle_kind)
     if not bundle_dir:
         print(f"fail: bundle '{args.bundle_slug}' not found", file=sys.stderr)
         return 1
@@ -5331,7 +5700,7 @@ def cmd_clear_plan_section(args: argparse.Namespace) -> int:
     target_name = args.truth_file or f"{_leaf}.md"
     truth = bundle_dir / target_name
     if not truth.exists():
-        print(f"fail: truth file not found: {truth.relative_to(vault)}", file=sys.stderr)
+        print(f"fail: truth file not found: {truth.relative_to(space)}", file=sys.stderr)
         return 1
 
     text = truth.read_text(encoding="utf-8")
@@ -5340,7 +5709,7 @@ def cmd_clear_plan_section(args: argparse.Namespace) -> int:
     pattern = re.compile(r"(?ms)^## Plan\s*\n.*?(?=^## |\Z)")
     new_text, n = pattern.subn("", text)
     if n == 0:
-        print(f"ok: no plan section in {truth.relative_to(vault)} (nothing to clear)")
+        print(f"ok: no plan section in {truth.relative_to(space)} (nothing to clear)")
         return 0
 
     # Tidy double-blank lines that result from the removal.
@@ -5348,32 +5717,48 @@ def cmd_clear_plan_section(args: argparse.Namespace) -> int:
     truth.write_text(new_text, encoding="utf-8")
 
     _append_activity_log(
-        vault, "zanmai.py",
-        f"cleared plan section from {truth.relative_to(vault)}"
+        space, "zanmai.py",
+        f"cleared plan section from {truth.relative_to(space)}"
     )
-    print(f"ok: plan section cleared from {truth.relative_to(vault)}")
+    print(f"ok: plan section cleared from {truth.relative_to(space)}")
     return 0
 
 
-def _collect_open_todos(vault: Path, scope_dirs: list[str], days_back: int = 30,
+def _collect_open_todos(space: Path, scope_dirs: list[str], days_back: int = 30,
                         eintraege: list[dict] | None = None) -> list[dict]:
     """The open tasks under given folders, recent ones only, for the briefing's open-items sections.
 
     A narrowing of `_task_scan`, not a second reader: one definition of what a task line is, in one
-    place. The date window is on the file, not on the task, and it is what keeps these sections
-    about what is currently going on; deadlines are a different question and are not filtered by it.
-    Pass `eintraege` to reuse a scan the caller already has, which is what the briefing does.
+    place. Pass `eintraege` to reuse a scan the caller already has, which is what the briefing does.
+
+    **A task that carries a date is judged by that date, never by the file it sits in.** The window
+    used to be on the file alone, on the reasoning that it keeps the section about what is currently
+    going on. It does the opposite in both directions, and both were seen in a real space. A
+    reminder written today for an anniversary next year sits in a file touched today, so it was read
+    out as an open item eleven months early, every session until then. And a deadline in a file
+    nobody has opened for two months falls out of the window entirely, which is when it matters
+    most. So: a date in the past or within the next few days is open, a date beyond that is not open
+    yet, and a task with no date at all is judged by its file as before.
     """
     cutoff = datetime.now().timestamp() - days_back * 24 * 3600
+    horizont = datetime.now().date() + timedelta(days=TASK_OPEN_HORIZON_DAYS)
     praefixe = tuple(f"{sub.rstrip('/')}/" for sub in scope_dirs)
-    alle = _task_scan(vault) if eintraege is None else eintraege
-    return [t for t in alle if t["path"].startswith(praefixe) and t["mtime"] >= cutoff]
+    alle = _task_scan(space) if eintraege is None else eintraege
+
+    def zaehlt(t: dict) -> bool:
+        if not t["path"].startswith(praefixe):
+            return False
+        if t["due"] and _task_date_ok(t["due"]):
+            return datetime.strptime(t["due"], "%Y-%m-%d").date() <= horizont
+        return t["mtime"] >= cutoff
+
+    return [t for t in alle if zaehlt(t)]
 
 
-def _recent_log_files(vault: Path, limit: int = 5) -> list[Path]:
+def _recent_log_files(space: Path, limit: int = 5) -> list[Path]:
     """Most recent N log files under zanmai/logs/<YYYY>/<MM>/, sorted by mtime desc.
     Excludes builder-gaps.md and hidden files."""
-    logs_root = vault / LOGS_DIR
+    logs_root = space / LOGS_DIR
     if not logs_root.is_dir():
         return []
     candidates: list[Path] = []
@@ -5395,11 +5780,11 @@ def _extract_section(body: str, heading: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def _recent_operations(vault: Path, limit: int = 3) -> list[dict]:
+def _recent_operations(space: Path, limit: int = 3) -> list[dict]:
     """Return up to `limit` most recent operation-report dicts with their
     operation name, summary, and anomalies content."""
     result: list[dict] = []
-    for log in _recent_log_files(vault, limit=10):
+    for log in _recent_log_files(space, limit=10):
         text = log.read_text(encoding="utf-8", errors="ignore")
         fm, _, body = _split_frontmatter(text)
         if not isinstance(fm, dict):
@@ -5425,7 +5810,7 @@ def _recent_operations(vault: Path, limit: int = 3) -> list[dict]:
                 anomalies = anomalies_block.strip()
                 break
         result.append({
-            "path": str(log.relative_to(vault)),
+            "path": str(log.relative_to(space)),
             "slug": slug,
             "operation": operation,
             "summary": summary,
@@ -5436,13 +5821,175 @@ def _recent_operations(vault: Path, limit: int = 3) -> list[dict]:
     return result
 
 
-def _last_session_end(vault: Path) -> str:
+def _last_session_end(space: Path) -> str:
     """The timestamp of the last clean session close, or an empty string."""
-    marker = vault / MEMORY_DIR / ".last-session-end"
+    marker = space / MEMORY_DIR / ".last-session-end"
     try:
         return marker.read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+# ---------------------------------------------------------------------------
+# The host's own record of the conversation
+#
+# Every session is written down in full by the host as it happens, turn by turn, outside the space.
+# That record answers what the activity log cannot: what was said, what was asked, where a tool
+# failed. Reading it costs nothing, because it is written whether anything reads it or not, and
+# nothing has to be remembered during the work for it to be complete. The two are not the same
+# thing and neither replaces the other: the activity log is the space's own chronicle, which is
+# the user's, stays in their folder and outlives any program; this is the conversation, which
+# belongs to the program that held it.
+#
+# So everything here is optional. No record found means every caller falls back to what it did
+# before, and a space carried to another program keeps working, it only loses this convenience.
+# ---------------------------------------------------------------------------
+
+_RECORD_ROOT = "~/.claude/projects"
+# A user turn the host inserted rather than the user typing it: hook output, reminders, the
+# tool results themselves. None of that is what somebody said.
+_RECORD_NOISE = ("<system-reminder>", "<projekt-briefing>", "Caveat:", "<command-name>",
+                 "<local-command-stdout>")
+
+
+def _record_dir(space: Path) -> Path | None:
+    """The folder holding this space's conversation records, or None where the host keeps none."""
+    wurzel = Path(_RECORD_ROOT).expanduser()
+    if not wurzel.is_dir():
+        return None
+    # The host names the folder after the space's path with every separator turned into a dash.
+    kandidat = wurzel / str(space.resolve()).replace("/", "-")
+    return kandidat if kandidat.is_dir() else None
+
+
+def _records(space: Path, *, seit: str = "") -> list[Path]:
+    """This space's conversation records, oldest first, optionally only those touched after `seit`.
+
+    `seit` is the `.last-session-end` marker, UTC and ISO 8601. Comparison is by the file's own
+    modification time, which is when the session last wrote to it.
+    """
+    ordner = _record_dir(space)
+    if ordner is None:
+        return []
+    grenze = 0.0
+    if seit:
+        try:
+            grenze = datetime.strptime(seit, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            grenze = 0.0
+    treffer = [p for p in ordner.glob("*.jsonl") if p.stat().st_mtime > grenze]
+    return sorted(treffer, key=lambda p: p.stat().st_mtime)
+
+
+def _record_essenz(pfad: Path, *, kappe: int = 600) -> dict:
+    """What one conversation record carries, without the prose.
+
+    What is kept: what the user typed, verbatim but capped; every question that was put to them,
+    because those are the ones that get missed on a busy screen; every tool call that failed; every
+    guard that fired. What is dropped: the assistant's prose, the tool output, the thinking. That is
+    the bulk of the file and none of it is what somebody needs to pick the thread back up.
+    """
+    eingaben: list[str] = []
+    fragen: list[str] = []
+    fehler: list[str] = []
+    waechter: list[str] = []
+    werkzeuge = 0
+    von = bis = ""
+    for zeile in pfad.read_text(encoding="utf-8", errors="ignore").splitlines():
+        try:
+            satz = json.loads(zeile)
+        except ValueError:
+            continue
+        wann = (satz.get("timestamp") or "")[:16].replace("T", " ")
+        if wann:
+            von = von or wann
+            bis = wann
+        inhalt = (satz.get("message") or {}).get("content")
+        if satz.get("type") == "user":
+            if isinstance(inhalt, str) and inhalt.strip():
+                if not any(m in inhalt for m in _RECORD_NOISE):
+                    eingaben.append(f"{wann} {' '.join(inhalt.split())[:kappe]}")
+            elif isinstance(inhalt, list):
+                for block in inhalt:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "text" and block.get("text", "").strip():
+                        text = block["text"]
+                        if not any(m in text for m in _RECORD_NOISE):
+                            eingaben.append(f"{wann} {' '.join(text.split())[:kappe]}")
+                    elif block.get("type") == "tool_result" and block.get("is_error"):
+                        roh = block.get("content")
+                        text = roh if isinstance(roh, str) else json.dumps(roh)[:kappe]
+                        kurz = " ".join(str(text).split())[:kappe]
+                        (waechter if "guard" in kurz else fehler).append(f"{wann} {kurz}")
+        elif satz.get("type") == "assistant" and isinstance(inhalt, list):
+            for block in inhalt:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use":
+                    werkzeuge += 1
+                elif block.get("type") == "text" and block.get("text", "").rstrip().endswith("?"):
+                    letzter = block["text"].rstrip().split("\n")[-1]
+                    fragen.append(f"{wann} {' '.join(letzter.split())[:kappe]}")
+    return {"datei": pfad.name, "von": von, "bis": bis, "eingaben": eingaben, "fragen": fragen,
+            "fehler": fehler, "waechter": waechter, "werkzeuge": werkzeuge}
+
+
+def _essenz_als_markdown(essenzen: list[dict]) -> str:
+    """The digest as one readable block. Empty sections are left out rather than shown empty."""
+    zeilen: list[str] = []
+    for e in essenzen:
+        zeilen.append(f"## Session {e['datei'][:8]} ({e['von']} to {e['bis']})")
+        zeilen.append("")
+        zeilen.append(f"{len(e['eingaben'])} thing(s) the user said, {e['werkzeuge']} tool call(s), "
+                      f"{len(e['fehler'])} failure(s), {len(e['waechter'])} guard(s) fired.")
+        zeilen.append("")
+        for titel, eintraege in (("What the user said", e["eingaben"]),
+                                 ("Questions put to them", e["fragen"]),
+                                 ("Where something failed", e["fehler"]),
+                                 ("Guards that fired", e["waechter"])):
+            if not eintraege:
+                continue
+            zeilen.append(f"### {titel}")
+            zeilen.append("")
+            zeilen.extend(f"- {x}" for x in eintraege)
+            zeilen.append("")
+    return "\n".join(zeilen)
+
+
+def cmd_session_digest(args: argparse.Namespace) -> int:
+    """The essence of one or more conversations, for a close that has to be written afterwards."""
+    space = Path(args.space).resolve()
+    seit = args.since if args.since is not None else _last_session_end(space)
+    dateien = _records(space, seit=seit)
+    if not dateien:
+        wo = _record_dir(space)
+        if wo is None:
+            print("fail: this host keeps no conversation record, or it sits somewhere else. "
+                  "The activity log is the fallback: `zanmai.py memory briefing`.", file=sys.stderr)
+            return 1
+        print(f"ok: nothing after {seit or 'the beginning'} in {wo}")
+        return 0
+    if args.limit:
+        dateien = dateien[-args.limit:]
+    print(_essenz_als_markdown([_record_essenz(p) for p in dateien]))
+    return 0
+
+
+def cmd_session_check(args: argparse.Namespace) -> int:
+    """Was the last session closed properly? The check a machine runs after a hard power-off."""
+    space = Path(args.space).resolve()
+    seit = _last_session_end(space)
+    offen = _records(space, seit=seit)
+    if not offen:
+        print(f"ok: nothing open. Last clean close {seit or '(never)'}.")
+        return 0
+    juengste = datetime.fromtimestamp(offen[-1].stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+    print(f"unclosed: {len(offen)} session(s) after the last clean close "
+          f"({seit or 'never'}), newest {juengste}. "
+          f"`zanmai.py session digest` reads what happened in them.")
+    return 0
 
 
 _ACTIVITY_HEAD_RE = re.compile(r"^## \[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\] - ([^-]+) - (.*)$")
@@ -5461,19 +6008,19 @@ def _marker_as_local_minute(marker: str) -> str:
     return stamp.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
-def _activity_since(vault: Path, since: str, limit: int = 25) -> list[dict]:
+def _activity_since(space: Path, since: str, limit: int = 25) -> list[dict]:
     """Activity-log entries written after `since`, newest last.
 
     The activity log is the only record of a session that is written while the work happens
     rather than at the end, so it is the one that survives a session nobody closed. Found
-    2026-08-26 on a live vault: `briefing.md` stood at 15:13 while the log carried entries up
+    2026-08-26 on a live space: `briefing.md` stood at 15:13 while the log carried entries up
     to 16:24 and the whole afternoon, an escalation included, was invisible at the next start.
     """
-    log = vault / MEMORY_DIR / "activity-log.md"
+    log = space / MEMORY_DIR / "activity-log.md"
     if not log.is_file():
         return []
     # The marker is UTC, the activity log is local time. Comparing them as text put the line two
-    # hours in the wrong place, which on a live vault means either replaying entries that were
+    # hours in the wrong place, which on a live space means either replaying entries that were
     # already handed over or dropping ones that were not. Found by the check for this function.
     grenze = _marker_as_local_minute(since)
     treffer: list[dict] = []
@@ -5488,12 +6035,12 @@ def _activity_since(vault: Path, since: str, limit: int = 25) -> list[dict]:
     return treffer[-limit:]
 
 
-def _close_session_next_items(vault: Path, limit: int = 3) -> list[dict]:
+def _close_session_next_items(space: Path, limit: int = 3) -> list[dict]:
     """Pull 'Next' items from the last N close-session logs. Returns list of
     {date, items}. Items is the raw text of the Next section so the briefing
     can render it verbatim."""
     result: list[dict] = []
-    for log in _recent_log_files(vault, limit=15):
+    for log in _recent_log_files(space, limit=15):
         text = log.read_text(encoding="utf-8", errors="ignore")
         fm, _, body = _split_frontmatter(text)
         if not isinstance(fm, dict):
@@ -5506,7 +6053,7 @@ def _close_session_next_items(vault: Path, limit: int = 3) -> list[dict]:
         if not next_block or next_block.startswith("("):
             continue
         result.append({
-            "path": str(log.relative_to(vault)),
+            "path": str(log.relative_to(space)),
             "date": fm.get("created", log.stem),
             "items": next_block,
         })
@@ -5515,9 +6062,9 @@ def _close_session_next_items(vault: Path, limit: int = 3) -> list[dict]:
     return result
 
 
-def _active_focus_bundles(vault: Path) -> list[dict]:
+def _active_focus_bundles(space: Path) -> list[dict]:
     """List active focus bundles with their goal + status from the truth file."""
-    focus_dir = vault / FOCUS_DIR
+    focus_dir = space / LIFE_DIR
     if not focus_dir.is_dir():
         return []
     result: list[dict] = []
@@ -5603,18 +6150,18 @@ def _relative_time(timestamp_iso: str, now: datetime | None = None) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
-def _recent_activity_bundles(vault: Path, hours_back: int = 48) -> list[dict]:
-    """Bundles under the knowledge, habits and focus roots with file mtimes in the last
+def _recent_activity_bundles(space: Path, hours_back: int = 48) -> list[dict]:
+    """Bundles under the knowledge, life and workbench areas with file mtimes in the last
     `hours_back` hours. Source-agnostic recency signal: catches reed-research,
     hank-imports, manual edits alike. The Open-Todos channel only surfaces
-    Daily and Weekly items. This surfaces "user was busy with X yesterday" for
+    journal entries. This surfaces "user was busy with X yesterday" for
     any bundle. Returns descending by last_activity_unix."""
     import time as _time
     cutoff = _time.time() - (hours_back * 3600)
     result: list[dict] = []
     for kind_folder in BUNDLE_FOLDERS:
         bundle_kind = _folder_kind(kind_folder)
-        kind_path = vault / kind_folder
+        kind_path = space / kind_folder
         if not kind_path.is_dir():
             continue
         for bundle_dir in sorted(kind_path.iterdir()):
@@ -5646,21 +6193,21 @@ def _recent_activity_bundles(vault: Path, hours_back: int = 48) -> list[dict]:
     return result
 
 
-def _attachment_basenames(vault: Path) -> set[str]:
-    """All non-Markdown filenames in the vault (lowercased), used to resolve
+def _attachment_basenames(space: Path) -> set[str]:
+    """All non-Markdown filenames in the space (lowercased), used to resolve
     embed-shaped wikilinks like `[[some-frame.jpg]]` against the filesystem.
-    Skips the same distribution/system areas as the markdown walker. Also
+    Skips the same distribution and system parts as the markdown walker. Also
     skips the work objects and the user's own database folders (`<Name>.base/`):
-    what is in those is internal to whatever owns them, not the vault's own
+    what is in those is internal to whatever owns them, not the space's own
     files that markdown bodies embed."""
     out: set[str] = set()
-    for p in vault.rglob("*"):
+    for p in space.rglob("*"):
         if not p.is_file():
             continue
         if p.suffix.lower() == ".md":
             continue
         try:
-            rel = p.relative_to(vault).as_posix()
+            rel = p.relative_to(space).as_posix()
         except ValueError:
             continue
         if rel.startswith(f"{SYSTEM_MATERIAL_DIR}/") or rel.startswith(f"{HISTORY_DIR}/") or rel.startswith(".claude/"):
@@ -5673,9 +6220,9 @@ def _attachment_basenames(vault: Path) -> set[str]:
     return out
 
 
-def _broken_wikilinks(vault: Path) -> list[dict]:
-    """Wikilinks in the active user vault that point to slugs or filenames no
-    file in the vault carries. Reads from vault-index.json (`wikilinks_out`
+def _broken_wikilinks(space: Path) -> list[dict]:
+    """Wikilinks in the active user space that point to slugs or filenames no
+    file in the space carries. Reads from space-index.json (`wikilinks_out`
     per file). Two target classes: bare slugs (resolve against markdown
     slug-set), and file-extension targets like `[[frame.jpg]]` (resolve
     against the filesystem-walk of non-markdown files).
@@ -5684,9 +6231,9 @@ def _broken_wikilinks(vault: Path) -> list[dict]:
     plus `_WIKILINK_OPS_EXCLUDED_FILES`) are skipped: log files and
     operation reports contain pre-rename slug names as historical record
     by design, trashed and archived files keep their state at archive time,
-    snapshots are immutable. None of these are "broken" in the user-vault
+    snapshots are immutable. None of these are "broken" in the user-space
     sense, they are expected historical residue."""
-    index_path = vault / MEMORY_DIR / "vault-index.json"
+    index_path = space / MEMORY_DIR / "space-index.json"
     if not index_path.exists():
         return []
     try:
@@ -5702,7 +6249,7 @@ def _broken_wikilinks(vault: Path) -> list[dict]:
         if path.endswith(".md"):
             stem = Path(path).stem
             known_slugs.add(stem.lower())
-    attachments = _attachment_basenames(vault)
+    attachments = _attachment_basenames(space)
     broken: list[dict] = []
     for entry in data.get("files", []):
         source_path = entry.get("path", "")
@@ -5729,60 +6276,17 @@ def _broken_wikilinks(vault: Path) -> list[dict]:
     return broken
 
 
-_JOURNAL_KINDS = ("daily", "weekly", "monthly", "yearly")
-_JOURNAL_ROOTS = {
-    "daily": DAILY_DIR,
-    "weekly": WEEKLY_DIR,
-    "monthly": MONTHLY_DIR,
-    "yearly": YEARLY_DIR,
-}
-
-
-def _journal_period(kind: str, date: datetime) -> str:
-    """The name of the period a date falls in: `2026-08-09`, `2026-W32`, `2026-08`, `2026`.
-
-    One string does two jobs, it is the bundle's folder name and the note's basename. That is not
-    thrift, it is what keeps the note findable: a folder holding a note called `note.md` hides it
-    behind a name nobody would search for.
-    """
-    if kind == "daily":
-        return date.strftime("%Y-%m-%d")
-    if kind == "weekly":
-        iso = date.isocalendar()
-        return f"{iso[0]:04d}-W{iso[1]:02d}"
-    if kind == "monthly":
-        return date.strftime("%Y-%m")
-    if kind == "yearly":
-        return date.strftime("%Y")
-    raise ValueError(f"unknown journal kind: {kind}")
-
-
-def _journal_bundle(vault: Path, kind: str, date: datetime) -> Path:
-    """The bundle folder for one journal entry.
-
-    Every entry is a bundle, week and month and year included, so a photo, a recording or a PDF has
-    somewhere to sit next to the note it belongs to. The grouping year comes off the period name, so
-    a week in the first days of January files under the ISO year its own name carries and does not
-    split away from the week before it.
-    """
-    period = _journal_period(kind, date)
-    if kind == "yearly":
-        return vault / YEARLY_DIR / period
-    return vault / _JOURNAL_ROOTS[kind] / period[:4] / period
-
-
-def _journal_note(vault: Path, kind: str, date: datetime) -> Path:
-    """The note inside a journal bundle. Same basename as the bundle."""
-    return _journal_bundle(vault, kind, date) / f"{_journal_period(kind, date)}.md"
+def _journal_note(space: Path, date: datetime) -> Path:
+    """The entry for one day: `journal/<year>/<date>.md`. One layer, one file, no bundle."""
+    tag = date.strftime("%Y-%m-%d")
+    return space / JOURNAL_DIR / tag[:4] / f"{tag}.md"
 
 
 def _journal_roots() -> list[str]:
-    """The four journal roots, vault-relative. Used to scan for open items."""
-    return [_JOURNAL_ROOTS[k] for k in _JOURNAL_KINDS]
+    """The journal root, space-relative. Used to scan for open items."""
+    return [JOURNAL_DIR]
 
 
-_ROLLUP_SOURCE = {"weekly": "daily", "monthly": "weekly", "yearly": "monthly"}
-_ROLLUP_HEADING = "## Rollup"
 
 
 def _journal_target_date(args: argparse.Namespace) -> datetime | None:
@@ -5796,67 +6300,12 @@ def _journal_target_date(args: argparse.Namespace) -> datetime | None:
         return None
 
 
-def _journal_entries(vault: Path, kind: str, since: datetime, until: datetime) -> list[Path]:
-    """The notes of one journal kind whose period starts inside [since, until), oldest first.
+def _journal_append(space: Path, path: Path, text: str, was: str) -> str:
+    """Append to a journal entry, creating it if needed. Never overwrites, never edits.
 
-    The period comes off the folder name, not off a file timestamp: a sync client rewrites those, and
-    then a rollup either misses entries or picks up ones it already used.
+    This is the only way a day comes into being: nothing creates an empty entry for a day on which
+    nothing was written.
     """
-    root = vault / _JOURNAL_ROOTS[kind]
-    if not root.is_dir():
-        return []
-    treffer: list[tuple[str, Path]] = []
-    tag = since
-    grenzen = set()
-    while tag < until:
-        grenzen.add(_journal_period(kind, tag))
-        tag += timedelta(days=1)
-    for period in sorted(grenzen):
-        note = _journal_bundle(vault, kind, _journal_period_start(kind, period)) / f"{period}.md"
-        if note.is_file():
-            treffer.append((period, note))
-    return [n for _, n in sorted(treffer)]
-
-
-def _journal_period_start(kind: str, period: str) -> datetime:
-    """The first day of a named period. The inverse of `_journal_period`."""
-    if kind == "daily":
-        return datetime.strptime(period, "%Y-%m-%d")
-    if kind == "weekly":
-        jahr, woche = period.split("-W")
-        return datetime.fromisocalendar(int(jahr), int(woche), 1)
-    if kind == "monthly":
-        return datetime.strptime(period, "%Y-%m")
-    if kind == "yearly":
-        return datetime.strptime(period, "%Y")
-    raise ValueError(f"unknown journal kind: {kind}")
-
-
-def _journal_previous_period(kind: str, date: datetime) -> datetime:
-    """A date inside the period before the one `date` falls in."""
-    start = _journal_period_start(kind, _journal_period(kind, date))
-    return start - timedelta(days=1)
-
-
-def _journal_period_bounds(kind: str, date: datetime) -> tuple[datetime, datetime]:
-    """First day of the period containing `date`, and the first day of the next one."""
-    start = _journal_period_start(kind, _journal_period(kind, date))
-    if kind == "daily":
-        return start, start + timedelta(days=1)
-    if kind == "weekly":
-        return start, start + timedelta(days=7)
-    if kind == "monthly":
-        naechster = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
-        return start, naechster
-    return start, start.replace(year=start.year + 1)
-
-
-def _journal_has_rollup(note: Path) -> bool:
-    return note.is_file() and _ROLLUP_HEADING in note.read_text(encoding="utf-8", errors="ignore")
-
-
-def _journal_append(vault: Path, path: Path, text: str, was: str) -> str:
-    """Append to a journal note, creating its bundle if needed. Never overwrites, never edits."""
     path.parent.mkdir(parents=True, exist_ok=True)
     bestand = path.read_text(encoding="utf-8") if path.exists() else ""
     if bestand and not bestand.endswith("\n"):
@@ -5864,61 +6313,43 @@ def _journal_append(vault: Path, path: Path, text: str, was: str) -> str:
     if bestand.strip():
         bestand += "\n"
     path.write_text(bestand + text.rstrip("\n") + "\n", encoding="utf-8")
-    rel = path.relative_to(vault).as_posix()
-    _append_activity_log(vault, "zanmai.py", f"{was} -> {rel}")
+    rel = path.relative_to(space).as_posix()
+    _append_activity_log(space, "zanmai.py", f"{was} -> {rel}")
     return rel
 
 
 def cmd_journal_path(args: argparse.Namespace) -> int:
     """Print the path of a journal entry. Creates nothing."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     date = _journal_target_date(args)
     if date is None:
         return 1
-    print(_journal_note(vault, args._kind, date).relative_to(vault).as_posix())
-    return 0
-
-
-def cmd_journal_ensure(args: argparse.Namespace) -> int:
-    """Create the entry and its bundle if they are not there yet. Touches an existing entry not at all."""
-    vault = Path(args.vault).resolve()
-    date = _journal_target_date(args)
-    if date is None:
-        return 1
-    path = _journal_note(vault, args._kind, date)
-    rel = path.relative_to(vault).as_posix()
-    if path.exists():
-        print(f"ok: {rel} is already there")
-        return 0
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("", encoding="utf-8")
-    _append_activity_log(vault, "zanmai.py", f"journal {args._kind} created -> {rel}")
-    print(f"ok: {rel}")
+    print(_journal_note(space, date).relative_to(space).as_posix())
     return 0
 
 
 def cmd_journal_append(args: argparse.Namespace) -> int:
     """Append the user's words to a journal entry, verbatim, below whatever is already there."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     date = _journal_target_date(args)
     if date is None:
         return 1
-    rel = _journal_append(vault, _journal_note(vault, args._kind, date), args.text,
-                          f"journal {args._kind} append")
+    rel = _journal_append(space, _journal_note(space, date), args.text,
+                          "journal append")
     print(f"ok: appended to {rel}")
     return 0
 
 
 def cmd_journal_read(args: argparse.Namespace) -> int:
     """Print a journal entry, or say plainly that the period holds nothing yet."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     date = _journal_target_date(args)
     if date is None:
         return 1
-    path = _journal_note(vault, args._kind, date)
-    rel = path.relative_to(vault).as_posix()
+    path = _journal_note(space, date)
+    rel = path.relative_to(space).as_posix()
     if not path.is_file():
-        print(f"empty: {rel} does not exist, nothing was written for that {args._kind[:-2]}")
+        print(f"empty: {rel} does not exist, nothing was written for that day")
         return 0
     print(path.read_text(encoding="utf-8"), end="")
     return 0
@@ -5926,118 +6357,32 @@ def cmd_journal_read(args: argparse.Namespace) -> int:
 
 def cmd_journal_list(args: argparse.Namespace) -> int:
     """List the entries of one kind that exist, newest last. The bundle contents come with it."""
-    vault = Path(args.vault).resolve()
-    root = vault / _JOURNAL_ROOTS[args._kind]
+    space = Path(args.space).resolve()
+    root = space / JOURNAL_DIR
     if not root.is_dir():
-        print(f"empty: no {args._kind} entries yet")
+        print("empty: no journal entries yet")
         return 0
-    notes = sorted(p for p in root.rglob("*.md") if p.is_file() and p.stem == p.parent.name)
-    if args._kind == "yearly":
-        notes = sorted(p for p in root.rglob("*.md") if p.is_file())
+    notes = sorted(p for p in root.rglob("*.md") if p.is_file())
     if not notes:
-        print(f"empty: no {args._kind} entries yet")
+        print("empty: no journal entries yet")
         return 0
     for note in notes[-args.limit:] if args.limit else notes:
-        rel = note.relative_to(vault).as_posix()
+        rel = note.relative_to(space).as_posix()
         beilagen = [f for f in note.parent.iterdir() if f.is_file() and f != note]
         zusatz = f"  (+{len(beilagen)} file(s) in the bundle)" if beilagen else ""
         print(f"{rel}{zusatz}")
     return 0
 
 
-def _journal_rollups_due(vault: Path, date: datetime) -> list[str]:
-    """Which rollups are due, and which entries each one reads. Reports, writes nothing.
-
-    The whole decision sits here rather than in a contract: which period just ended, whether its
-    entry already carries a rollup, and whether the layer below holds anything to summarise. What is
-    left to judgement is the summary text, and nothing else. The session-start hook and the command
-    both read this, so the two can never disagree about whether something is due.
-    """
-    zeilen: list[str] = []
-    for kind, quelle in _ROLLUP_SOURCE.items():
-        vorher = _journal_previous_period(kind, date)
-        ziel = _journal_note(vault, kind, vorher)
-        if _journal_has_rollup(ziel):
-            continue
-        von, bis = _journal_period_bounds(kind, vorher)
-        quellen = _journal_entries(vault, quelle, von, bis)
-        if not quellen:
-            continue
-        zeilen.append(f"{kind} {_journal_period(kind, vorher)} -> {ziel.relative_to(vault).as_posix()}")
-        zeilen.extend(f"  reads {q.relative_to(vault).as_posix()}" for q in quellen)
-    return zeilen
+# What one line may cost. The host replaces hook output over its limit with a preview and says
+# nothing about it, so the list has to fit whatever the space holds. A task line in a live space ran
+# to 452 characters, and twenty of those would have been the whole budget. The cut is also the right
+# shape for a greet: a line nobody can read at a glance is not a line.
+_GREET_LINE_MAX = 200
 
 
-def cmd_journal_rollup_due(args: argparse.Namespace) -> int:
-    """Say which rollups are due and name the entries each one reads. Writes nothing."""
-    vault = Path(args.vault).resolve()
-    date = _journal_target_date(args)
-    if date is None:
-        return 1
-    zeilen = _journal_rollups_due(vault, date)
-    print("\n".join(zeilen) if zeilen else "none: no rollup is due")
-    return 0
-
-
-def cmd_journal_rollup(args: argparse.Namespace) -> int:
-    """Write one rollup into the period entry it belongs to, once.
-
-    Refusing the second one is the point. A rollup is written without asking because it only ever
-    appends, and that only stays true if it cannot run twice over the same period.
-    """
-    vault = Path(args.vault).resolve()
-    date = _journal_target_date(args)
-    if date is None:
-        return 1
-    kind = args._kind
-    vorher = _journal_previous_period(kind, date) if not args.this_period else date
-    ziel = _journal_note(vault, kind, vorher)
-    rel = ziel.relative_to(vault).as_posix()
-    if _journal_has_rollup(ziel):
-        print(f"skip: {rel} already carries a rollup. One per period, no second.")
-        return 0
-    von, bis = _journal_period_bounds(kind, vorher)
-    quellen = _journal_entries(vault, _ROLLUP_SOURCE[kind], von, bis)
-    if not quellen:
-        print(f"skip: nothing in {_ROLLUP_SOURCE[kind]} for {_journal_period(kind, vorher)}, so there is nothing to roll up")
-        return 0
-    _journal_append(vault, ziel, f"{_ROLLUP_HEADING}\n\n{args.text.strip()}",
-                    f"journal {kind} rollup")
-    print(f"ok: rollup written to {rel} from {len(quellen)} {_ROLLUP_SOURCE[kind]} entries")
-    return 0
-
-
-# The greet list, decided here instead of in the prompt.
-#
-# `experts/steve/greeting.md` used to carry the whole judgement: which sources, in what order, a cap
-# of six, the overflow as its own numbered line rather than a nested sub-bullet, no work-object id.
-# Each of those was written down plainly, with its reason, and each broke in a live session anyway.
-# On two months of meeting backlog buried a task written that same day. On a
-# work-object id reached the user. On the overflow came back as a sub-bullet and the
-# numbering jumped from 4 to 6. A rule that does not hold on the third attempt is not a wording
-# problem, so ordering, the cap, the overflow line and id-stripping happen here. What is left to
-# judgement is the wording of a line and the closing sentence.
-# Two blocks, ten lines each at most, numbered straight through. The cap is a ceiling, never a
-# target: the filters below decide what is relevant and the list is as long as they leave it. Zero
-# lines in a block is a correct answer and the block is then left out entirely.
-#
-# The blocks are split by where a line comes from, because the two get lost in different ways. A
-# dated thing goes stale on its own and has to be seen before its day; a task somebody wrote down
-# has no day at all and simply sinks. Mixed into one list of six, the dated ones won every slot: a
-# live vault held twenty open task lines and the greet showed two of them, both by accident,
-# because they happened to carry a date.
-_GREET_CAP_DATED = 10         # block one: what has a day, from any source
-_GREET_CAP_TASKS = 10         # block two: task lines the user wrote, no day on them
-# From how many loose ends in one bundle they arrive as one line instead of one each. Three, because
-# two still read as two separate things and the third is where one topic starts crowding out the rest.
-_GREET_BUENDEL_AB = 3
-_GREET_WEEK_DAYS = 7          # what still counts as coming up rather than later
-_GREET_RECENT_OVERDUE = 14    # older than this, an overdue item is backlog: counted, not listed
-
-# Two orders, and keeping them apart is the point. Which items get one of the six slots is decided
-# by urgency alone; how the chosen ones are laid out is decided by group. Sorting the selection by
-# group instead was tried first and reproduced the defect in miniature: a four-day-old
-# test entry took slot one from seven items due that day, because "overdue" led the group order.
+# The order the chosen lines are laid out in. Selection is by urgency, layout by group: sorting the
+# selection by group instead put a four-day-old entry in slot one ahead of seven items due that day.
 _GREET_GROUPS = ("waiting", "overdue", "today", "tomorrow", "this week", "open")
 
 _GREET_HEADINGS = {
@@ -6052,11 +6397,15 @@ _GREET_HEADINGS = {
 _GREET_LINK_RE = re.compile(r"\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]")
 
 
-# What one line may cost. The host replaces hook output over 10,000 characters with a preview and
-# says nothing about it, so the list has to fit whatever the vault holds. A task line in a live
-# vault ran to 452 characters, and twenty of those would have been the whole budget on their own.
-# The cut is also the right shape for a greet: a line nobody can read at a glance is not a line.
-_GREET_LINE_MAX = 200
+# Caps and windows for the greet list. Ten lines per block is a ceiling, never a target: the filters
+# decide what is relevant and the list is as long as they leave it. Zero lines in a block is a
+# correct answer and the block is then left out.
+_GREET_CAP_DATED = 10         # block one: what has a day, from any source
+_GREET_CAP_TASKS = 10         # block two: task lines the user wrote, no day on them
+# From how many loose ends in one bundle they arrive as one line instead of one each.
+_GREET_BUENDEL_AB = 3
+_GREET_WEEK_DAYS = 7          # what still counts as coming up rather than later
+_GREET_RECENT_OVERDUE = 14    # older than this, an overdue item is backlog: counted, not listed
 
 
 def _greet_shorten(text: str) -> str:
@@ -6102,7 +6451,7 @@ def _greet_same(a: dict, b: dict) -> bool:
     """Whether two entries are the same matter said twice.
 
     They arrive from separate lists that do not know about each other: a task line in the journal, a
-    work object, a dated file. A real vault had four items sitting in two of those at once, worded
+    work object, a dated file. A real space had four items sitting in two of those at once, worded
     differently each time, because the task line keeps the user's own sentence while the work object
     carries the shorthand the machine wrote for it. Comparing the strings catches none of those, so
     the overlap of the meaningful words decides, and only for entries that fall on the same day. Two
@@ -6116,7 +6465,7 @@ def _greet_same(a: dict, b: dict) -> bool:
     return len(wa & wb) / min(len(wa), len(wb)) >= _GREET_SAME_SHARE
 
 
-def _buendel_titel(vault: Path, buendel: str) -> str:
+def _buendel_titel(space: Path, buendel: str) -> str:
     """What a bundle is called, read from its own truth file, falling back to its slug.
 
     The slug is ASCII by rule, so deriving the label from it prints a place name with the accents
@@ -6124,7 +6473,7 @@ def _buendel_titel(vault: Path, buendel: str) -> str:
     user says it than anything reconstructed from a pathname.
     """
     slug = buendel.split("/")[-1]
-    wahrheit = vault / buendel / f"{slug}.md"
+    wahrheit = space / buendel / f"{slug}.md"
     try:
         for zeile in wahrheit.read_text(encoding="utf-8").splitlines():
             if zeile.startswith("# "):
@@ -6134,7 +6483,28 @@ def _buendel_titel(vault: Path, buendel: str) -> str:
     return _human_label_for_slug(slug)
 
 
-def _greet_items(vault: Path, now: datetime | None = None) -> dict:
+def _work_deliverable_exists(space: Path, row: dict) -> bool:
+    """Is the thing this piece of work was for already lying in the space?
+
+    Only where the row names where the result goes, and only where that is a real path in the
+    space. A row with no deliverable says nothing about whether it is finished, and guessing from
+    the title would close work by keyword.
+    """
+    ziel = (row.get("deliverable") or "").strip()
+    if not ziel:
+        return False
+    pfad = _resolve_space_file(space, ziel)
+    if pfad is not None:
+        return True
+    kandidat = (space / ziel).resolve()
+    try:
+        kandidat.relative_to(space.resolve())
+    except ValueError:
+        return False
+    return kandidat.exists()
+
+
+def _greet_items(space: Path, now: datetime | None = None) -> dict:
     """What the greet names: chosen, grouped, sorted and capped, ready to be worded.
 
     Returns `{"items": [...], "overflow": {...} | None, "totals": {...}}`. Every item carries its
@@ -6143,7 +6513,7 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
     """
     jetzt = now or datetime.now()
     heute = jetzt.date()
-    aufgaben = _task_scan(vault)
+    aufgaben = _task_scan(space)
 
     kandidaten: list[dict] = []
     rueckstand = 0
@@ -6166,7 +6536,7 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
                 return
         kandidaten.append(neu)
 
-    for eintrag in _task_due_soon(vault, _GREET_WEEK_DAYS, eintraege=aufgaben):
+    for eintrag in _task_due_soon(space, _GREET_WEEK_DAYS, eintraege=aufgaben):
         tage = eintrag["days"]
         if tage < -_GREET_RECENT_OVERDUE:
             rueckstand += 1
@@ -6177,23 +6547,32 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
     # Waiting on the user, with no date on it. This comes first and on its own pass, because
     # `_work_due_soon` filters by date before anything else sees the row, so an undated one never
     # arrived at all. Found in practice, on the first greet after the greet itself was
-    # fixed: the most active piece of work in the vault, three days old and explicitly waiting on the
+    # fixed: the most active piece of work in the space, three days old and explicitly waiting on the
     # user, was missing from the list, and the three work objects in that state all had no due date.
     # A due date is a plan; `waiting on you` is a recorded fact about who holds the thing. Dropping
     # the fact because the plan is absent is backwards, and the comment below already said so while
     # the line above threw the row away.
     try:
-        alle_rows, _h = _work_read(vault)
+        alle_rows, _h = _work_read(space)
     except Exception:
         alle_rows = []
+    fertig_aussehend = 0
     for row in alle_rows:
         if (row.get("state") or "").strip() != "waiting on you":
+            continue
+        # The result is already lying there. A live space read out "create design.md for the brand"
+        # as waiting on the user while that file had been written two hours earlier; the work had
+        # been done and only the row was never closed. A list that shows something finished twice
+        # stops being read, so the file on disk wins over the row. Counted rather than silently
+        # dropped, because the row does still need closing and somebody has to hear that.
+        if _work_deliverable_exists(space, row):
+            fertig_aussehend += 1
             continue
         if _task_date_ok((row.get("due") or "").strip()):
             continue  # dated ones come through the pass below, with their real distance
         aufnehmen("waiting", row.get("work", ""), "work object", _GREET_WEEK_DAYS, rang=0)
 
-    for row in _work_due_soon(vault, _GREET_WEEK_DAYS):
+    for row in _work_due_soon(space, _GREET_WEEK_DAYS):
         faellig = (row.get("due") or "").strip()
         if not _task_date_ok(faellig):
             continue
@@ -6201,7 +6580,7 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
         if tage < -_GREET_RECENT_OVERDUE:
             rueckstand += 1
             continue
-        # `waiting on you` is the one urgency signal in the vault that is a recorded fact rather
+        # `waiting on you` is the one urgency signal in the space that is a recorded fact rather
         # than a judgement: something is on the user and the machine cannot move it. It goes first,
         # ahead of distance. Without it a hard deadline four days out sits behind every routine
         # item due today and drops out of the six.
@@ -6211,13 +6590,13 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
         aufnehmen("waiting" if wartet else _greet_group(tage), row.get("work", ""),
                   "work object", abs(tage), rang=0 if wartet else 1, faellig=faellig)
 
-    for eintrag in _dated_files_ahead(vault, _GREET_WEEK_DAYS):
+    for eintrag in _dated_files_ahead(space, _GREET_WEEK_DAYS):
         aufnehmen(_greet_group(eintrag["days"]), eintrag["label"], eintrag["path"],
                   abs(eintrag["days"]), faellig=eintrag["date"])
 
     # Block two: every open task line the user wrote that carries no date, from anywhere in their
     # folders. Both limits that used to sit here are gone, and each one was losing real work. The
-    # scope was `journal/` plus `focus/` only, so seventeen of twenty open lines in a live vault sat
+    # scope was `journal/` plus `life/` only, so seventeen of twenty open lines in a live space sat
     # in `knowledge/` and could never arrive. The seven-day window on the file then cut most of the
     # rest, on the theory that an old file means a stale task; what it actually means is that nobody
     # has touched the file since writing the task down, which is the definition of still open.
@@ -6229,7 +6608,7 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
     # Every open line goes through here, dated ones included, and the dedup above drops the ones
     # block one already took. Filtering to undated lines instead left a hole exactly one window
     # wide: a flight that expires in eighteen days is too far out for block one's seven days and
-    # was no longer undated, so it appeared in neither. A task the vault holds is in one of the two
+    # was no longer undated, so it appeared in neither. A task the space holds is in one of the two
     # blocks or in one of the two overflow counts, never in none.
     # Points from one bundle arrive as one line, not as six. A trip whose booking may already be
     # off filled eight of seventeen lines with its own loose ends, and the reader had to notice
@@ -6241,15 +6620,29 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
             return False
         return (datetime.strptime(a["due"], "%Y-%m-%d").date() - heute).days < -_GREET_RECENT_OVERDUE
 
+    # Dated further out than block one reaches. Block two is defined as the task lines with no day
+    # on them, and it was not keeping to that: every open task went in, whatever its date, so a
+    # reminder written for an anniversary next August was read out as an open task in September, and
+    # again in every session until then. A date in the future is a plan, not something waiting to be
+    # done today, so it is left out of the list entirely, not even counted: the name of this thing
+    # means absorption in one matter, and a line about what is due in eleven months is exactly the
+    # pull away from it. The item is in the space, it is findable, and it walks into the week block
+    # on its own as its date approaches.
+    def ist_spaeter(a: dict) -> bool:
+        if not (a["due"] and _task_date_ok(a["due"])):
+            return False
+        return (datetime.strptime(a["due"], "%Y-%m-%d").date() - heute).days > _GREET_WEEK_DAYS
+
+
     # Bundles only, and a bundle is a folder under one of the kind roots. A journal day is a date,
     # not a topic: rolling five entries from one morning into one line named by that date says a
     # day back at the user, which tells them nothing they did not know.
     nach_buendel: dict[str, list[dict]] = {}
     for a in aufgaben:
-        if ist_rueckstand(a):
-            continue   # counted in the overflow above; naming it here would count it twice
+        if ist_rueckstand(a) or ist_spaeter(a):
+            continue   # counted in an overflow; naming it here would count it twice
         teile = a["path"].split("/")
-        if len(teile) < 3 or teile[0] not in BUNDLE_FOLDERS + (ARCHIVE_DIR, TRUSTED_DIR):
+        if len(teile) < 3 or teile[0] not in BUNDLE_FOLDERS:
             continue
         nach_buendel.setdefault("/".join(teile[:-1]), []).append(a)
 
@@ -6257,7 +6650,7 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
                   if len(eintraege) >= _GREET_BUENDEL_AB}
     for schluessel, eintraege in sorted(gebuendelt.items(),
                                         key=lambda kv: max(a["mtime"] for a in kv[1]), reverse=True):
-        label = _buendel_titel(vault, schluessel)
+        label = _buendel_titel(space, schluessel)
         offen = len(eintraege)
         aufnehmen("open", f"{label}: {offen} open points", schluessel, _GREET_WEEK_DAYS + 1)
 
@@ -6268,7 +6661,7 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
         # Except what the backlog count above already stands for. Listing those here as well would
         # show them and count them in the same breath, and the count would be a lie by exactly the
         # number of lines standing above it.
-        if ist_rueckstand(a):
+        if ist_rueckstand(a) or ist_spaeter(a):
             continue
         aufnehmen("open", a["text"], a["path"], _GREET_WEEK_DAYS + 1, faellig=a["due"])
 
@@ -6309,6 +6702,13 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
     if verdeckt_aufgaben:
         # Counted apart from the dated block, because folding an undated item into "within the next
         # 7 days" states a deadline nobody wrote.
+        #
+        # Work dated further out than the week is not counted here either, and that is the point of
+        # the whole list: it exists to put one thing in front of the user, not to account for
+        # everything the space holds. A line saying four things are due in the coming months is an
+        # invitation to think about the coming months, which is the opposite of what an opening
+        # list is for. Those items are in the space, they are findable, and they arrive here by
+        # themselves as their date comes into the week.
         ueberlauf_aufgaben = {"group": "more", "text": f"{len(verdeckt_aufgaben)} more open task(s)",
                               "hidden_undated": len(verdeckt_aufgaben)}
 
@@ -6321,18 +6721,19 @@ def _greet_items(vault: Path, now: datetime | None = None) -> dict:
             "open_tasks": len(aufgaben),
             "candidates": len(kandidaten),
             "backlog": rueckstand,
+            "finished_looking": fertig_aussehend,
         },
     }
 
 
-def _greet_block(vault: Path, now: datetime | None = None) -> list[str]:
+def _greet_block(space: Path, now: datetime | None = None) -> list[str]:
     """The greet list as hook output: two blocks, numbered straight through, nothing left to arrange.
 
     Rendered as data rather than as a suggestion. The numbers are printed, so they cannot skip and
     they cannot restart at the second block; an overflow arrives as its own numbered line, so it
-    cannot become a sub-bullet; an empty vault prints no list at all rather than a padded one.
+    cannot become a sub-bullet; an empty space prints no list at all rather than a padded one.
     """
-    walk = _greet_items(vault, now=now)
+    walk = _greet_items(space, now=now)
     items = walk["items"]
     ueberlauf = walk["overflow"]
     aufgaben = walk["tasks"]
@@ -6346,7 +6747,7 @@ def _greet_block(vault: Path, now: datetime | None = None) -> list[str]:
         "order, one numbered line each, with the numbers as printed. Translate the group headings "
         "and the wording into the user's writing language, keep the item's own words, and add "
         "nothing: no extra item, no sub-bullet, no path, no id. Each block holds at most ten lines "
-        "and is as short as the vault leaves it; a block with no lines is absent and is not "
+        "and is as short as the space leaves it; a block with no lines is absent and is not "
         "mentioned. `greeting.md` covers the tone, the address and the closing sentence.",
         "",
     ]
@@ -6381,30 +6782,39 @@ def _greet_block(vault: Path, now: datetime | None = None) -> list[str]:
         if ueberlauf_aufgaben:
             nummer += 1
             lines.append(f"{nummer}. + {ueberlauf_aufgaben['text']}. Offer: say \"show the open tasks\".")
+
+    # Work whose result is already lying in the space, left out of the list above and said here
+    # instead. Not a line for the user: it is the machine's own bookkeeping that is behind, and
+    # what it needs is `work close`, not the user's attention.
+    fertig = walk["totals"].get("finished_looking") or 0
+    if fertig:
+        lines.append(f"NOTE {fertig} piece(s) of work still marked as waiting have their result in "
+                     f"the space already. Left out of the list. Close them with `zanmai.py work "
+                     f"close`; do not put them to the user as open.")
     return lines
 
 
-def _render_briefing(vault: Path) -> str:
-    """Build the briefing.md content from current vault state. Synthesises across
-    Daily/Weekly Notes, Focus-Bundles, Operation-Reports and Close-Session-Logs -
+def _render_briefing(space: Path) -> str:
+    """Build the briefing.md content from current space state. Synthesises across
+    journal entries, Focus-Bundles, Operation-Reports and Close-Session-Logs -
     not just one source. Steve reads this at session start; the SessionStart
     hook inlines it into context."""
     now = datetime.now()
     timestamp = now.strftime("%Y-%m-%d %H:%M")
 
-    focus_bundles = _active_focus_bundles(vault)
-    recent_ops = _recent_operations(vault, limit=3)
-    recent_activity = _recent_activity_bundles(vault, hours_back=48)
-    close_next = _close_session_next_items(vault, limit=1)
-    # One walk over the vault feeds all three task sections below, which is also what keeps them
+    focus_bundles = _active_focus_bundles(space)
+    recent_ops = _recent_operations(space, limit=3)
+    recent_activity = _recent_activity_bundles(space, hours_back=48)
+    close_next = _close_session_next_items(space, limit=1)
+    # One walk over the space feeds all three task sections below, which is also what keeps them
     # from disagreeing with each other.
-    offene_aufgaben = _task_scan(vault)
-    daily_weekly_todos = _collect_open_todos(
-        vault, _journal_roots(), days_back=30, eintraege=offene_aufgaben
+    offene_aufgaben = _task_scan(space)
+    journal_todos = _collect_open_todos(
+        space, _journal_roots(), days_back=30, eintraege=offene_aufgaben
     )
-    focus_todos = _collect_open_todos(vault, [FOCUS_DIR], days_back=90,
+    focus_todos = _collect_open_todos(space, [LIFE_DIR], days_back=90,
                                       eintraege=offene_aufgaben)
-    broken = _broken_wikilinks(vault)
+    broken = _broken_wikilinks(space)
 
     lines: list[str] = []
     lines.append(f"# Zanmai briefing")
@@ -6415,15 +6825,15 @@ def _render_briefing(vault: Path) -> str:
                  f"`zanmai.py memory briefing`._")
     lines.append("")
 
-    # 0) What has a date on it, from anywhere in the vault and from the machine's own list.
+    # 0) What has a date on it, from anywhere in the space and from the machine's own list.
     #
     # First, and folder-independent, because that was the defect: a deadline used to be visible only
-    # while its bundle sat in `focus/` and went dark the moment the bundle was archived, with the
+    # while its bundle sat in `life/` and went dark the moment the bundle was archived, with the
     # money still in play. Only dated items appear. A list of everything open is read once and
     # skipped from then on, and then the one line that mattered is lost in it.
-    faellig = _task_due_soon(vault, _BRIEFING_DUE_DAYS, eintraege=offene_aufgaben)
-    work_faellig = _work_due_soon(vault, _BRIEFING_DUE_DAYS)
-    datiert = _dated_files_ahead(vault, _BRIEFING_DUE_DAYS)
+    faellig = _task_due_soon(space, _BRIEFING_DUE_DAYS, eintraege=offene_aufgaben)
+    work_faellig = _work_due_soon(space, _BRIEFING_DUE_DAYS)
+    datiert = _dated_files_ahead(space, _BRIEFING_DUE_DAYS)
     if faellig or work_faellig or datiert:
         lines.append(f"## Due (next {_BRIEFING_DUE_DAYS} days, overdue included)")
         lines.append("")
@@ -6447,15 +6857,15 @@ def _render_briefing(vault: Path) -> str:
 
     # 1) Current state
     # What happened after the last clean close. This is the section that answers "where were we"
-    # when no close-session log exists, which on a live vault is the normal case rather than the
+    # when no close-session log exists, which on a live space is the normal case rather than the
     # exception: the close is a skill someone has to invoke, and nobody invokes it when they simply
     # shut the window. The activity log is written during the work, so it is there either way.
-    seit = _last_session_end(vault)
-    nachgetragen = _activity_since(vault, seit)
+    seit = _last_session_end(space)
+    nachgetragen = _activity_since(space, seit)
     if nachgetragen:
         lines.append("## Since the last clean close")
         lines.append("")
-        # Two things this heading has to settle, both found on a live vault the morning after it
+        # Two things this heading has to settle, both found on a live space the morning after it
         # first shipped. It is the newest thing in the file, so where it contradicts a status table
         # or a bundle's own STAND.md, it wins; without that said, the older source won and a session
         # opened by proposing the very plan the user had struck out an hour earlier. And every line
@@ -6466,7 +6876,7 @@ def _render_briefing(vault: Path) -> str:
                          f"{len(nachgetragen)} thing(s) happened after that and were never "
                          f"handed over._")
         else:
-            lines.append("_No session has ever been closed cleanly in this vault. "
+            lines.append("_No session has ever been closed cleanly in this space. "
                          "This is what the activity log carries._")
         lines.append("")
         lines.append("**This is the newest thing in this briefing.** Where it contradicts anything "
@@ -6528,12 +6938,12 @@ def _render_briefing(vault: Path) -> str:
                 if stripped:
                     lines.append(f"  {body_line}")
         lines.append("")
-    if daily_weekly_todos:
-        lines.append(f"**From Daily, Weekly and Monthly Notes (last 30 days, {len(daily_weekly_todos)}):**")
-        for t in daily_weekly_todos[:20]:
+    if journal_todos:
+        lines.append(f"**From the journal (last 30 days, {len(journal_todos)}):**")
+        for t in journal_todos[:20]:
             lines.append(f"- [ ] {t['text']} _({t['path']})_")
-        if len(daily_weekly_todos) > 20:
-            lines.append(f"- _... plus {len(daily_weekly_todos) - 20} more_")
+        if len(journal_todos) > 20:
+            lines.append(f"- _... plus {len(journal_todos) - 20} more_")
         lines.append("")
     if focus_todos:
         lines.append(f"**From focus bundles (last 90 days, {len(focus_todos)}):**")
@@ -6542,7 +6952,7 @@ def _render_briefing(vault: Path) -> str:
         if len(focus_todos) > 20:
             lines.append(f"- _... plus {len(focus_todos) - 20} more_")
         lines.append("")
-    if not (daily_weekly_todos or focus_todos or close_next):
+    if not (journal_todos or focus_todos or close_next):
         lines.append("No open items in the current window.")
         lines.append("")
 
@@ -6569,7 +6979,7 @@ def _render_briefing(vault: Path) -> str:
     if not broken and not anomalies_found:
         lines.append("No anomalies or broken wikilinks detected.")
         lines.append("")
-    lines.append("_(Extended gap detection (person mentions without a contact, theme drift, "
+    lines.append("_(Extended gap detection (person mentions without a contact, bundle drift, "
                  "cross-domain links) is a future addition.)_")
     lines.append("")
 
@@ -6589,19 +6999,102 @@ def _briefing_sections_missing(content: str) -> list[str]:
     return [s for s in _BRIEFING_REQUIRED if s not in content]
 
 
+_DOCS_TRIGGER = "**Read this when:**"
+_DOCS_INDEX_START = "<!-- generated: read-this-when -->"
+_DOCS_INDEX_END = "<!-- /generated -->"
+
+
+def _docs_triggers(system_dir: Path) -> list[tuple[str, str, str]]:
+    """(file, title, situation) for every documentation page that carries a trigger line.
+
+    The situation, not the topic. A page called "How the space is organised" tells nobody when to
+    open it; "something has to be filed and it is not obvious where" does. Read off the page itself
+    rather than kept in a second list, so the two cannot drift apart.
+    """
+    raus: list[tuple[str, str, str]] = []
+    ordner = system_dir / "docs"
+    if not ordner.is_dir():
+        return raus
+    for pfad in sorted(ordner.glob("*.md")):
+        if pfad.name in ("index.md", "_TEMPLATE.md"):
+            continue
+        titel, lage = "", ""
+        for zeile in pfad.read_text(encoding="utf-8").splitlines()[:12]:
+            if zeile.startswith("# ") and not titel:
+                titel = zeile[2:].strip()
+            if zeile.startswith(_DOCS_TRIGGER):
+                lage = zeile[len(_DOCS_TRIGGER):].strip().rstrip(".")
+        if titel and lage:
+            raus.append((pfad.name, titel, lage))
+    return raus
+
+
+def _docs_index_block(system_dir: Path) -> str:
+    """The directory itself: one line per page, the situation first.
+
+    A reference system needs a directory, and the directory has to sit where it is read before the
+    decision rather than behind it. Without one, a page is found when somebody happens to remember
+    it, and a page nobody remembers is a page that was never written: the failure is invisible,
+    because noticing it would take exactly the knowledge that is missing. Generated, never typed. A
+    hand-kept copy of thirty trigger lines is thirty chances to drift.
+    """
+    zeilen = [_DOCS_INDEX_START, "", "| Read this when | Page |", "|---|---|"]
+    for datei, titel, lage in _docs_triggers(system_dir):
+        zeilen.append(f"| {lage} | [{titel}]({datei}) |")
+    zeilen += ["", _DOCS_INDEX_END]
+    return "\n".join(zeilen)
+
+
+def cmd_docs_index(args: argparse.Namespace) -> int:
+    """Rebuild the situation directory inside `docs/index.md` from the pages themselves."""
+    wurzel = Path(args.space).resolve()
+    system_dir = wurzel / SYSTEM_MATERIAL_DIR if (wurzel / SYSTEM_MATERIAL_DIR).is_dir() else wurzel
+    index = system_dir / "docs" / "index.md"
+    if not index.is_file():
+        print(f"fail: no docs/index.md under {system_dir}", file=sys.stderr)
+        return 1
+    text = index.read_text(encoding="utf-8")
+    block = _docs_index_block(system_dir)
+    if _DOCS_INDEX_START in text and _DOCS_INDEX_END in text:
+        neu = text.split(_DOCS_INDEX_START)[0] + block + text.split(_DOCS_INDEX_END, 1)[1]
+    else:
+        neu = text.rstrip() + "\n\n## When to read what\n\n" + block + "\n"
+    if neu == text:
+        print("ok: the directory is already in step with the pages")
+        return 0
+    index.write_text(neu, encoding="utf-8")
+    print(f"ok: directory rebuilt from {len(_docs_triggers(system_dir))} page(s)")
+    return 0
+
+
+def cmd_welcome(args: argparse.Namespace) -> int:
+    """The same list the session opens with, rebuilt from the space as it stands now.
+
+    It exists because the greet scrolls away. An hour into a session the list is somewhere above
+    a dozen tool calls, and the way back to it was to start a new session, which is an absurd price
+    for reading nine lines. Same builder as the greet, so the two can never drift into two different
+    answers to the same question, and rebuilt on every call rather than remembered: half the point
+    is that what was dealt with in the meantime is gone from it.
+    """
+    space = Path(args.space).resolve()
+    for zeile in _greet_block(space):
+        print(zeile)
+    return 0
+
+
 def cmd_briefing(args: argparse.Namespace) -> int:
     """Atomic rebuild of `zanmai/memory/briefing.md`. Triggered by `/close-session`,
     after `memory report`, or manually. The authority for Steve's session-start
     context."""
-    vault = Path(args.vault).resolve()
-    target = vault / MEMORY_DIR / "briefing.md"
+    space = Path(args.space).resolve()
+    target = space / MEMORY_DIR / "briefing.md"
     target.parent.mkdir(parents=True, exist_ok=True)
-    content = _render_briefing(vault)
+    content = _render_briefing(space)
     target.write_text(content, encoding="utf-8")
-    _append_activity_log(vault, "zanmai.py", "briefing.md rebuilt from vault state")
+    _append_activity_log(space, "zanmai.py", "briefing.md rebuilt from space state")
     fehlt = _briefing_sections_missing(content)
     if not getattr(args, "quiet", False):
-        print(f"ok: briefing rebuilt -> {target.relative_to(vault)}")
+        print(f"ok: briefing rebuilt -> {target.relative_to(space)}")
     if fehlt:
         # Whoever generates a text that behaviour is built on checks that text. A briefing that
         # swallowed a section looks exactly like a full one from the outside, and the greet then
@@ -6615,7 +7108,7 @@ def cmd_hook_session_end(args: argparse.Namespace) -> int:
     """SessionEnd hook: rebuild the briefing, and mark the close only if one really happened.
 
     Until the handover between sessions ran entirely through the `close-session` skill,
-    which someone has to invoke. On a live vault after four weeks, no session log had ever been
+    which someone has to invoke. On a live space after four weeks, no session log had ever been
     written: shutting the window is what actually ends a session, and nothing was bound to that.
     The next morning then opened on a briefing that stood at the previous afternoon, with the whole
     day after it invisible, which reads from the outside exactly like a system with no memory.
@@ -6628,28 +7121,28 @@ def cmd_hook_session_end(args: argparse.Namespace) -> int:
     """
     payload = _hook_read_payload()
     start = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
-    vault = _find_vault_root(Path(start))
-    if vault is None:
+    space = _find_space_root(Path(start))
+    if space is None:
         return 0
-    ziel = vault / MEMORY_DIR / "briefing.md"
+    ziel = space / MEMORY_DIR / "briefing.md"
     if not ziel.parent.is_dir():
         return 0
     try:
-        ziel.write_text(_render_briefing(vault), encoding="utf-8")
+        ziel.write_text(_render_briefing(space), encoding="utf-8")
     except OSError as exc:
         print(f"session-end: briefing not rebuilt ({exc})", file=sys.stderr)
         return 0
-    if _close_log_today(vault):
+    if _close_log_today(space):
         # Same format the close-session skill writes: UTC, ISO 8601, seconds.
-        (vault / MEMORY_DIR / ".last-session-end").write_text(
+        (space / MEMORY_DIR / ".last-session-end").write_text(
             datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), encoding="utf-8")
     return 0
 
 
-def _close_log_today(vault: Path) -> bool:
+def _close_log_today(space: Path) -> bool:
     """Whether a close-session log was written today. The condition for calling a session closed."""
     heute = datetime.now().strftime("%Y-%m-%d")
-    for log in _recent_log_files(vault, limit=10):
+    for log in _recent_log_files(space, limit=10):
         text = log.read_text(encoding="utf-8", errors="ignore")
         fm, _, _body = _split_frontmatter(text)
         if not isinstance(fm, dict):
@@ -6668,17 +7161,17 @@ def cmd_write_report(args: argparse.Namespace) -> int:
     follow-up Edit if it has detail to add; the skeleton is enough for cross-
     session recall on its own.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     now = datetime.now()
     date_part = now.strftime("%Y-%m-%d-%H%M")
     op = _slugify(args.operation)
     slug = _slugify(args.slug)
     report_slug = f"{date_part}-{op}-{slug}"
-    report_dir = vault / LOGS_DIR / now.strftime("%Y") / now.strftime("%m")
+    report_dir = space / LOGS_DIR / now.strftime("%Y") / now.strftime("%m")
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / f"{report_slug}.md"
 
-    activity = _read_recent_activity(vault, since_minutes=args.since_minutes)
+    activity = _read_recent_activity(space, since_minutes=args.since_minutes)
     activity_block = "\n".join(activity) if activity else "(no activity-log entries in the window)"
 
     fm = {
@@ -6702,23 +7195,23 @@ def cmd_write_report(args: argparse.Namespace) -> int:
         f"## Cross-links\n\n(previous reports, related bundles)\n"
     )
     report_path.write_text(fm_text + body, encoding="utf-8")
-    _append_activity_log(vault, "zanmai.py", f"wrote operation report {report_path.relative_to(vault)}")
-    print(f"ok: report at {report_path.relative_to(vault)}")
+    _append_activity_log(space, "zanmai.py", f"wrote operation report {report_path.relative_to(space)}")
+    print(f"ok: report at {report_path.relative_to(space)}")
 
     # Operation reports are substantial state-changes - the briefing must reflect them.
-    briefing_target = vault / MEMORY_DIR / "briefing.md"
+    briefing_target = space / MEMORY_DIR / "briefing.md"
     try:
         briefing_target.parent.mkdir(parents=True, exist_ok=True)
-        briefing_target.write_text(_render_briefing(vault), encoding="utf-8")
-        _append_activity_log(vault, "zanmai.py", "briefing.md auto-rebuilt after memory report")
+        briefing_target.write_text(_render_briefing(space), encoding="utf-8")
+        _append_activity_log(space, "zanmai.py", "briefing.md auto-rebuilt after memory report")
     except OSError:
         pass
 
     return 0
 
 
-def _read_recent_activity(vault: Path, *, since_minutes: int) -> list[str]:
-    log = vault / MEMORY_DIR / "activity-log.md"
+def _read_recent_activity(space: Path, *, since_minutes: int) -> list[str]:
+    log = space / MEMORY_DIR / "activity-log.md"
     if not log.exists() or since_minutes <= 0:
         return []
     cutoff = datetime.now().timestamp() - since_minutes * 60
@@ -6756,14 +7249,14 @@ def cmd_bundle_index_entry(args: argparse.Namespace) -> int:
     activity log at once. Adding the line is the same act as correcting it, so it is the same
     command.
     """
-    vault = Path(args.vault).resolve()
-    bundle_dir, _kind, _leaf = _resolve_bundle_dir(vault, args.bundle_slug, args.bundle_kind)
+    space = Path(args.space).resolve()
+    bundle_dir, _kind, _leaf = _resolve_bundle_dir(space, args.bundle_slug, args.bundle_kind)
     if not bundle_dir:
         print(f"fail: bundle '{args.bundle_slug}' not found", file=sys.stderr)
         return 1
     index_path = bundle_dir / "INDEX.md"
     if not index_path.is_file():
-        print(f"fail: {bundle_dir.relative_to(vault).as_posix()}/INDEX.md does not exist.",
+        print(f"fail: {bundle_dir.relative_to(space).as_posix()}/INDEX.md does not exist.",
               file=sys.stderr)
         return 1
     slug = _slugify(args.file[:-3] if args.file.lower().endswith(".md") else args.file)
@@ -6777,19 +7270,19 @@ def cmd_bundle_index_entry(args: argparse.Namespace) -> int:
         # side.
         if not (bundle_dir / f"{slug}.md").is_file() and not (bundle_dir / slug).is_dir():
             print(f"fail: no entry for [[{slug}]] in "
-                  f"{bundle_dir.relative_to(vault).as_posix()}/INDEX.md, and there is no "
+                  f"{bundle_dir.relative_to(space).as_posix()}/INDEX.md, and there is no "
                   f"{slug}.md or {slug}/ in the bundle to write one for.", file=sys.stderr)
             return 1
         _append_index(index_path, slug, summary)
         if f"[[{slug}]]" not in index_path.read_text(encoding="utf-8"):
             print(f"fail: could not place a line for [[{slug}]] in "
-                  f"{bundle_dir.relative_to(vault).as_posix()}/INDEX.md. The file has no heading to "
+                  f"{bundle_dir.relative_to(space).as_posix()}/INDEX.md. The file has no heading to "
                   f"put it under.", file=sys.stderr)
             return 1
         was = "added"
-    _append_activity_log(vault, "zanmai.py",
+    _append_activity_log(space, "zanmai.py",
                          f"{was} the index entry for {slug} in "
-                         f"{bundle_dir.relative_to(vault).as_posix()}/")
+                         f"{bundle_dir.relative_to(space).as_posix()}/")
     print(f"ok: index entry for {slug} {'now reads' if was == 'rewrote' else 'added'}: {summary}")
     return 0
 
@@ -6800,69 +7293,119 @@ def cmd_bundle_remove_file(args: argparse.Namespace) -> int:
     `file trash` moved the file and logged it but left the index line pointing at nothing, so every
     discard ended in a hand-edit of INDEX.md. Two halves of one act belong in one command.
     """
-    vault = Path(args.vault).resolve()
-    bundle_dir, _kind, _leaf = _resolve_bundle_dir(vault, args.bundle_slug, args.bundle_kind)
+    space = Path(args.space).resolve()
+    bundle_dir, _kind, _leaf = _resolve_bundle_dir(space, args.bundle_slug, args.bundle_kind)
     if not bundle_dir:
         print(f"fail: bundle '{args.bundle_slug}' not found", file=sys.stderr)
         return 1
     slug = _slugify(args.file[:-3] if args.file.lower().endswith(".md") else args.file)
     target = bundle_dir / f"{slug}.md"
     if not target.is_file():
-        print(f"fail: no such member: {target.relative_to(vault)}", file=sys.stderr)
+        print(f"fail: no such member: {target.relative_to(space)}", file=sys.stderr)
         return 1
 
-    rc = cmd_trash_file(argparse.Namespace(vault=str(vault), path=str(target)))
+    rc = cmd_trash_file(argparse.Namespace(space=str(space), path=str(target)))
     if rc != 0:
         # The file is still where it was, so the index still tells the truth. Leave it alone.
         return rc
     entfernt = _index_line_remove(bundle_dir / "INDEX.md", slug)
-    _append_activity_log(vault, "zanmai.py",
-                         f"discarded {slug} from {bundle_dir.relative_to(vault).as_posix()}/ "
+    _append_activity_log(space, "zanmai.py",
+                         f"discarded {slug} from {bundle_dir.relative_to(space).as_posix()}/ "
                          f"(to {TRASH_DIR}/, index entry {'removed' if entfernt else 'was not present'})")
     print(f"ok: {slug} moved to {TRASH_DIR}/ and taken out of the bundle index")
     return 0
 
 
-# Nothing is thrown away out of the drop area before it has arrived somewhere in the vault. Reading
+# Nothing is thrown away out of the inbox before it has arrived somewhere in the space. Reading
 # a file and saying what it was in the conversation is not arriving: the conversation is gone
-# tomorrow, the file is in the trash, and the trash is swept. So a trashing out of `import/` has to
-# name one of two things, and refuses without either: the vault path the content actually reached,
+# tomorrow, the file is in the trash, and the trash is swept. So a trashing out of `inbox/` has to
+# name one of two things, and refuses without either: the space path the content actually reached,
 # or the user's own words saying it can go. Written as a condition on the move rather than as a
 # sentence in a contract, because the sentence was there and did not hold.
 #
-# The user is not locked out by it: `--user-said` is their override, and it costs a quote rather
-# than a permission. What this cannot do is stop a run that means to get past it, since nothing
-# checks that the quote is real. What it does is end the case this came from, where every step
-# looked correct and the material was gone anyway, and it leaves the claim in the activity log
-# where it can be read back.
-def _import_exit(vault: Path, filed_to: str | None, user_said: str | None) -> tuple[str, str]:
-    """(what to log, what to refuse with) for a file on its way out of the drop area."""
-    if user_said and user_said.strip():
-        return f"the user said: {user_said.strip()}", ""
+# It used to take the user's own words as an override, in a free-text field. That field was filled by
+# the run, not by the user: one wrote a sentence the user had never said, for a file they had asked
+# to keep. A gate the guarded party fills in itself is not a gate. What remains is the destination,
+# checked against the space, and the routing table, which the user writes once and which holds for
+# every file of that kind.
+def _routing_learn_keep(space: Path, regel: dict, wert: str) -> None:
+    """Write down what happened to the file itself, where the rule that covered it had no answer yet.
+
+    The answer is learned from the act rather than asked for. Asking was the first design and it was
+    the same mistake this project keeps making: the run was told, in the text it reads at session
+    start, to put the question once and record the answer. On the first real morning it decided and
+    said nothing, so the rule was as empty afterwards as before and the next day decided again.
+
+    A decision that already happened is not a guess, and writing it down is what makes it a rule
+    rather than a mood. It is said out loud with the command that changes it, and `routing show`
+    carries it from then on, so a wrong one costs the user a sentence rather than staying invisible.
+
+    The rule is passed in rather than looked up here, because by the time this runs the file has
+    already moved: a rule that matches on a word in the content would find nothing to read and
+    quietly learn nothing, while one matching on the name would still work. Half a mechanic that
+    depends on how the user happened to write their rule is worse than none.
+    """
+    if wert not in ("with-result", "discard") or not regel or regel.get("keep"):
+        return
+    daten = _routing(space)
+    for eintrag in daten.get("rules") or []:
+        if isinstance(eintrag, dict) and eintrag.get("name") == regel.get("name"):
+            eintrag["keep"] = wert
+            break
+    else:
+        return
+    try:
+        _routing_path(space).write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n",
+                                        encoding="utf-8")
+    except OSError:
+        return
+    was = ("the file itself is kept beside what is made from it" if wert == "with-result"
+           else "the file itself goes to the trash once its content is filed")
+    print(f"note: your rule `{regel.get('name', '?')}` did not say what happens to the file itself. "
+          f"Written down from what happened here: {was}. Change it with `zanmai.py routing set "
+          f"\"{regel.get('name', '?')}\" {regel.get('to', '')} --keep "
+          f"{'discard' if wert == 'with-result' else 'with-result'}`.")
+
+
+def _import_exit(space: Path, filed_to: str | None, path: Path | None = None) -> tuple[str, str]:
+    """(what to log, what to refuse with) for a file on its way out of the inbox.
+
+    There is no way to keep a file in the inbox, and there was one for a while: a rule could say the
+    file stays, and one did. That is against what the inbox is. A file left there is read again at
+    every session start, is indistinguishable from one that arrived this morning, and turns the one
+    area that exists to empty into a place things live. What a rule decides is where a file goes,
+    never whether it goes.
+    """
     if not filed_to:
         return "", (
-            f"fail: nothing is thrown away out of {IMPORT_DIR}/ before its content is in the vault. "
-            f"Say where it "
-            f"landed with `--filed-to <vault path>`, or quote the user with `--user-said \"...\"` "
-            f"where they said it can go. A summary in the conversation is not a place.")
-    ziel = (vault / filed_to).resolve() if not Path(filed_to).is_absolute() else Path(filed_to).resolve()
+            f"fail: nothing is thrown away out of {INBOX_DIR}/ before its content is in the space. "
+            f"Say where it landed with `--filed-to <space path>`. A summary in the conversation is "
+            f"not a place, and there is no wording that substitutes for one: the gate used to take "
+            f"the user's words in a free-text field, and a run that meant to get past it wrote the "
+            f"sentence itself. Where a kind of file is meant to stay put, that belongs in the "
+            f"routing table, where it holds for every file of that kind.")
+    ziel = (space / filed_to).resolve() if not Path(filed_to).is_absolute() else Path(filed_to).resolve()
+    # Both sides resolved, and that is not tidiness. Resolving only the target refuses every filing
+    # in a space that is reached through a symlink, which is the ordinary case for a temporary
+    # folder on macOS and happens to anybody whose home or disk is linked. The same one-sided
+    # comparison was found in the update path and fixed there; this was the second place.
     try:
-        ziel_rel = ziel.relative_to(vault).as_posix()
+        ziel_rel = ziel.relative_to(space.resolve()).as_posix()
     except ValueError:
-        return "", f"fail: --filed-to '{filed_to}' is not inside the vault."
+        return "", f"fail: --filed-to '{filed_to}' is not inside the space."
     if not ziel.exists():
         return "", (f"fail: --filed-to '{ziel_rel}' does not exist. The content has to be somewhere "
                     f"before the file it came from can go.")
-    for tot in (IMPORT_DIR, TRASH_DIR, ARCHIVE_DIR):
+    for tot in (INBOX_DIR, TRASH_DIR, ARCHIVE_DIR):
         if ziel_rel == tot or ziel_rel.startswith(f"{tot}/"):
             return "", (f"fail: --filed-to '{ziel_rel}' is in {tot}/, which is not a place content "
                         f"arrives at.")
     return f"content filed to {ziel_rel}", ""
 
 
-def _move_into(vault: Path, path: Path, folder: str, done: str, *, dated: bool = False,
-               filed_to: str | None = None, user_said: str | None = None) -> int:
-    """Move a file to `<folder>/[<date>/]<its current vault-relative path>` and log it.
+def _move_into(space: Path, path: Path, folder: str, done: str, *, dated: bool = False,
+               filed_to: str | None = None) -> int:
+    """Move a file to `<folder>/[<date>/]<its current space-relative path>` and log it.
 
     The path under the folder is not decoration, it is the record of where the file came from.
     Nothing is written down beside it, no manifest, no sidecar: the only place a restore path can get
@@ -6876,9 +7419,9 @@ def _move_into(vault: Path, path: Path, folder: str, done: str, *, dated: bool =
     on a folder name rather than a guess about what a timestamp means.
     """
     try:
-        rel = path.relative_to(vault)
+        rel = path.relative_to(space)
     except ValueError:
-        print(f"fail: path '{path}' is not inside vault '{vault}'", file=sys.stderr)
+        print(f"fail: path '{path}' is not inside space '{space}'", file=sys.stderr)
         return 1
     if not path.exists():
         print(f"fail: path does not exist: {path}", file=sys.stderr)
@@ -6886,44 +7429,158 @@ def _move_into(vault: Path, path: Path, folder: str, done: str, *, dated: bool =
 
     rel_str = rel.as_posix()
     grund = ""
-    # Only the trash. The archive is a place in the vault: what goes there stays indexed and
+    # Only the trash. The archive is a place in the space: what goes there stays indexed and
     # findable, which is exactly the condition being asked for, so demanding a second destination
     # for it would be circular. The trash is swept.
-    if rel_str.startswith(f"{IMPORT_DIR}/") and folder == TRASH_DIR:
-        grund, fehler = _import_exit(vault, filed_to, user_said)
+    if rel_str.startswith(f"{INBOX_DIR}/") and folder == TRASH_DIR:
+        grund, fehler = _import_exit(space, filed_to, path)
         if fehler:
             print(fehler, file=sys.stderr)
             return 1
     unter = Path(_today()) / rel if dated else rel
-    target = vault / folder / unter
-    if target.exists():
+    target = space / folder / unter
+    if target.exists() and folder == TRASH_DIR:
+        # Two files of the same name discarded on the same day is ordinary, and the second one is
+        # not an error: a repeated repair step, a file that came back and went again. It goes next
+        # to the first under a counter, the way every other collision in the space is resolved.
+        # Refusing it stopped a migration halfway through on its second run.
+        n = 1
+        while target.exists():
+            target = target.with_name(f"{target.stem}-{n}{target.suffix}")
+            n += 1
+    elif target.exists():
         print(f"fail: {folder}/{unter.as_posix()} is already taken. Deal with that copy first.",
               file=sys.stderr)
         return 1
-    _vault_mkdir(vault, target.parent, parents=True, exist_ok=True)
+    # Read while the file is still there: a rule matching on a word in the content cannot be
+    # found once it has moved, and this has to hold whichever way the user wrote their rule.
+    regel = (_route_for_file(space, path)
+             if rel_str.startswith(f"{INBOX_DIR}/") and folder == TRASH_DIR else {})
+    _space_mkdir(space, target.parent, parents=True, exist_ok=True)
     shutil.move(str(path), str(target))
 
-    _append_activity_log(vault, "zanmai.py",
+    _append_activity_log(space, "zanmai.py",
                          f"{done} {rel_str}" + (f" ({grund})" if grund else ""))
-    print(f"ok: {done} {rel_str} -> {target.relative_to(vault).as_posix()}"
+    print(f"ok: {done} {rel_str} -> {target.relative_to(space).as_posix()}"
           + (f" ({grund})" if grund else ""))
+    _routing_learn_keep(space, regel, "discard")
     return 0
+
+
+# How far a status change is followed, and how much of it is ever put in front of a person. Two
+# steps, because the thing that hangs off the cancelled thing usually has something hanging off it
+# in turn: the trip carries the flight, the flight carries the seat. Three steps reach half the
+# space and turn a decision into a reading exercise. Thirty items is where a list stops being read.
+_STATUS_CHAIN_DEPTH = 2
+_STATUS_CHAIN_CAP = 30
+
+
+def _status_change_material(space: Path, target: Path) -> dict:
+    """Gather what a status change on `target` touches, for a person to judge, not to decide.
+
+    Both directions, and that is the point of it. Outgoing links are what the file itself names.
+    Incoming links are what named the file, and that is where the consequences of a cancellation
+    actually live: cancel a trip and the flight, the hotel and the car point at it, not the other
+    way round. Following only outgoing links found the one direction that mostly does not matter.
+
+    Two levels deep, because what hangs off the cancelled thing usually carries something in turn.
+    Capped, and the cap is reported rather than hidden.
+
+    The mechanic's job stops at finding. It never guesses which of those still matter once the
+    status changes, and it never changes one: a cancelled trip does not cancel the camera somebody
+    bought for it, it only raises the question. That question is a reading judgement, and a script
+    gets it wrong as often as right. What a script can do reliably is make sure nothing that hangs
+    off this goes unread before the question is put.
+    """
+    def eigene_zeilen(text: str) -> list[dict]:
+        raus = []
+        for nr, zeile in enumerate(text.splitlines(), start=1):
+            m = _TASK_LINE_RE.match(zeile)
+            if m and m.group("state") == " ":
+                raus.append({"line": nr, "text": zeile.strip(), "due": _task_due(zeile)})
+        return raus
+
+    def eintrag(pfad: Path, text: str, richtung: str, stufe: int) -> dict:
+        _fm, _order, body = _split_frontmatter(text)
+        return {"path": pfad.relative_to(space).as_posix(), "status": _status_of(text),
+                "excerpt": body.strip()[:300], "open_tasks": eigene_zeilen(text),
+                "direction": richtung, "level": stufe}
+
+    eigener_text = target.read_text(encoding="utf-8")
+    ergebnis: dict = {"own_tasks": eigene_zeilen(eigener_text), "linked": [], "cut": 0}
+
+    def zeigt_auf(text: str, ziel: Path) -> bool:
+        for slug in _WIKILINK_RE.findall(text):
+            aufgeloest = _resolve_space_file(space, slug)
+            if aufgeloest is not None and aufgeloest == ziel:
+                return True
+        return False
+
+    gesehen: set[Path] = {target}
+    front: list[Path] = [target]
+    for stufe in range(1, _STATUS_CHAIN_DEPTH + 1):
+        naechste: list[Path] = []
+        for quelle in front:
+            try:
+                quelltext = quelle.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            # What this file names.
+            for slug in _WIKILINK_RE.findall(quelltext):
+                verlinkt = _resolve_space_file(space, slug)
+                if verlinkt is None or verlinkt in gesehen:
+                    continue
+                try:
+                    text = verlinkt.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                gesehen.add(verlinkt)
+                if len(ergebnis["linked"]) >= _STATUS_CHAIN_CAP:
+                    ergebnis["cut"] += 1
+                    continue
+                ergebnis["linked"].append(eintrag(verlinkt, text, "names it", stufe))
+                naechste.append(verlinkt)
+            # What names this file. Read over the user's own areas only: the machine's own folders
+            # link for their own bookkeeping and none of it is a consequence for anybody.
+            for kandidat in sorted(space.rglob("*.md")):
+                if kandidat in gesehen or not kandidat.is_file():
+                    continue
+                kopf = kandidat.relative_to(space).as_posix().split("/", 1)[0]
+                if kopf in _TASK_SKIP_ROOTS or kopf.startswith("."):
+                    continue
+                try:
+                    text = kandidat.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if not zeigt_auf(text, quelle):
+                    continue
+                gesehen.add(kandidat)
+                if len(ergebnis["linked"]) >= _STATUS_CHAIN_CAP:
+                    ergebnis["cut"] += 1
+                    continue
+                ergebnis["linked"].append(eintrag(kandidat, text, "points at it", stufe))
+                naechste.append(kandidat)
+        front = naechste
+        if not front:
+            break
+    return ergebnis
 
 
 def cmd_file_status(args: argparse.Namespace) -> int:
     """Set or read a file's `status:`, the one field that says whether it still stands.
 
     A command rather than a hand edit, because the value has a vocabulary and a hand edit has none.
-    Setting it to `done` or `cancelled` is what takes the file's open task lines and its dates out
-    of the session start, so a wrong spelling is not a cosmetic problem: it silences nothing and
-    nobody notices.
+    Setting it to `done` or `cancelled` is what takes the file's own open task lines and its dates
+    out of the session start, so a wrong spelling is not a cosmetic problem: it silences nothing and
+    nobody notices. It never touches a linked file's own status or content: `--check` surfaces what
+    is linked so a person judges it, `--set` alone never does.
     """
-    vault = Path(args.vault).resolve()
-    target = _resolve_vault_file(vault, args.path)
+    space = Path(args.space).resolve()
+    target = _resolve_space_file(space, args.path)
     if target is None:
-        print(f"fail: no such file in the vault: {args.path}", file=sys.stderr)
+        print(f"fail: no such file in the space: {args.path}", file=sys.stderr)
         return 1
-    rel = target.relative_to(vault)
+    rel = target.relative_to(space)
     if not args.set:
         jetzt = _status_of(target.read_text(encoding="utf-8"))
         print(f"{jetzt or '(none)'}  {rel}")
@@ -6932,13 +7589,58 @@ def cmd_file_status(args: argparse.Namespace) -> int:
     if wert not in STATUS_VALUES:
         print(f"fail: '{wert}' is not a status. Use one of: {', '.join(STATUS_VALUES)}", file=sys.stderr)
         return 1
+    # Closing something is where the chain matters, so the look is not optional there. Asked to
+    # cancel a trip, a run set the status and moved on; the flight, the hotel and the money still
+    # in play pointed at that trip and none of them was ever raised. So a closing status refuses
+    # once, prints what hangs off this, and goes through on the second call with `--reviewed`.
+    #
+    # What that flag is: a forced stop, not proof. The run sets it itself, and a run determined to
+    # get past a gate can. It is here because the failure it addresses was not defiance, it was a
+    # step nobody thought of; a stop that puts the consequences on the screen fixes that kind and
+    # no other. `--user-said` was the version of this that pretended to be proof and was removed.
+    schliesst = wert in STATUS_CLOSED
+    gesehen = bool(getattr(args, "reviewed", False))
+    if getattr(args, "check", False) or (schliesst and not gesehen):
+        material = _status_change_material(space, target)
+        jetzt = _status_of(target.read_text(encoding="utf-8"))
+        etwas = bool(material["own_tasks"] or material["linked"])
+        if schliesst and not gesehen and not etwas and not getattr(args, "check", False):
+            pass  # nothing hangs off it, so there is nothing to put to anybody: fall through
+        else:
+            print(f"Setting {rel} from '{jetzt or '(none)'}' to '{wert}'. Nothing written yet.")
+            eigene = material["own_tasks"]
+            if eigene:
+                print(f"\n{rel} itself has {len(eigene)} open task line(s):")
+                for t in eigene:
+                    print(f"  {t['text']}")
+            for verlinkt in material["linked"]:
+                print(f"\n{verlinkt['direction']}: {verlinkt['path']} "
+                      f"(status: {verlinkt['status'] or 'none'})")
+                auszug = " ".join(verlinkt["excerpt"].split())[:160]
+                print(f"  excerpt: {auszug}")
+                for t in verlinkt["open_tasks"]:
+                    print(f"  {t['text']}")
+            if material["cut"]:
+                print(f"\n{material['cut']} more not listed. Say so; a longer list is not read.")
+            if not etwas:
+                print("\nNothing hangs off this, no open task lines. Nothing for a person to weigh in on.")
+            print(f"\nRelay this as a short list, one line per item, ending in one clear question: "
+                  f"which of these, if any, should also be closed or changed once '{wert}' is set. "
+                  f"Nothing here is closed by this change; each one is a question. Do not summarise "
+                  f"it into a paragraph, and do not set the status until answered.")
+            if getattr(args, "check", False):
+                return 0
+            print(f"\nRefused for now: this closes something and what hangs off it has not been "
+                  f"put to the user yet. Ask them, then run the same command again with "
+                  f"`--reviewed`.", file=sys.stderr)
+            return 2
     changed, notes = _edit_frontmatter_in_place(target, {"status": wert}, [])
     for note in notes:
         print(f"  {note}")
     if not changed:
         print(f"ok: {rel} already carries status: {wert}")
         return 1 if notes else 0
-    _append_activity_log(vault, args.agent or "zanmai.py", f"status of {rel} set to {wert}")
+    _append_activity_log(space, args.agent or "zanmai.py", f"status of {rel} set to {wert}")
     folge = (" Its open task lines and its dates stop being offered at session start."
              if wert in STATUS_CLOSED else "")
     print(f"ok: {rel} -> status: {wert}.{folge}")
@@ -6946,21 +7648,20 @@ def cmd_file_status(args: argparse.Namespace) -> int:
 
 
 def cmd_trash_file(args: argparse.Namespace) -> int:
-    """Move a file into vault-relative `<trash>/<original-path>`. Reversible with `file restore`.
+    """Move a file into space-relative `<trash>/<original-path>`. Reversible with `file restore`.
 
-    `getattr` on the two drop-area arguments rather than plain attributes: this is also called from
+    `getattr` on the two inbox arguments rather than plain attributes: this is also called from
     inside `bundle remove-file`, which builds its own namespace and has nothing to do with imports.
     """
-    vault = Path(args.vault).resolve()
-    return _move_into(vault, Path(args.path).resolve(), TRASH_DIR, "trashed", dated=True,
-                      filed_to=getattr(args, "filed_to", None),
-                      user_said=getattr(args, "user_said", None))
+    space = Path(args.space).resolve()
+    return _move_into(space, Path(args.path).resolve(), TRASH_DIR, "trashed", dated=True,
+                      filed_to=getattr(args, "filed_to", None))
 
 
 def cmd_archive_file(args: argparse.Namespace) -> int:
-    """Move a file into vault-relative `<archive>/<original-path>`. Reversible with `file restore`."""
-    vault = Path(args.vault).resolve()
-    return _move_into(vault, Path(args.path).resolve(), ARCHIVE_DIR, "archived")
+    """Move a file into space-relative `<archive>/<original-path>`. Reversible with `file restore`."""
+    space = Path(args.space).resolve()
+    return _move_into(space, Path(args.path).resolve(), ARCHIVE_DIR, "archived")
 
 
 def cmd_restore_file(args: argparse.Namespace) -> int:
@@ -6970,12 +7671,12 @@ def cmd_restore_file(args: argparse.Namespace) -> int:
     a trash a delete with extra steps. The origin is read off the path, so this works for anything
     that got there through `file trash` or `file archive`, whoever moved it.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     path = Path(args.path).resolve()
     try:
-        rel = path.relative_to(vault)
+        rel = path.relative_to(space)
     except ValueError:
-        print(f"fail: path '{path}' is not inside vault '{vault}'", file=sys.stderr)
+        print(f"fail: path '{path}' is not inside space '{space}'", file=sys.stderr)
         return 1
     if not path.exists():
         print(f"fail: path does not exist: {path}", file=sys.stderr)
@@ -6997,29 +7698,29 @@ def cmd_restore_file(args: argparse.Namespace) -> int:
         return 1
     origin_rel = Path(*rest)
 
-    target = vault / origin_rel
+    target = space / origin_rel
     if target.exists():
         print(f"fail: {origin_rel.as_posix()} exists again. Move or rename it first, "
               f"otherwise the restore would overwrite it.", file=sys.stderr)
         return 1
-    _vault_mkdir(vault, target.parent, parents=True, exist_ok=True)
+    _space_mkdir(space, target.parent, parents=True, exist_ok=True)
     shutil.move(str(path), str(target))
 
-    _append_activity_log(vault, "zanmai.py", f"restored {origin_rel.as_posix()} from {holder}/")
+    _append_activity_log(space, "zanmai.py", f"restored {origin_rel.as_posix()} from {holder}/")
     print(f"ok: restored {origin_rel.as_posix()}")
     return 0
 
 
 def cmd_register_contact(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     slug = _slugify(args.slug)
-    target_dir = vault / (PEOPLE_DIR if args.kind == "person" else ORGANISATIONS_DIR)
+    target_dir = space / (PEOPLE_DIR if args.kind == "person" else ORGANISATIONS_DIR)
     # `bundle create` makes its own folder; this one did not and died with a traceback instead. In a
-    # set-up vault the folder is there, so it only ever showed on a vault that predates it.
+    # set-up space the folder is there, so it only ever showed on a space that predates it.
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"{slug}.md"
     if target.exists():
-        print(f"fail: contact exists: {target.relative_to(vault)}", file=sys.stderr)
+        print(f"fail: contact exists: {target.relative_to(space)}", file=sys.stderr)
         return 1
     kind_field = "contact/person" if args.kind == "person" else "contact/organization"
 
@@ -7083,18 +7784,18 @@ def cmd_register_contact(args: argparse.Namespace) -> int:
 
     target.write_text(fm_text + body + leftover_block, encoding="utf-8")
     log_suffix = f" (body imported from {Path(args.source).name})" if args.source else ""
-    _append_activity_log(vault, "zanmai.py", f"registered contact {kind_field} -> {target.relative_to(vault)}{log_suffix}")
-    print(f"ok: contact created at {target.relative_to(vault)}")
+    _append_activity_log(space, "zanmai.py", f"registered contact {kind_field} -> {target.relative_to(space)}{log_suffix}")
+    print(f"ok: contact created at {target.relative_to(space)}")
     return 0
 
 
 # ---------------------------------------------------------------------------
-# Pattern-Engine: vault-index (Schicht A) and patterns (Schicht B).
+# Pattern-Engine: space-index (Schicht A) and patterns (Schicht B).
 #
-# Schicht A: walk vault, extract metadata per markdown file. Write
-#   zanmai/memory/vault-index.json. Pure-data layer, no domain knowledge.
+# Schicht A: walk space, extract metadata per markdown file. Write
+#   zanmai/memory/space-index.json. Pure-data layer, no domain knowledge.
 #
-# Schicht B: aggregate themes/hubs/bundles from Schicht A. Write
+# Schicht B: aggregate hubs and bundles from Schicht A. Write
 #   zanmai/memory/patterns.json. Still domain-free - token-overlap and graph
 #   structure only, no vocabulary.
 #
@@ -7142,7 +7843,7 @@ def _extract_body_tokens(body: str, max_chars: int = 8000) -> list[str]:
     """Extract deduplicated significant tokens from body content.
 
     Truncate body at max_chars to bound cost; tokens past the first ~2000 words
-    rarely add signal a theme-cluster cares about.
+    rarely add signal a bundle cluster cares about.
     """
     # Strip code blocks, URLs, and inline markdown that pollute the token-stream.
     snippet = body[:max_chars]
@@ -7154,7 +7855,7 @@ def _extract_body_tokens(body: str, max_chars: int = 8000) -> list[str]:
     return _tokenize(snippet)
 
 
-def _extract_file_entry(file_path: Path, vault: Path) -> dict | None:
+def _extract_file_entry(file_path: Path, space: Path) -> dict | None:
     """Extract index entry for one markdown file. Returns None on read error."""
     try:
         content = file_path.read_text(encoding="utf-8", errors="replace")
@@ -7192,7 +7893,7 @@ def _extract_file_entry(file_path: Path, vault: Path) -> dict | None:
             wikilinks.append(target)
 
     try:
-        rel_path = file_path.relative_to(vault).as_posix()
+        rel_path = file_path.relative_to(space).as_posix()
     except ValueError:
         rel_path = str(file_path)
 
@@ -7225,7 +7926,7 @@ def _extract_file_entry(file_path: Path, vault: Path) -> dict | None:
 
 
 def _is_inside_database_folder(rel_path: str) -> bool:
-    """Return True if a vault-relative path sits inside a `<Name>.base/` folder.
+    """Return True if a space-relative path sits inside a `<Name>.base/` folder.
 
     Some editors keep a table or board as a folder with that suffix, holding a schema and rows that
     only that editor writes. They are the user's, whatever put them there, and Zanmai reads and
@@ -7236,15 +7937,15 @@ def _is_inside_database_folder(rel_path: str) -> bool:
     return False
 
 
-def _walk_vault_markdown(vault: Path, scope: str | None = None) -> list[Path]:
-    """Walk markdown files under vault (or vault/scope). Skip the internal
+def _walk_space_markdown(space: Path, scope: str | None = None) -> list[Path]:
+    """Walk markdown files under space (or space/scope). Skip the internal
     `zanmai/` tree entirely (contracts, generated state like `briefing.md`,
     logs, memory), it is not user content, its wikilink-shaped
     examples produce false-positive broken-link reports, and its per-session
     regeneration would otherwise make the index look perpetually stale. Also skip
     `.claude/`, the import folder, the root `CLAUDE.md`, and database
     folders (`<Name>.base/`, the user's own)."""
-    base = (vault / scope) if scope else vault
+    base = (space / scope) if scope else space
     if not base.exists() or not base.is_dir():
         return []
     out = []
@@ -7252,14 +7953,14 @@ def _walk_vault_markdown(vault: Path, scope: str | None = None) -> list[Path]:
         if not f.is_file():
             continue
         try:
-            rel = f.relative_to(vault).as_posix()
+            rel = f.relative_to(space).as_posix()
         except ValueError:
             continue
         if rel.startswith(f"{SYSTEM_DIR}/"):
             continue
         if rel.startswith(".claude/"):
             continue
-        if rel.startswith(f"{IMPORT_DIR}/"):
+        if rel.startswith(f"{INBOX_DIR}/"):
             continue
         if rel == "CLAUDE.md":
             continue
@@ -7277,29 +7978,29 @@ def _atomic_write_json(path: Path, data: dict) -> None:
 
 
 def cmd_reindex(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
-    files = _walk_vault_markdown(vault, args.scope)
+    space = Path(args.space).resolve()
+    files = _walk_space_markdown(space, args.scope)
     entries = []
     for f in files:
-        entry = _extract_file_entry(f, vault)
+        entry = _extract_file_entry(f, space)
         if entry is not None:
             entries.append(entry)
 
     out = {
         "_meta": {
             "generated": datetime.now().isoformat(timespec="seconds"),
-            "vault": str(vault),
+            "space": str(space),
             "file_count": len(entries),
             "scope": args.scope or ".",
         },
         "files": entries,
     }
 
-    target = vault / MEMORY_DIR / "vault-index.json"
+    target = space / MEMORY_DIR / "space-index.json"
     _atomic_write_json(target, out)
 
     # Clear the stale marker; the index now reflects current state.
-    stale_marker = vault / MEMORY_DIR / ".index-stale"
+    stale_marker = space / MEMORY_DIR / ".index-stale"
     if stale_marker.exists():
         try:
             stale_marker.unlink()
@@ -7307,14 +8008,14 @@ def cmd_reindex(args: argparse.Namespace) -> int:
             pass
 
     if not args.quiet:
-        print(f"reindex ok: {len(entries)} files -> {target.relative_to(vault)}")
+        print(f"reindex ok: {len(entries)} files -> {target.relative_to(space)}")
     return 0
 
 
 def _bundle_segments(rel_path: str) -> tuple[str, str] | None:
     """Return (kind-folder, slug) if rel_path sits inside a `<kind>/<slug>/` bundle, else None.
 
-    Two segments plus a file, not three: the kind folder is a vault root now, so the shortest path
+    Two segments plus a file, not three: the kind folder is a space root now, so the shortest path
     into a bundle is `<kind>/<slug>/<file>`.
     """
     parts = rel_path.split("/")
@@ -7342,15 +8043,15 @@ def _file_tokens(entry: dict) -> set[str]:
     return tokens
 
 
-def _aggregate_themes(entries: list[dict], min_count: int) -> dict:
+def _aggregate_bundles(entries: list[dict], min_count: int) -> dict:
     """Token-cluster across filename, tags, h1, body. Tokens with >= min_count files.
 
-    Each theme entry also records sources counts (how many files carry the
+    Each cluster entry also records sources counts (how many files carry the
     token in the strong slots - filename/tag/h1 - versus only in body) so
-    consumers can tell strong themes from weak body-only co-occurrences.
+    consumers can tell strong clusters from weak body-only co-occurrences.
     """
-    theme_files: dict[str, set[str]] = {}
-    theme_strong: dict[str, set[str]] = {}
+    bundle_files: dict[str, set[str]] = {}
+    bundle_strong: dict[str, set[str]] = {}
     for e in entries:
         strong: set[str] = set()
         strong.update(e.get("filename_tokens") or [])
@@ -7359,14 +8060,14 @@ def _aggregate_themes(entries: list[dict], min_count: int) -> dict:
         strong.update(e.get("h1_tokens") or [])
         all_tokens = strong | set(e.get("body_tokens") or [])
         for tok in all_tokens:
-            theme_files.setdefault(tok, set()).add(e["path"])
+            bundle_files.setdefault(tok, set()).add(e["path"])
             if tok in strong:
-                theme_strong.setdefault(tok, set()).add(e["path"])
+                bundle_strong.setdefault(tok, set()).add(e["path"])
     out = {}
-    for token, paths in theme_files.items():
+    for token, paths in bundle_files.items():
         if len(paths) < min_count:
             continue
-        strong_paths = theme_strong.get(token, set())
+        strong_paths = bundle_strong.get(token, set())
         out[token] = {
             "files": sorted(paths),
             "count": len(paths),
@@ -7460,10 +8161,10 @@ def _aggregate_existing_bundles(entries: list[dict]) -> dict:
 
 
 def cmd_patterns(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
-    index_path = vault / MEMORY_DIR / "vault-index.json"
+    space = Path(args.space).resolve()
+    index_path = space / MEMORY_DIR / "space-index.json"
     if not index_path.exists():
-        print(f"vault-index.json missing - run `zanmai.py index rebuild {vault}` first", file=sys.stderr)
+        print(f"space-index.json missing - run `zanmai.py index rebuild {space}` first", file=sys.stderr)
         return 1
 
     data = json.loads(index_path.read_text(encoding="utf-8"))
@@ -7472,36 +8173,44 @@ def cmd_patterns(args: argparse.Namespace) -> int:
     out = {
         "_meta": {
             "generated": datetime.now().isoformat(timespec="seconds"),
-            "vault": str(vault),
+            "space": str(space),
             "based_on_index": data.get("_meta", {}).get("generated", ""),
             "file_count": len(entries),
             "min_count": args.min_count,
         },
-        "themes": _aggregate_themes(entries, min_count=args.min_count),
+        "bundles": _aggregate_bundles(entries, min_count=args.min_count),
         "wikilink_hubs": _aggregate_wikilink_hubs(entries, min_count=args.min_count),
         "existing_bundles": _aggregate_existing_bundles(entries),
         "co_occurrence": _aggregate_co_occurrence(entries, min_count=args.min_count),
     }
 
-    target = vault / MEMORY_DIR / "patterns.json"
+    target = space / MEMORY_DIR / "patterns.json"
     _atomic_write_json(target, out)
 
     if not args.quiet:
         print(
-            f"patterns ok: themes={len(out['themes'])} "
+            f"patterns ok: bundles={len(out['bundles'])} "
             f"hubs={len(out['wikilink_hubs'])} "
             f"bundles={len(out['existing_bundles'])} "
             f"co_occ_tokens={len(out['co_occurrence'])} "
-            f"-> {target.relative_to(vault)}"
+            f"-> {target.relative_to(space)}"
         )
     return 0
 
 
-def cmd_find_theme(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
-    patterns_path = vault / MEMORY_DIR / "patterns.json"
+def cmd_find_bundle(args: argparse.Namespace) -> int:
+    space = Path(args.space).resolve()
+    if not space.is_dir():
+        print(
+            f"space not found: {space} - `--tokens` takes one comma-separated value "
+            f"(`--tokens a,b`, not `--tokens a b`); a missing comma pushes the next word "
+            f"into the space argument",
+            file=sys.stderr,
+        )
+        return 1
+    patterns_path = space / MEMORY_DIR / "patterns.json"
     if not patterns_path.exists():
-        print(f"patterns.json missing - run `zanmai.py index patterns {vault}` first", file=sys.stderr)
+        print(f"patterns.json missing - run `zanmai.py index patterns {space}` first", file=sys.stderr)
         return 1
 
     data = json.loads(patterns_path.read_text(encoding="utf-8"))
@@ -7511,23 +8220,23 @@ def cmd_find_theme(args: argparse.Namespace) -> int:
         tokens.extend(_tokenize(r))
     tokens = list(dict.fromkeys(tokens))
 
-    themes_idx = data.get("themes", {})
+    bundles_idx = data.get("bundles", {})
     co_idx = data.get("co_occurrence", {})
 
-    matching_themes = []
+    matching_clusters = []
     for tok in tokens:
-        info = themes_idx.get(tok)
+        info = bundles_idx.get(tok)
         if info:
             strong = info.get("strong_count", 0)
-            matching_themes.append({
-                "theme": tok,
+            matching_clusters.append({
+                "bundle": tok,
                 "files": info["files"],
                 "count": info["count"],
                 "strong_count": strong,
                 "signal": "strong" if strong >= 2 else ("body_only" if strong == 0 else "mixed"),
             })
     # Rank by strong-count first, then total count.
-    matching_themes.sort(key=lambda t: (-t["strong_count"], -t["count"]))
+    matching_clusters.sort(key=lambda t: (-t["strong_count"], -t["count"]))
 
     matching_bundles = []
     for key, b in data.get("existing_bundles", {}).items():
@@ -7587,7 +8296,7 @@ def cmd_find_theme(args: argparse.Namespace) -> int:
 
     result = {
         "tokens": tokens,
-        "matching_themes": matching_themes,
+        "matching_clusters": matching_clusters,
         "matching_bundles": matching_bundles,
         "matching_hubs": matching_hubs,
         "related_tokens": related_tokens,
@@ -7601,34 +8310,28 @@ def cmd_find_theme(args: argparse.Namespace) -> int:
 # Setup, snapshot and first-run migration.
 # ----------------------------------------------------------------------------
 
-# The ten entries at the vault root, and what has to exist inside them. Flat on purpose: no
+# The ten entries at the space root, and what has to exist inside them. Flat on purpose: no
 # container above the content folders, because a container is what the old `inbox/` was, and it put
 # everything a person actually works with one level down while the machine sat on top.
 #
-# All ten are created even when empty, so the shape of the vault is visible before anything is in
-# it. Areas inside `knowledge`, `trusted` and `archive` are deliberately NOT created: a life's
-# subject headings belong to whoever owns the vault, and an example shipped in the distribution
+# All ten are created even when empty, so the shape of the space is visible before anything is in
+# it. Nothing below an area is created: a life's
+# subject headings belong to whoever owns the space, and an example shipped in the distribution
 # becomes a default nobody chose.
 REQUIRED_FOLDERS_CORE = [
     # Where it falls in.
-    DAILY_DIR,
-    WEEKLY_DIR,
-    MONTHLY_DIR,
-    YEARLY_DIR,
+    JOURNAL_DIR,
     # Where it takes shape, gathers and settles.
-    FOCUS_DIR,
-    DOING_DIR,
-    HABITS_DIR,
-    KNOWLEDGE_DIR,
-    TRUSTED_DIR,
+    WORKBENCH_DIR,
+    LIFE_DIR,
     BRANDS_DIR,
+    KNOWLEDGE_DIR,
     ARCHIVE_DIR,
-    RECORDS_DIR,
     # Who it is about.
     PEOPLE_DIR,
     ORGANISATIONS_DIR,
     # Where it comes in.
-    IMPORT_DIR,
+    INBOX_DIR,
     # What the machine keeps.
     EXTENSIONS_DIR,
     MEMORY_DIR,
@@ -7643,16 +8346,16 @@ REQUIRED_FOLDERS_CORE = [
 ]
 
 
-def _required_folders(vault_root: Path) -> list[str]:
-    """Every folder a set-up vault must have, from the one list above.
+def _required_folders(space_root: Path) -> list[str]:
+    """Every folder a set-up space must have, from the one list above.
 
     The single source matters more than it looks. This used to be two lists, the one
-    above for a fresh install and a copy of it in the manifest for an existing vault,
+    above for a fresh install and a copy of it in the manifest for an existing space,
     and they drifted: a release added a folder here and not there, so a
-    new vault got the folder and an updated one did not. The structure check read the
+    new space got the folder and an updated one did not. The structure check read the
     manifest copy too, which is the part that makes such a drift invisible rather than
     merely wrong: producer and checker agreed with each other and were both missing
-    the same entry, so a vault without the folder validated with exit code 0. One
+    the same entry, so a space without the folder validated with exit code 0. One
     list, read by whoever creates and whoever checks, cannot disagree with itself.
 
     Excludes the runtime folder, which describes this machine and is created when something needs
@@ -7663,33 +8366,33 @@ def _required_folders(vault_root: Path) -> list[str]:
     return folders
 
 
-# The fixed family the vault root may hold, plus the generated files that live there. Anything
+# The fixed family the space root may hold, plus the generated files that live there. Anything
 # else at the root is either a dotfile (an editor's or the OS's own business, left alone by
 # design) or a folder that arrived outside any write Zanmai made, a manual Finder action, a
 # colleague dropping something into a shared sync folder, a half-finished move. No hook can see
 # or refuse that, since it happens outside any Claude Code session, so this is a detector rather
 # than a guard: it surfaces the entry so it gets dealt with in days, not found by accident weeks
 # later.
-_VAULT_ROOT_ALLOWED_DIRS = frozenset({
-    JOURNAL_DIR, FOCUS_DIR, DOING_DIR, HABITS_DIR, KNOWLEDGE_DIR, TRUSTED_DIR,
-    ARCHIVE_DIR, RECORDS_DIR, CONTACTS_DIR, IMPORT_DIR, SYSTEM_DIR,
+_SPACE_ROOT_ALLOWED_DIRS = frozenset({
+    JOURNAL_DIR, WORKBENCH_DIR, LIFE_DIR, KNOWLEDGE_DIR,
+    ARCHIVE_DIR, CONTACTS_DIR, INBOX_DIR, SYSTEM_DIR,
 })
-_VAULT_ROOT_ALLOWED_FILES = frozenset({"CLAUDE.md", "README.md", "INDEX.md"})
+_SPACE_ROOT_ALLOWED_FILES = frozenset({"CLAUDE.md", "README.md", "INDEX.md"})
 
 
-def _unexpected_root_entries(vault: Path) -> list[str]:
-    """Names at the vault root outside the fixed family, dotfiles excluded. Empty when the root
+def _unexpected_root_entries(space: Path) -> list[str]:
+    """Names at the space root outside the fixed family, dotfiles excluded. Empty when the root
     is exactly what setup and the folder architecture say it should be."""
-    if not vault.is_dir():
+    if not space.is_dir():
         return []
     found = []
-    for entry in sorted(vault.iterdir()):
+    for entry in sorted(space.iterdir()):
         name = entry.name
         if name.startswith("."):
             continue
-        if entry.is_dir() and name in _VAULT_ROOT_ALLOWED_DIRS:
+        if entry.is_dir() and name in _SPACE_ROOT_ALLOWED_DIRS:
             continue
-        if entry.is_file() and name in _VAULT_ROOT_ALLOWED_FILES:
+        if entry.is_file() and name in _SPACE_ROOT_ALLOWED_FILES:
             continue
         found.append(name)
     return found
@@ -7706,7 +8409,7 @@ def _frontmatter_block(text: str) -> str:
     return text[: end + 4]
 
 
-def _install_skill_symlinks(vault_root: Path, mapping: list[tuple[str, str]]) -> None:
+def _install_skill_symlinks(space_root: Path, mapping: list[tuple[str, str]]) -> None:
     """Write a thin adapter `.claude/skills/<folder>/SKILL.md` for each shipped
     skill: the skill's frontmatter (so the host discovers it) plus a one-line body
     pointing at the real procedure under `zanmai/system/skills/`. Real files,
@@ -7715,18 +8418,18 @@ def _install_skill_symlinks(vault_root: Path, mapping: list[tuple[str, str]]) ->
     different host only needs its own adapter, not a rewrite. Stale adapters, a
     skill dropped by an update, or a legacy symlink from an older install, are
     pruned."""
-    skills_dir = vault_root / ".claude" / "skills"
+    skills_dir = space_root / ".claude" / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
     for claude_folder, source_folder in mapping:
         source_rel = f"{SYSTEM_MATERIAL_DIR}/skills/{source_folder}/SKILL.md"
-        source_file = vault_root / source_rel
+        source_file = space_root / source_rel
         if not source_file.exists():
             continue
         fm = _frontmatter_block(source_file.read_text(encoding="utf-8"))
         # The adapter's name has to be the folder it sits in, because that is what the host offers as
         # a command. Copying the source's own `name:` shipped `zanmai:update` in a folder called
         # `zanmai-update`, and typing either one answered "Unknown command": the colon form is how a
-        # plugin skill is addressed, not a project one. Found in a vault in daily use, and it
+        # plugin skill is addressed, not a project one. Found in a space in daily use, and it
         # was true for all eight commands at once.
         fm = re.sub(r"^name:.*$", f"name: {claude_folder}", fm, count=1, flags=re.M)
         body = (
@@ -7786,6 +8489,8 @@ _SKILL_SYMLINK_MAP: list[tuple[str, str]] = [
     ("zanmai-research", "research"),
     ("zanmai-journal", "journal"),
     ("zanmai-update", "update"),
+    ("zanmai-housekeeping", "housekeeping"),
+    ("zanmai-show-welcome", "welcome"),
     ("zanmai-connection", "manage-connections"),
     ("zanmai-voice", "voice"),
     ("zanmai-write", "write"),
@@ -7810,13 +8515,13 @@ _SKILL_SYMLINK_MAP: list[tuple[str, str]] = [
 # documentation to this, so a skill cannot claim one thing and be registered as the other.
 
 
-def _model_overrides(vault_root: Path) -> dict[str, str]:
+def _model_overrides(space_root: Path) -> dict[str, str]:
     """Per-expert model choices the user made in `zanmai/user.md`, as `models:` in the frontmatter.
 
     Absent means the contracts' own defaults apply. Nothing here is guessed and nothing is written
     back: which model an expert runs on is configuration, and a run never decides it about itself.
     """
-    user_md = vault_root / SYSTEM_DIR / "user.md"
+    user_md = space_root / SYSTEM_DIR / "user.md"
     if not user_md.is_file():
         return {}
     try:
@@ -7830,7 +8535,7 @@ def _model_overrides(vault_root: Path) -> dict[str, str]:
             for m in re.finditer(r"^[ \t]+([a-z]+):[ \t]*(\S+)", block.group(1), re.M)}
 
 
-def _install_agent_symlinks(vault_root: Path, agent_names: list[str]) -> None:
+def _install_agent_symlinks(space_root: Path, agent_names: list[str]) -> None:
     """Write a thin adapter `.claude/agents/<name>.md` for each expert: the
     expert's frontmatter (so the host discovers it) plus a one-line body pointing
     at the real contract under `zanmai/system/experts/`. Real files, not
@@ -7838,12 +8543,12 @@ def _install_agent_symlinks(vault_root: Path, agent_names: list[str]) -> None:
     `zanmai/system/` tree, so another host only needs its own adapter. Stale
     adapters, an expert dropped by an update, or a legacy symlink, are
     pruned so no dead agent is left behind."""
-    agents_dir = vault_root / ".claude" / "agents"
+    agents_dir = space_root / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
-    model_overrides = _model_overrides(vault_root)
+    model_overrides = _model_overrides(space_root)
     for name in agent_names:
         source_rel = f"{SYSTEM_MATERIAL_DIR}/experts/{name}/{name}.md"
-        source_file = vault_root / source_rel
+        source_file = space_root / source_rel
         if not source_file.exists():
             continue
         fm = _frontmatter_block(source_file.read_text(encoding="utf-8"))
@@ -7860,15 +8565,21 @@ def _install_agent_symlinks(vault_root: Path, agent_names: list[str]) -> None:
         # dispatch. Numbered steps that name the file and say when it applies are what a fresh
         # context can actually follow.
         body = (
-            f"\n\nAdapter only, so the host can find you. The procedure lives in the vault.\n\n"
+            f"\n\nAdapter only, so the host can find you. The procedure lives in the space.\n\n"
             f"## On every invocation, in order\n\n"
             f"1. Read `{source_rel}`, your full contract. It is authoritative over anything here.\n"
-            f"2. Read `{SYSTEM_MATERIAL_DIR}/operating-principles.md` for the rules that hold across "
-            f"every expert: approval before write, source files, indexing and logging, how a reply "
-            f"reads.\n"
+            f"2. Read `{SYSTEM_MATERIAL_DIR}/operating-principles.md`. Everything in it applies to "
+            f"you in full, and your contract does not repeat it: approval before write, source "
+            f"files, indexing and logging, parking a run, how a reply reads. A rule you do not find "
+            f"in your contract is in there, not absent.\n"
             f"3. Read the skills your contract names for this job, at the point the job needs them, "
             f"from `{SYSTEM_MATERIAL_DIR}/skills/<name>/SKILL.md`. Anything longer than a line that "
             f"gets written for the user goes through the `write` skill, whoever runs it.\n\n"
+            f"## Running the script\n\n"
+            f"`zanmai.py <subcommand>` in your contract and in every skill is shorthand for "
+            f"`<python_cmd> {SYSTEM_MATERIAL_DIR}/scripts/zanmai.py <subcommand>`, run from the "
+            f"space root, with `<python_cmd>` from the frontmatter of `{USER_FILE}` (usually "
+            f"`python3`). There is no zanmai.py at the space root, and it is not on `PATH`.\n\n"
             f"## Cold start\n\n"
             f"Your context is fresh every time. What you were not handed, you do not know. Where the "
             f"brief is too thin to act on, say so in the return rather than inventing the missing "
@@ -7894,24 +8605,47 @@ def _install_agent_symlinks(vault_root: Path, agent_names: list[str]) -> None:
             entry.unlink()
 
 
+# The setup dialogue's own schema version, independent of the distribution version. A space
+# whose `zanmai/user.md` carries no `setup_schema_version` field is read as 1, the shape before
+# purpose, structure and starter bundles existed. The greeting skill compares this constant
+# against that field: lower means a later setup version added a mandatory block this space never
+# saw, and `setup catch-up` asks it once, then stamps the field so it is never asked again.
+#
+# Which round added what is written out in the setup skill, under "Catching up an older space",
+# because that is where it is read. Raising this number is what makes a space ask the new block, so
+# it goes up in the same change that adds one, never on its own and never afterwards.
+#   1  identity only
+#   2  purpose, the areas to start with, projects and goals
+#   3  the capability overview, its prerequisites, and that a missing one can be built
+CURRENT_SETUP_SCHEMA_VERSION = 3
+
+PURPOSE_CHOICES = ("private", "professional", "project", "all", "unclear")
+
+
 def _render_user_md_init(
     *, first_name: str, last_name: str, language: str, owner_contact_slug: str,
     preferred_address: str = "",
     python_cmd: str = "python3",
+    purpose: str = "",
+    purpose_detail: str = "",
 ) -> str:
     today = datetime.now().strftime("%Y-%m-%d")
     full_name = f"{first_name} {last_name}".strip()
     address_field = f'"{preferred_address}"' if preferred_address else '""'
     address_line = f"- **Preferred address**: {preferred_address}" if preferred_address else f"- **Preferred address**: (same as first name)"
+    purpose_line = f"- **What this space is for**: {purpose}" + (f" ({purpose_detail})" if purpose_detail else "") if purpose else ""
     return f"""---
 first_name: "{first_name}"
 last_name: "{last_name}"
 preferred_address: {address_field}
 language: "{language}"
 owner_contact: "{owner_contact_slug}"
+purpose: "{purpose}"
+purpose_detail: "{purpose_detail}"
 python_cmd: "{python_cmd}"
 update_channel: ""
 auto_snapshots: true
+setup_schema_version: {CURRENT_SETUP_SCHEMA_VERSION}
 created: "{today}"
 ---
 
@@ -7926,10 +8660,13 @@ This file holds personalisation that survives updates. The system reads it at se
 {address_line}
 - **Language preference**: {language} (auto-detected from how you write; override here if needed)
 - **Owner contact**: [[{owner_contact_slug}]]
+{purpose_line}
 
 ## Notes for Steve
 
 Add anything you want Steve to know about you here: preferences, working style, anything that should persist across sessions. This is not a profile form, write freely.
+
+One thing does not belong here: what should happen to a kind of file that arrives. That goes in the routing table (`zanmai.py routing set`), which is read every time something lands in `inbox/`. Written here instead, it steers your material from outside the import path, where no scan sees it and no rule covers it. Say it to Steve and he writes the rule.
 
 ## Feature toggles
 
@@ -7937,9 +8674,12 @@ Add anything you want Steve to know about you here: preferences, working style, 
   or `pepper: haiku`. Absent means the default each expert's contract ships with. This lives here and
   not in the contracts because an update replaces those, and because the choice is yours: no run
   decides how hard its own work is. A job that genuinely needs more says so and waits for you.
-- `auto_snapshots: true`. Master switch for every snapshot Zanmai takes on its own, which is only ever before it overwrites existing material (update, bulk repair, vault-wide rename, restore). When `false`, all `zanmai.py snapshot create` calls exit silently with `skip: auto_snapshots disabled` and no folder is written, useful when the user has their own backup discipline (git, Time Machine, ...). Flip it with `zanmai.py snapshot enable` / `disable` or by editing this line directly.
+- `auto_snapshots: true`. Master switch for every snapshot Zanmai takes on its own, which is only ever before it overwrites existing material (update, bulk repair, space-wide rename, restore). When `false`, all `zanmai.py snapshot create` calls exit silently with `skip: auto_snapshots disabled` and no folder is written, useful when the user has their own backup discipline (git, Time Machine, ...). Flip it with `zanmai.py snapshot enable` / `disable` or by editing this line directly.
 - `python_cmd: "{python_cmd}"`. The Python invocation that worked at setup time. Steve uses this when running scripts, substitutes for `python3` in skill template phrasing. On Windows this is often `py -3` or `python`, on Linux and macOS usually `python3`.
+- `update_check: true` (optional, add the line to turn it off). Whether Zanmai may ask the update source once a day whether a newer version exists. Set to `false` and nothing reaches the network on its own; you can still update whenever you ask for one. It is read here first and in the manifest second, so a decision written here survives every update.
 - `update_channel: ""`. Which branch `zanmai.py setup upgrade` tracks. Empty means the published release. Set with `zanmai.py setup upgrade . --channel <name>`, which switches immediately and remembers the choice here, update-immune so it survives every future update; `--channel release` switches back.
+- `purpose` / `purpose_detail`. What the space is mainly for (`private`, `professional`, `project`, `all`, or `unclear`), plus a free-text detail: the project's name when `purpose` is `project`, or the user's own words when it is `unclear`. Set once at setup or catch-up, changed by editing this file directly.
+- `setup_schema_version`. Which round of setup questions this space has answered, as a number in the frontmatter above. Where it is lower than what the running distribution ships, an update added questions this space never saw, and the next session asks them once. Written by setup and by `setup catch-up`, never by hand.
 """
 
 
@@ -7973,7 +8713,7 @@ website: ""
         address_en = f"Steve addresses you as **{first_name}** (same as your first name). For a different address form, set `nickname` in the frontmatter above."
 
     body = f"""
-This is the owner contact for this vault. `zanmai/user.md` points here as `owner_contact`. Steve reads it at session start to know who the user is.
+This is the owner contact for this space. `zanmai/user.md` points here as `owner_contact`. Steve reads it at session start to know who the user is.
 
 ## Address style
 
@@ -7994,7 +8734,7 @@ Cross-session learnings about you specifically that Steve has picked up. Steve o
 
 Sub-categories Steve uses when graduating lessons here:
 
-- **Domain expertise**: areas where you have deep knowledge. Steve and Reed consult this before research and explanations so they do not waste your time with beginner content in fields you know cold. Audience calibration in the Reed dispatch reads this directly.
+- **Domain expertise**: fields where you have deep knowledge. Steve and Reed consult this before research and explanations so they do not waste your time with beginner content in fields you know cold. Audience calibration in the Reed dispatch reads this directly.
 - **Style preferences**: how you want things written (reply length, formality, jargon tolerance).
 - **Decisions you've made before**: choices Steve should respect (tool picks, workflows, naming conventions).
 - **One-off context that recurred**: facts about you that came up more than once and are likely to matter again.
@@ -8030,7 +8770,7 @@ Cross-session learnings, user preferences, open threads, decisions.
 def _render_activity_log() -> str:
     return """# Activity log
 
-Chronological append-only log of writes and notable actions across the vault.
+Chronological append-only log of writes and notable actions across the space.
 Format per entry: `## [YYYY-MM-DD HH:MM] - <agent> - <what>` so the log greps cleanly.
 
 """
@@ -8069,53 +8809,45 @@ def _render_master_index(first_name: str) -> str:
 
 Created {today}. Steve maintains this as bundles are added.
 
-The order below is the way things travel: they arrive in the journal, take shape in focus and on
-the desk, gather in knowledge, and settle into what recurs and what holds. Nothing has to move
-along it. Staying put is a valid end state everywhere except the desk.
+The areas below are a workplace. Things arrive in the inbox, come onto the desk to be worked on,
+and are put away when the work is done: into your own life, into what you know, or into the
+cupboard. Nothing has to travel the whole way, and only the desk is meant to empty.
 
 ## Journal
 
-`{JOURNAL_DIR}/` is the time axis: a bundle per day, week, month and year. What is on your mind goes
-in the day, and what happened on a day belongs to that day. Nothing is ever taken out of an entry.
+`{JOURNAL_DIR}/` is the time axis: one entry per day, filed under its year. What is on your mind
+goes in today, and what happened on a day belongs to that day. Nothing is ever taken out of an
+entry.
 
-## Focus
+## Workbench
 
-What you want to reach and what you are looking at. See `{FOCUS_DIR}/`.
-
-(empty. Nothing in focus yet.)
-
-## Doing
-
-The desk: work that has an end, with every draft of it together in one bundle. You put things here
-and so does Zanmai. See `{DOING_DIR}/`.
+The desk: work that has an end, with every draft of it together in one bundle. If you cannot name
+the event that finishes a piece, it does not belong here. You put things here and so does Zanmai.
+See `{WORKBENCH_DIR}/`.
 
 (empty)
 
-## Habits
+## Life
 
-What has a beat. See `{HABITS_DIR}/`.
+What is yours and matters to you now, at work or at home: health, money, the flat, a hobby, your
+own role, the team, a standing responsibility. The research goes to knowledge; what you do with it
+lives here. See `{LIFE_DIR}/`.
 
 (empty)
 
 ## Knowledge
 
-Everything gathered, with no ranking, and it is allowed to contradict itself. The default place for
-anything that does not clearly belong elsewhere, and the place where most of it stays. See
+What would still be right for someone else: what you could look up again or rebuild from scratch.
+A write-up of your own machine is not knowledge, a comparison of the best games for a C64 is. See
 `{KNOWLEDGE_DIR}/`.
-
-(empty)
-
-## Trusted
-
-What you have settled on and what cannot be worked out from the files themselves. Small, curated,
-one answer per question. See `{TRUSTED_DIR}/`.
 
 (empty)
 
 ## Archive
 
-Finished and kept: the document from outside and your own completed piece. It answers no question
-any more, and nothing has to end up here. See `{ARCHIVE_DIR}/`.
+The folder in the cupboard: an invoice, a policy, a certificate. Not "never needed again" - it is
+kept precisely because you take it out again. Each piece carries a date and a keeping reminder, and
+nothing goes without you seeing it and saying so. See `{ARCHIVE_DIR}/`.
 
 (empty)
 
@@ -8131,9 +8863,9 @@ Single files per person and organisation.
 
 (empty)
 
-## Import
+## Inbox
 
-`{IMPORT_DIR}/` is where you drop things. However it lands in there, Zanmai takes it up by itself;
+`{INBOX_DIR}/` is where you drop things. However it lands in there, Zanmai takes it up by itself;
 the kind of file decides what happens to it, not a sub-folder. It empties itself.
 
 ## System
@@ -8157,21 +8889,21 @@ def _known_hooks() -> set[str]:
             for name in globals() if name.startswith("cmd_hook_")}
 
 
-def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> str:
+def _render_settings_json(space_root: Path, *, python_cmd: str = "python3") -> str:
     """Render .claude/settings.json with the Zanmai hooks wired. Every
     hook is a subcommand of the single zanmai.py CLI now. No connection-guard:
     a host-exposed MCP is available for use, Zanmai adds no second consent gate
     (LD6, re-decided 2026-07-15). The script path is rooted at $CLAUDE_PROJECT_DIR,
     which Claude Code shell-expands to the project root at hook run time, so this
-    file is portable: it ships with the folder and works wherever the vault is
-    copied, no absolute machine path baked in. vault_root is kept in the signature
+    file is portable: it ships with the folder and works wherever the space is
+    copied, no absolute machine path baked in. space_root is kept in the signature
     for the callers that pass it; the rendered command no longer needs it.
 
     `defaultMode: auto` is set here rather than left to the user. Zanmai routes nearly
     every filing, index and check through its own engine, so the strictest mode turns a
     session into a queue of prompts, and the person who has just finished setup is the
     least equipped to know that a mode switch is what they need. The value is written
-    into the vault's own settings, never into the user's global config, so it applies
+    into the space's own settings, never into the user's global config, so it applies
     where Zanmai runs and nowhere else. Zanmai's own guards do not depend on it: they
     are checks on every write, not questions put to the user."""
     zb = f"$CLAUDE_PROJECT_DIR/{SYSTEM_MATERIAL_DIR}/scripts/zanmai.py"
@@ -8181,7 +8913,7 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
         """The hook entries for the names this script actually implements.
 
         Filtered rather than listed, because the two halves are written at different moments and a
-        vault that ends up with a settings.json naming a guard its script does not have is locked
+        space that ends up with a settings.json naming a guard its script does not have is locked
         out: the host reads the script's exit 2 as "block", every Bash call is refused, and the call
         that would finish the update is one of them. Filtering here means the registration can never
         be ahead of the script it points at, whichever direction the version moved.
@@ -8205,7 +8937,11 @@ def _render_settings_json(vault_root: Path, *, python_cmd: str = "python3") -> s
                        "permission-guard")
                 + gruppe("Agent", "dispatch-guard")
                 + gruppe("mcp__.*", "outward-guard")
-                + gruppe("Bash", "delete-guard", "library-check-guard", "park-guard", "prose-guard")
+                # `permission-guard` hangs on both, and that is the whole point of it: a path is
+                # protected from being written, not from a particular tool. It sat on Write|Edit
+                # alone, and a `python3 - <<EOF` walked past it into the owner file.
+                + gruppe("Bash", "delete-guard", "library-check-guard", "park-guard", "prose-guard",
+                         "permission-guard")
             ),
             "PostToolUse": gruppe("Write|Edit", "index-consistency"),
             "SessionEnd": gruppe(None, "session-end"),
@@ -8231,7 +8967,7 @@ def _shipped_hook_commands() -> set[str]:
     return found
 
 
-def _verify_host_config(vault: Path) -> list[str]:
+def _verify_host_config(space: Path) -> list[str]:
     """What the host config must actually carry, measured on disk. Empty means good.
 
     The distribution ships a hook, an expert or a skill; the host-side wiring for it
@@ -8247,7 +8983,7 @@ def _verify_host_config(vault: Path) -> list[str]:
     """
     problems: list[str] = []
 
-    settings_file = vault / ".claude" / "settings.json"
+    settings_file = space / ".claude" / "settings.json"
     if not settings_file.is_file():
         problems.append("no .claude/settings.json, so no hook of this distribution is wired")
     else:
@@ -8259,28 +8995,39 @@ def _verify_host_config(vault: Path) -> list[str]:
         for expected in sorted(_shipped_hook_commands()):
             if expected not in wired:
                 problems.append(f"hook not wired in .claude/settings.json: '{expected}'")
+        # And the other direction, which cost a space its whole shell once. A config naming a hook
+        # this script does not implement is the same drift, arrived at from the other side: the
+        # wiring ran ahead of the program. Since 0.5.0 an unknown hook name exits 0 instead of
+        # blocking, so it no longer locks anybody out, but nothing said it was there, and a config
+        # that quietly disagrees with the script is the state every later confusion grows out of.
+        bekannt = set(_known_hooks())
+        for name in sorted(set(re.findall(r'hook ([a-z][a-z0-9-]*)', wired))):
+            if name not in bekannt:
+                problems.append(f"hook wired in .claude/settings.json that this version does not "
+                                f"implement: '{name}'. `setup update` rewrites the wiring from what "
+                                f"the script actually has.")
 
     for name in _AGENT_NAMES:
-        if not (vault / ".claude" / "agents" / f"{name}.md").is_file():
+        if not (space / ".claude" / "agents" / f"{name}.md").is_file():
             problems.append(f"expert adapter missing: .claude/agents/{name}.md")
 
     for claude_folder, source_folder in _SKILL_SYMLINK_MAP:
-        if not (vault / SYSTEM_MATERIAL_DIR / "skills" / source_folder / "SKILL.md").is_file():
+        if not (space / SYSTEM_MATERIAL_DIR / "skills" / source_folder / "SKILL.md").is_file():
             continue  # not shipped in this version, so nothing to wire
-        if not (vault / ".claude" / "skills" / claude_folder / "SKILL.md").is_file():
+        if not (space / ".claude" / "skills" / claude_folder / "SKILL.md").is_file():
             problems.append(f"skill adapter missing: .claude/skills/{claude_folder}/SKILL.md")
 
     return problems
 
 
-def _mcp_tools_from_experts(vault_root: Path) -> list[str]:
+def _mcp_tools_from_experts(space_root: Path) -> list[str]:
     """Distinct `mcp__<server>__<tool>` names any registered expert is granted,
     read verbatim from each expert contract's `tools:` frontmatter. Used to
     pre-allow those exact tools in settings.local.json so a dispatched expert can
     use a host-exposed MCP without a per-call prompt (LD6: a host-exposed MCP is
     available for use, the host config is the opt-in, so no gate and no prompt)."""
     tools: list[str] = []
-    experts_dir = vault_root / SYSTEM_MATERIAL_DIR / "experts"
+    experts_dir = space_root / SYSTEM_MATERIAL_DIR / "experts"
     for name in _AGENT_NAMES:
         contract = experts_dir / name / f"{name}.md"
         if not contract.exists():
@@ -8292,15 +9039,15 @@ def _mcp_tools_from_experts(vault_root: Path) -> list[str]:
     return tools
 
 
-def _render_settings_local_json(vault_root: Path, *, python_cmd: str = "python3") -> str:
+def _render_settings_local_json(space_root: Path, *, python_cmd: str = "python3") -> str:
     """Render .claude/settings.local.json with the allow-rules. The zanmai.py
     script (every subcommand and hook routes through it) plus the exact MCP tools
     the registered experts are granted, so a host-exposed source runs without a
     per-call prompt."""
-    scripts_dir = vault_root / SYSTEM_MATERIAL_DIR / "scripts"
+    scripts_dir = space_root / SYSTEM_MATERIAL_DIR / "scripts"
     rel = f"{SYSTEM_MATERIAL_DIR}/scripts/zanmai.py"
     # Both spellings, because a rule matches the command as it was typed. Only the absolute form was
-    # shipped, while every caller in the vault runs from the vault root and types the relative path,
+    # shipped, while every caller in the space runs from the space root and types the relative path,
     # so the rule never matched anything and every write went to a permission prompt. It stayed
     # invisible because read-only calls are waved through on their own merits: the update check ran,
     # and the apply right behind it stopped dead.
@@ -8310,13 +9057,13 @@ def _render_settings_local_json(vault_root: Path, *, python_cmd: str = "python3"
         f'Bash({python_cmd} {rel}:*)',
         f'Bash({python_cmd} "{rel}":*)',
     ]
-    allow.extend(_mcp_tools_from_experts(vault_root))
+    allow.extend(_mcp_tools_from_experts(space_root))
     config = {"permissions": {"allow": allow}}
     return json.dumps(config, indent=2) + "\n"
 
 
 def _run_init_migration(
-    vault_root: Path,
+    space_root: Path,
     *,
     first_name: str,
     last_name: str,
@@ -8324,18 +9071,29 @@ def _run_init_migration(
     email: str = "",
     preferred_address: str = "",
     python_cmd: str = "python3",
+    purpose: str = "",
+    purpose_detail: str = "",
+    bundles: tuple[str, ...] = (),
+    goals: tuple[str, ...] = (),
+    projects: tuple[str, ...] = (),
 ) -> None:
-    """First-time vault setup. Creates folder skeleton, user.md, owner-contact,
+    """First-time space setup. Creates folder skeleton, user.md, owner-contact,
     settings, symlinks, memory files and master INDEX. Idempotent only on the
     folder mkdir step; file writes overwrite. Used by `setup init`."""
-    folders = _required_folders(vault_root)
+    folders = _required_folders(space_root)
     for rel in folders:
-        (vault_root / rel).mkdir(parents=True, exist_ok=True)
+        (space_root / rel).mkdir(parents=True, exist_ok=True)
+
+    # A space created today has no older shape to move, so every structural step counts as done.
+    # Without this the next update would walk them all looking for folders that never existed.
+    (space_root / MIGRATIONS_FILE).parent.mkdir(parents=True, exist_ok=True)
+    (space_root / MIGRATIONS_FILE).write_text(
+        "".join(f"{name}@{revision}\n" for name, revision, _ in _MIGRATIONS), encoding="utf-8")
 
     nickname = preferred_address.strip() if preferred_address.strip() and preferred_address.strip() != first_name else ""
 
     contact_slug = _slugify(f"{first_name} {last_name}")
-    contact_path_abs = vault_root / PEOPLE_DIR / f"{contact_slug}.md"
+    contact_path_abs = space_root / PEOPLE_DIR / f"{contact_slug}.md"
     if not contact_path_abs.exists():
         contact_path_abs.write_text(
             _render_owner_contact_init(
@@ -8349,7 +9107,7 @@ def _run_init_migration(
             encoding="utf-8",
         )
 
-    user_md = vault_root / SYSTEM_DIR / "user.md"
+    user_md = space_root / SYSTEM_DIR / "user.md"
     user_md.write_text(
         _render_user_md_init(
             first_name=first_name,
@@ -8358,72 +9116,183 @@ def _run_init_migration(
             owner_contact_slug=contact_slug,
             preferred_address=nickname,
             python_cmd=python_cmd,
+            purpose=purpose,
+            purpose_detail=purpose_detail,
         ),
         encoding="utf-8",
     )
 
-    (vault_root / ".claude" / "settings.json").write_text(
-        _render_settings_json(vault_root, python_cmd=python_cmd), encoding="utf-8"
+    (space_root / ".claude" / "settings.json").write_text(
+        _render_settings_json(space_root, python_cmd=python_cmd), encoding="utf-8"
     )
 
-    # The distribution repository's ignore rules go where only it reads them, and the history of the
-    # user's own material starts here, with the empty vault as its first state. Starting it now
-    # rather than at the first risky write means there is always something to compare against.
-    _write_dist_exclude(vault_root)
+    # The distribution repository's ignore rules go where only it reads them, the search rules go
+    # where every search tool reads them, and the history of the user's own material starts here,
+    # with the empty space as its first state. Starting it now rather than at the first risky write
+    # means there is always something to compare against.
+    _write_ignore_rules(space_root)
     if shutil.which("git") is not None:
         try:
-            _history_ensure(vault_root)
-            _git(vault_root, "add", "-A")
-            if _git(vault_root, "rev-parse", "HEAD", check=False).returncode != 0:
-                _git(vault_root, "commit", "-q", "-m", "the-vault-as-it-was-set-up")
+            _history_ensure(space_root)
+            _git(space_root, "add", "-A")
+            if _git(space_root, "rev-parse", "HEAD", check=False).returncode != 0:
+                _git(space_root, "commit", "-q", "-m", "the-space-as-it-was-set-up")
         except RuntimeError:
-            pass  # a vault without a history still works; the first snapshot starts one
+            pass  # a space without a history still works; the first snapshot starts one
 
-    _install_skill_symlinks(vault_root, _SKILL_SYMLINK_MAP)
+    _install_skill_symlinks(space_root, _SKILL_SYMLINK_MAP)
 
-    _install_agent_symlinks(vault_root, _AGENT_NAMES)
+    _install_agent_symlinks(space_root, _AGENT_NAMES)
 
-    settings_local = vault_root / ".claude" / "settings.local.json"
+    settings_local = space_root / ".claude" / "settings.local.json"
     if not settings_local.exists():
         settings_local.write_text(
-            _render_settings_local_json(vault_root, python_cmd=python_cmd), encoding="utf-8"
+            _render_settings_local_json(space_root, python_cmd=python_cmd), encoding="utf-8"
         )
 
-    (vault_root / MEMORY_DIR / "general.md").write_text(
+    (space_root / MEMORY_DIR / "general.md").write_text(
         _render_general_md(contact_slug), encoding="utf-8"
     )
-    (vault_root / MEMORY_DIR / "activity-log.md").write_text(
+    (space_root / MEMORY_DIR / "activity-log.md").write_text(
         _render_activity_log(), encoding="utf-8"
     )
     for agent in _MEMORY_AGENTS:
-        (vault_root / MEMORY_DIR / "agents" / agent / "lessons.md").write_text(
+        (space_root / MEMORY_DIR / "agents" / agent / "lessons.md").write_text(
             _render_agent_lessons(agent.capitalize()), encoding="utf-8"
         )
 
-    (vault_root / "INDEX.md").write_text(_render_master_index(first_name), encoding="utf-8")
+    (space_root / "INDEX.md").write_text(_render_master_index(first_name), encoding="utf-8")
 
-    (vault_root / LOGS_DIR / ".keep").touch()
+    # There from the first day rather than on the first task, so somebody who opens the folder sees
+    # where their own to-dos will be before anything has written one.
+    _ensure_tasks_file(space_root)
+
+    _create_starter_bundles(space_root, bundles=bundles, goals=goals, projects=projects)
+
+    (space_root / LOGS_DIR / ".keep").touch()
+
+
+def _parse_csv_list(value: str | None) -> tuple[str, ...]:
+    """A comma-separated CLI value into a tuple of trimmed, non-empty names."""
+    if not value:
+        return ()
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
+def _create_starter_bundles(space: Path, *, bundles: tuple[str, ...] = (),
+                            goals: tuple[str, ...] = (), projects: tuple[str, ...] = ()) -> list[str]:
+    """Create one empty bundle per named item, right after setup or a catch-up collected them.
+
+    Not one container bundle: a broad area (health, budget) and a personal goal without a fixed
+    end both go to `life`, a named project WITH an end goes to `workbench`, that area's own
+    definition. Reuses `cmd_create_bundle` so a starter bundle is built exactly like one made by
+    hand later, INDEX.md and activity log included, and a name that already exists is skipped
+    rather than failing the whole batch.
+    """
+    created: list[str] = []
+    for kind, titles in (("life", bundles), ("life", goals), ("workbench", projects)):
+        for title in titles:
+            slug = _slugify(title)
+            if (space / _kind_folder(kind) / slug).exists():
+                continue
+            rc = cmd_create_bundle(argparse.Namespace(space=str(space), kind=kind, slug=slug, title=title))
+            if rc == 0:
+                created.append(f"{_kind_folder(kind)}/{slug}")
+    return created
 
 
 def cmd_setup_init(args: argparse.Namespace) -> int:
-    vault = Path(args.vault_root).resolve()
-    if not vault.exists():
-        print(f"fail: vault root does not exist: {vault}", file=sys.stderr)
+    space = Path(args.space_root).resolve()
+    if not space.exists():
+        print(f"fail: space root does not exist: {space}", file=sys.stderr)
         return 1
-    user_md = vault / SYSTEM_DIR / "user.md"
+    user_md = space / SYSTEM_DIR / "user.md"
     if user_md.exists():
         print(f"already initialised: {user_md} exists. use 'setup update' to change schema.")
         return 0
     _run_init_migration(
-        vault,
+        space,
         first_name=args.first_name,
         last_name=args.last_name,
         language=args.language,
         email=args.email,
         preferred_address=args.preferred_address,
         python_cmd=args.python_cmd,
+        purpose=args.purpose or "",
+        purpose_detail=args.purpose_detail,
+        bundles=_parse_csv_list(args.bundles),
+        goals=_parse_csv_list(args.goals),
+        projects=_parse_csv_list(args.projects),
     )
-    print(f"ok: vault initialised at {vault}")
+    print(f"ok: space initialised at {space}")
+    return 0
+
+
+def _setup_schema_version(space: Path) -> int:
+    """The setup schema round this space has answered, 1 for a space with no such field."""
+    user_md = space / SYSTEM_DIR / "user.md"
+    if not user_md.exists():
+        return 1
+    try:
+        fm, _order, _body = _split_frontmatter(user_md.read_text(encoding="utf-8"))
+    except OSError:
+        return 1
+    raw = str(fm.get("setup_schema_version") or "").strip()
+    return int(raw) if raw.isdigit() else 1
+
+
+def cmd_setup_catchup(args: argparse.Namespace) -> int:
+    """Ask and record what a later setup version added, for a space that predates it.
+
+    Run once per version gap, from the greeting skill's gate, never for a space already current.
+    Only fields the user actually answers this time are written: `purpose`/`purpose_detail` are
+    set if still empty, never overwritten, because a value already there is the user's own answer
+    from setup, not a placeholder. The version stamp always advances to the running distribution's,
+    the whole point of running this at all.
+    """
+    space = Path(args.space_root).resolve()
+    user_md = space / SYSTEM_DIR / "user.md"
+    if not user_md.exists():
+        print(f"fail: {user_md} does not exist. Run 'setup init' first.", file=sys.stderr)
+        return 1
+
+    # The stamp is what ends the asking, so it may not be set in the same breath as the question.
+    # A run asked its block, called this straight afterwards and stopped for the answer; the answer
+    # never arrived, the stamp did, and the question was gone for good with nothing recorded. So a
+    # call carrying nothing at all is refused: either it brings answers, or it says the user
+    # declined. Both are claims the run makes, and a determined run can make either falsely; what
+    # this stops is the reflex, which is what actually happened.
+    hat_antwort = any([args.purpose, args.purpose_detail, args.bundles, args.goals, args.projects])
+    if not hat_antwort and not getattr(args, "declined", False):
+        print("fail: nothing to record. Ask the block first and call this with what the user "
+              "answered, or with --declined where they said not now. Calling it empty would stamp "
+              "the version and end the asking without a single answer.", file=sys.stderr)
+        return 1
+
+    fm, order, body = _split_frontmatter(user_md.read_text(encoding="utf-8"))
+    if args.purpose and not str(fm.get("purpose") or "").strip():
+        fm["purpose"] = args.purpose
+        if "purpose" not in order:
+            insert_at = order.index("owner_contact") + 1 if "owner_contact" in order else len(order)
+            order.insert(insert_at, "purpose")
+    if args.purpose_detail and not str(fm.get("purpose_detail") or "").strip():
+        fm["purpose_detail"] = args.purpose_detail
+        if "purpose_detail" not in order:
+            insert_at = order.index("purpose") + 1 if "purpose" in order else len(order)
+            order.insert(insert_at, "purpose_detail")
+    fm["setup_schema_version"] = CURRENT_SETUP_SCHEMA_VERSION
+    if "setup_schema_version" not in order:
+        order.append("setup_schema_version")
+    user_md.write_text(_render_frontmatter(fm, order) + body, encoding="utf-8")
+
+    created = _create_starter_bundles(
+        space,
+        bundles=_parse_csv_list(args.bundles),
+        goals=_parse_csv_list(args.goals),
+        projects=_parse_csv_list(args.projects),
+    )
+    print(f"ok: setup schema at {CURRENT_SETUP_SCHEMA_VERSION}"
+          + (f", created {', '.join(created)}" if created else ""))
     return 0
 
 
@@ -8467,8 +9336,8 @@ def _manifest_scalar(manifest_path: Path, key: str) -> str:
     return ""
 
 
-def _distribution_version(vault_or_tree: Path) -> str:
-    version_file = vault_or_tree / SYSTEM_MATERIAL_DIR / "VERSION"
+def _distribution_version(space_or_tree: Path) -> str:
+    version_file = space_or_tree / SYSTEM_MATERIAL_DIR / "VERSION"
     if not version_file.exists():
         return ""
     for line in version_file.read_text(encoding="utf-8").splitlines():
@@ -8477,10 +9346,10 @@ def _distribution_version(vault_or_tree: Path) -> str:
     return ""
 
 
-# --- One-off repairs to a vault that already exists -------------------------
+# --- One-off repairs to a space that already exists -------------------------
 #
 # The rules that keep the user's material out of the distribution repository. They used to live in a
-# `.gitignore` in the vault, and that was the problem: a file in the working tree is read by every
+# `.gitignore` in the space, and that was the problem: a file in the working tree is read by every
 # repository that shares the tree, and by every search tool. So the history repository inherited them
 # and left out exactly what it exists to keep, and a search across the user's own notes came back
 # empty. Here they reach only the repository they belong to.
@@ -8492,7 +9361,7 @@ def _distribution_version(vault_or_tree: Path) -> str:
 _DIST_EXCLUDE_OWN = (
     # Everything of the user's, at the root.
     *(f"/{d}/" for d in USER_ROOTS),
-    f"/{IMPORT_DIR}/",
+    f"/{INBOX_DIR}/",
     "/INDEX.md",
     # Inside the system folder, everything except the distribution itself.
     f"/{USER_FILE}",
@@ -8515,14 +9384,76 @@ _DIST_EXCLUDE = (
 )
 
 
-def _write_dist_exclude(vault: Path) -> bool:
+def _write_dist_exclude(space: Path) -> bool:
     """Put the distribution's ignore rules where only its own repository reads them."""
-    if not (vault / ".git").is_dir():
+    if not (space / ".git").is_dir():
         return False
-    info = vault / ".git" / "info"
+    info = space / ".git" / "info"
     info.mkdir(parents=True, exist_ok=True)
     (info / "exclude").write_text(_DIST_EXCLUDE, encoding="utf-8")
     return True
+
+
+# What a search of this space walks, and what it does not.
+#
+# Moving the rules above into the repository's own `info/exclude` kept them out of the second
+# repository. It did not keep them away from search, because a search tool reads that file too, and
+# every area of the user's is named in it. So a search of the user's own notes finds a fraction of
+# what is there, reports no error, and looks exactly like a search that worked. An empty result and
+# "does not exist" are the same sentence, which is how a confident written falsehood gets made.
+# Rule, skill and guard were stacked in front of search because of it, none of them touching the
+# cause.
+#
+# `.ignore` is read by search tools and by nothing else, and it is read ahead of the git rules, so a
+# line here overrides one there. Derived from the list above rather than typed out a second time,
+# because two hand-kept lists of the same folder names is how a rename ends up half applied.
+_NIE_DURCHSUCHEN = (HISTORY_DIR, TRASH_DIR, SCRATCH_DIR, RUNTIME_DIR)
+
+_SEARCH_IGNORE_OWN = (
+    # Everything the git rules take out comes back, except what a search should never wade through.
+    *(f"!{line}" for line in _DIST_EXCLUDE_OWN
+      if line.startswith("/") and line.strip("/") not in _NIE_DURCHSUCHEN),
+    # Out, whatever the git rules say. The snapshot repository holds every earlier version of every
+    # file, so a search of it answers with the past; the trash holds what was thrown away; the two
+    # generated indexes would answer every search with a copy of itself.
+    *(f"/{d}/" for d in _NIE_DURCHSUCHEN),
+    "/.git/",
+    f"/{MEMORY_DIR}/space-index.json",
+    f"/{MEMORY_DIR}/patterns.json",
+    # An editor's own database folder. Everything else in the space says these are the user's and
+    # that nothing of Zanmai's reads inside them; a search that walked in anyway would break that
+    # promise at the one moment it is most visible, when the results come back.
+    "*.base/",
+    "__pycache__/",
+    "*.pyc",
+)
+
+_SEARCH_IGNORE = (
+    "# What a search of this space walks. Written by zanmai.py, edits here are overwritten.\n"
+    "# Rules of your own belong in `.rgignore`, which every search tool reads ahead of this file.\n"
+    "#\n"
+    "# git keeps your own material out of the distribution repository, and a search tool reads\n"
+    "# those rules too. Without the lines below, a search of your own notes finds nothing and\n"
+    "# looks exactly like a search that worked.\n"
+    + "".join(f"{line}\n" for line in _SEARCH_IGNORE_OWN)
+)
+
+
+def _write_search_ignore(space: Path) -> None:
+    """Put the search rules where every search tool reads them, ahead of the git rules."""
+    (space / ".ignore").write_text(_SEARCH_IGNORE, encoding="utf-8")
+
+
+def _write_ignore_rules(space: Path) -> None:
+    """Both ignore files, written from the same constants.
+
+    Idempotent and cheap, so it runs on every session start rather than once at install. The one in
+    a live space was written when the areas had different names and still carried them a month
+    later: a list written once and never again is a list that goes wrong quietly, and this one
+    decides whether the user's material stays out of a commit and whether a search can see it.
+    """
+    _write_dist_exclude(space)
+    _write_search_ignore(space)
 
 
 # How long the machine keeps what it put aside.
@@ -8534,7 +9465,7 @@ def _write_dist_exclude(vault: Path) -> bool:
 # One number for all three was the earlier design, and it was wrong for a reason worth writing down:
 # it read the three folders as one kind of leaving. Snapshots were then left out of the sweep
 # altogether, on the argument that content-addressed storage makes age irrelevant. It does not. A
-# changed video or deck is stored again in full, and one live vault reached 2.6 GB in twenty-five
+# changed video or deck is stored again in full, and one live space reached 2.6 GB in twenty-five
 # snapshots that way, nearly all of it the user's own binaries carried a second time.
 # Three leavings, three clocks. The trash holds what the user threw away, so it waits a month for
 # them to change their mind. The other two are the machine's own: a scratch folder outlives its job
@@ -8544,6 +9475,12 @@ TRASH_RETENTION_DAYS = 30
 SCRATCH_RETENTION_DAYS = 7
 SNAPSHOT_RETENTION_DAYS = 7
 
+# How long a bundle may stand empty before the structure check names it. Long enough that a
+# starting structure laid out at setup, or a matter mapped out before anything is filed into it,
+# is not reported as a fault on the day it was made; short enough that a place nobody ever used
+# still surfaces.
+EMPTY_BUNDLE_GRACE_DAYS = 30
+
 def _lesbare_groesse(bytes_gesamt: float) -> str:
     for einheit in ("B", "KB", "MB", "GB"):
         if bytes_gesamt < 1024 or einheit == "GB":
@@ -8552,13 +9489,13 @@ def _lesbare_groesse(bytes_gesamt: float) -> str:
     return "0 B"
 
 
-def _trash_days_past_retention(vault: Path) -> list[Path]:
+def _trash_days_past_retention(space: Path) -> list[Path]:
     """Whole days in the trash that are past the keeping time.
 
     The date is read off the folder name, never off a file timestamp: the timestamp says when
     something was last edited, which has nothing to do with when it was discarded.
     """
-    root = vault / TRASH_DIR
+    root = space / TRASH_DIR
     if not root.is_dir():
         return []
     grenze = datetime.now() - timedelta(days=TRASH_RETENTION_DAYS)
@@ -8580,7 +9517,7 @@ def _past_retention(root: Path, days: int) -> list[Path]:
                   if not p.name.startswith(".") and p.stat().st_mtime < grenze)
 
 
-def _sweep_retention(vault: Path) -> list[str]:
+def _sweep_retention(space: Path) -> list[str]:
     """Clear what is past its keeping time, and say what went. One rule, two folders, no question.
 
     This is the only place in Zanmai that deletes, and it can only ever reach material the machine
@@ -8590,7 +9527,7 @@ def _sweep_retention(vault: Path) -> list[str]:
     """
     notes: list[str] = []
 
-    weg = _trash_days_past_retention(vault)
+    weg = _trash_days_past_retention(space)
     if weg:
         dateien = sum(1 for tag in weg for f in tag.rglob("*") if f.is_file())
         groesse = _lesbare_groesse(sum(f.stat().st_size for tag in weg
@@ -8600,7 +9537,7 @@ def _sweep_retention(vault: Path) -> list[str]:
         notes.append(f"emptied {dateien} file(s) from {TRASH_DIR}/, thrown away more than "
                      f"{TRASH_RETENTION_DAYS} days ago ({groesse}).")
 
-    liegen = _past_retention(vault / SCRATCH_DIR, SCRATCH_RETENTION_DAYS)
+    liegen = _past_retention(space / SCRATCH_DIR, SCRATCH_RETENTION_DAYS)
     if liegen:
         for p in liegen:
             shutil.rmtree(p) if p.is_dir() else p.unlink()
@@ -8609,10 +9546,10 @@ def _sweep_retention(vault: Path) -> list[str]:
                      f"that long, so each of those is a run that never finished tidying up after "
                      f"itself.")
 
-    notes.extend(_sweep_snapshots(vault))
+    notes.extend(_sweep_snapshots(space))
 
     if notes:
-        _append_activity_log(vault, "zanmai.py", "retention sweep: " + " ".join(notes))
+        _append_activity_log(space, "zanmai.py", "retention sweep: " + " ".join(notes))
     return notes
 
 
@@ -8625,11 +9562,11 @@ def cmd_gaps(args: argparse.Namespace) -> int:
     of entries can sit there, including one saying the expert cannot send messages at all, and
     reach the workshop only where a person happens to relay one.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     grenze = datetime.now() - timedelta(hours=args.hours)
-    dateien = sorted((vault / LOGS_DIR).glob("*/*/builder-gaps.md"))
+    dateien = sorted((space / LOGS_DIR).glob("*/*/builder-gaps.md"))
     if not dateien:
-        print(f"no {LOGS_DIR}/<year>/<month>/builder-gaps.md in this vault")
+        print(f"no {LOGS_DIR}/<year>/<month>/builder-gaps.md in this space")
         return 0
     gefunden = 0
     for datei in dateien:
@@ -8665,16 +9602,70 @@ def cmd_gaps(args: argparse.Namespace) -> int:
     return 0
 
 
+def _area_shape(space: Path, ab: int = 2) -> list[str]:
+    """One line per area: how many bundles sit at its top, and what they are called.
+
+    No vocabulary and no guessing. Whether four folders are four pieces of one matter is a
+    judgement about somebody's life, not a string comparison: a list of words would catch travel in
+    two languages and miss cars, doctors, customers and everything else. What a machine can do is
+    put the names side by side, which is the one thing nobody does while filing one folder at a
+    time. The reading is left to whoever is looking at them.
+
+    Every area, never one. The same matter often already has a home elsewhere: research about
+    travel sits in knowledge while four trips sit in life, and neither list on its own shows that.
+    """
+    raus: list[str] = []
+    for bereich in (LIFE_DIR, WORKBENCH_DIR, KNOWLEDGE_DIR, ARCHIVE_DIR):
+        wurzel = space / bereich
+        if not wurzel.is_dir():
+            continue
+        namen = sorted(p.name for p in wurzel.iterdir() if p.is_dir() and not p.name.startswith("."))
+        if len(namen) < ab:
+            continue
+        raus.append(f"{bereich}/ holds {len(namen)} bundle{'' if len(namen) == 1 else 's'}: "
+                    f"{', '.join(namen)}")
+    return raus
+
+
 def cmd_housekeeping(args: argparse.Namespace) -> int:
-    """Run the retention sweep by hand. It also runs itself at every session start."""
-    vault = Path(args.vault).resolve()
-    notes = _sweep_retention(vault)
-    if not notes:
+    """Sweep what is past its keeping time, then say what has drifted out of shape.
+
+    Two different things, and the second is the reason this command is worth running by hand. The
+    sweep is mechanical and needs nobody. What it cannot see is that the space slowly grew a shape
+    nobody chose: one bundle per trip instead of one for travel, a bundle holding nothing but its
+    own page. Neither is wrong on the day it happens, both are wrong after the fourth time, and
+    nothing notices because every single step looked right.
+
+    It reports and moves nothing. Where material goes is the user's decision.
+    """
+    space = Path(args.space).resolve()
+    notes = _sweep_retention(space)
+    if notes:
+        for n in notes:
+            print(f"ok: {n}")
+    else:
         print(f"ok: nothing is past its keeping time ({TRASH_RETENTION_DAYS} days in the trash, "
               f"{SCRATCH_RETENTION_DAYS} for scratch space and snapshots)")
-        return 0
-    for n in notes:
-        print(f"ok: {n}")
+
+    duenn = [f"{b} holds nothing but its own page, so it is a single item that was given a folder"
+             for b in _bundles_without_material(space)]
+    if duenn:
+        print()
+        print("Worth a look, nothing was moved:")
+        for b in duenn:
+            print(f"  {b}")
+
+    form = _area_shape(space)
+    if form:
+        print()
+        print("The bundles at the top of every area, side by side. Read them across the areas, not "
+              "one at a time: several bundles that are pieces of one matter, or a matter that "
+              "already has a home in another area while pieces of it sit here. Say what you see "
+              "and propose it; move nothing.")
+        for zeile in form:
+            print(f"  {zeile}")
+    if not duenn and not form:
+        print("ok: the shape of the space is in order")
     return 0
 
 
@@ -8688,7 +9679,7 @@ def _version_tuple(version: str) -> tuple[int, ...]:
 
 
 def _is_newer(candidate: str, current: str) -> bool:
-    """True only when candidate is ahead, so a vault is never offered a downgrade."""
+    """True only when candidate is ahead, so a space is never offered a downgrade."""
     if not candidate:
         return False
     if not current:
@@ -8697,7 +9688,7 @@ def _is_newer(candidate: str, current: str) -> bool:
 
 
 def _fetch(url: str, timeout: int = 60) -> bytes:
-    """Plain HTTPS GET. Stdlib only, so a vault needs no extra tooling to update."""
+    """Plain HTTPS GET. Stdlib only, so a space needs no extra tooling to update."""
     import urllib.request
 
     request = urllib.request.Request(url, headers={"User-Agent": "Zanmai-update"})
@@ -8723,35 +9714,35 @@ def _unpack_release(archive: bytes, into: Path) -> Path:
     return into
 
 
-def _clone_remote(vault: Path) -> str:
-    """The configured origin if this vault is a working clone, else empty."""
+def _clone_remote(space: Path) -> str:
+    """The configured origin if this space is a working clone, else empty."""
     import subprocess
 
-    if not (vault / ".git").exists():
+    if not (space / ".git").exists():
         return ""
     try:
-        remotes = subprocess.run(["git", "-C", str(vault), "remote"],
+        remotes = subprocess.run(["git", "-C", str(space), "remote"],
                                  capture_output=True, text=True, timeout=20)
         if "origin" not in remotes.stdout.split():
             return ""
-        url = subprocess.run(["git", "-C", str(vault), "remote", "get-url", "origin"],
+        url = subprocess.run(["git", "-C", str(space), "remote", "get-url", "origin"],
                              capture_output=True, text=True, timeout=20)
         return url.stdout.strip()
     except Exception:  # noqa: BLE001
         return ""
 
 
-def _remote_version_via_git(vault: Path, branch: str) -> str:
+def _remote_version_via_git(space: Path, branch: str) -> str:
     """The version the clone's own origin offers.
 
     A clone must be measured against the remote it came from, not against an
-    address in the manifest, or a vault cloned from a fork could never update.
+    address in the manifest, or a space cloned from a fork could never update.
     Fetch only moves refs, the working tree is untouched.
     """
     import subprocess
 
     def run(*cmd: str):
-        return subprocess.run(["git", "-C", str(vault), *cmd],
+        return subprocess.run(["git", "-C", str(space), *cmd],
                               capture_output=True, text=True, timeout=120)
 
     if run("fetch", "origin").returncode != 0:
@@ -8765,7 +9756,7 @@ def _remote_version_via_git(vault: Path, branch: str) -> str:
     return ""
 
 
-def _remote_changelog_via_git(vault: Path, branch: str) -> str:
+def _remote_changelog_via_git(space: Path, branch: str) -> str:
     """The origin's CHANGELOG.md, unapplied.
 
     A preview built before Apply (Pepper's Update workflow step 2, before step
@@ -8777,14 +9768,14 @@ def _remote_changelog_via_git(vault: Path, branch: str) -> str:
     import subprocess
 
     shown = subprocess.run(
-        ["git", "-C", str(vault), "show", f"origin/{branch}:{SYSTEM_MATERIAL_DIR}/CHANGELOG.md"],
+        ["git", "-C", str(space), "show", f"origin/{branch}:{SYSTEM_MATERIAL_DIR}/CHANGELOG.md"],
         capture_output=True, text=True, timeout=120,
     )
     return shown.stdout if shown.returncode == 0 else ""
 
 
 def _remote_changelog_via_https(source: str, branch: str) -> str:
-    """The origin's CHANGELOG.md for a non-clone vault, fetched over HTTPS, unapplied."""
+    """The origin's CHANGELOG.md for a non-clone space, fetched over HTTPS, unapplied."""
     try:
         raw = _fetch(
             f"https://raw.githubusercontent.com/{source.strip('/')}/{branch}/{SYSTEM_MATERIAL_DIR}/CHANGELOG.md"
@@ -8794,8 +9785,8 @@ def _remote_changelog_via_https(source: str, branch: str) -> str:
         return ""
 
 
-def _upgrade_via_git(vault: Path, branch: str) -> tuple[bool, str]:
-    """Fast-forward a cloned vault, so it stays a clean clone.
+def _upgrade_via_git(space: Path, branch: str) -> tuple[bool, str]:
+    """Fast-forward a cloned space, so it stays a clean clone.
 
     Copying files into a clone would leave it looking locally modified and a
     later `git pull` by hand would refuse, so a clone is upgraded through git.
@@ -8803,12 +9794,12 @@ def _upgrade_via_git(vault: Path, branch: str) -> tuple[bool, str]:
     import subprocess
 
     def run(*cmd: str):
-        return subprocess.run(["git", "-C", str(vault), *cmd],
+        return subprocess.run(["git", "-C", str(space), *cmd],
                               capture_output=True, text=True, timeout=180)
 
     dirty = run("status", "--porcelain", "--untracked-files=no").stdout.strip()
     if dirty:
-        return False, ("the vault has local edits to distribution files, so a clean "
+        return False, ("the space has local edits to distribution files, so a clean "
                        "fast-forward is not possible; review them first")
     fetched = run("fetch", "origin")
     if fetched.returncode != 0:
@@ -8819,17 +9810,17 @@ def _upgrade_via_git(vault: Path, branch: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _checkout_version_via_git(vault: Path, version: str) -> tuple[bool, str]:
+def _checkout_version_via_git(space: Path, version: str) -> tuple[bool, str]:
     """Put a clone's distribution files on a published tag, in either direction.
 
     The branch is left where it is and only the distribution paths are checked out, so `git status`
-    afterwards says the truth: this vault is not on its branch's head any more. A `reset --hard`
+    afterwards says the truth: this space is not on its branch's head any more. A `reset --hard`
     would hide that, and hiding it is how somebody later wonders why a pull brings nothing.
     """
     import subprocess
 
     def run(*cmd: str):
-        return subprocess.run(["git", "-C", str(vault), *cmd],
+        return subprocess.run(["git", "-C", str(space), *cmd],
                               capture_output=True, text=True, timeout=180)
 
     if run("fetch", "--tags", "origin").returncode != 0:
@@ -8843,7 +9834,7 @@ def _checkout_version_via_git(vault: Path, version: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _refresh_host_config(vault: Path, quiet: bool = False) -> None:
+def _refresh_host_config(space: Path, quiet: bool = False) -> None:
     """Re-run the host-side refresh so adapters and settings match the new files.
 
     **In a separate process, and that is the whole point.** This runs right after
@@ -8859,13 +9850,13 @@ def _refresh_host_config(vault: Path, quiet: bool = False) -> None:
     Quiet when called from a hook, whose stdout is the session briefing and must
     not carry mechanical progress lines.
     """
-    script = vault / SYSTEM_MATERIAL_DIR / "scripts" / "zanmai.py"
+    script = space / SYSTEM_MATERIAL_DIR / "scripts" / "zanmai.py"
     if not script.is_file():
         print(f"warning: cannot refresh host config, no script at {script}", file=sys.stderr)
         return
     try:
         result = subprocess.run(
-            [sys.executable, str(script), "setup", "update", str(vault)],
+            [sys.executable, str(script), "setup", "update", str(space)],
             capture_output=True, text=True,
         )
     except OSError as exc:
@@ -8880,13 +9871,13 @@ def _refresh_host_config(vault: Path, quiet: bool = False) -> None:
         print(result.stdout.strip())
 
 
-def _record_host_config_version(vault: Path, version: str) -> None:
+def _record_host_config_version(space: Path, version: str) -> None:
     """Remember which distribution version the host config was built for.
 
     Machine-local on purpose: the session-start check uses it to notice a
     version that arrived some other way, for example a manual `git pull`.
     """
-    marker = vault / RUNTIME_DIR / "host-config-version"
+    marker = space / RUNTIME_DIR / "host-config-version"
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(version + "\n", encoding="utf-8")
@@ -8894,7 +9885,30 @@ def _record_host_config_version(vault: Path, version: str) -> None:
         pass
 
 
-def _quiet_update_probe(vault: Path) -> str:
+def _update_check_allowed(space: Path) -> bool:
+    """May this space ask the outside whether a newer version exists?
+
+    Two places say no, and either one is enough. `zanmai/user.md` is the user's own file and no
+    update touches it, so a decision written there survives; the manifest is where the shipped
+    documentation has always pointed, and a copy handed on to somebody else carries it. Both spell
+    it the same way, `update_check: false`.
+
+    Default is on. Absent means nobody has decided, and the daily question is the whole reason a
+    space ever hears that a fix exists.
+    """
+    def aus(text: str) -> bool:
+        return re.search(r"^\s*update_check:\s*(?:\"|')?false(?:\"|')?\s*$", text, re.M) is not None
+
+    for datei in (space / SYSTEM_DIR / "user.md", space / SYSTEM_MATERIAL_DIR / "manifest.yaml"):
+        try:
+            if aus(datei.read_text(encoding="utf-8")):
+                return False
+        except OSError:
+            continue
+    return True
+
+
+def _quiet_update_probe(space: Path) -> str:
     """Ask the update source for its version at most once a day, briefly.
 
     The session-start hook runs again on every resume and every compaction, so
@@ -8907,8 +9921,15 @@ def _quiet_update_probe(vault: Path) -> str:
     swallowed, and the last answer kept so a session without network still knows
     what the previous one found. Returns the newer version when there is one,
     otherwise an empty string.
+
+    Switched off entirely where the user says so, and that is checked before anything reaches the
+    network. The switch was documented in two shipped files for months while no code read it, so a
+    space set to stay off the network asked anyway, every day, and the only person who could have
+    noticed was the one who had been told it was off.
     """
-    cache = vault / RUNTIME_DIR / "update-check.json"
+    if not _update_check_allowed(space):
+        return ""
+    cache = space / RUNTIME_DIR / "update-check.json"
     now = datetime.now(timezone.utc)
 
     state: dict = {}
@@ -8922,14 +9943,14 @@ def _quiet_update_probe(vault: Path) -> str:
             age = now - datetime.fromisoformat(checked)
             if age < timedelta(hours=24):
                 known = str(state.get("available", ""))
-                return known if _is_newer(known, _distribution_version(vault)) else ""
+                return known if _is_newer(known, _distribution_version(space)) else ""
         except ValueError:
             pass
 
-    manifest = vault / SYSTEM_MATERIAL_DIR / "manifest.yaml"
+    manifest = space / SYSTEM_MATERIAL_DIR / "manifest.yaml"
     source = _manifest_scalar(manifest, "update_source") if manifest.exists() else ""
     default_branch = _manifest_scalar(manifest, "update_branch") or "main" if manifest.exists() else "main"
-    branch = _update_channel(vault) or default_branch
+    branch = _update_channel(space) or default_branch
     available = ""
     if source:
         try:
@@ -8942,14 +9963,14 @@ def _quiet_update_probe(vault: Path) -> str:
                 if line.startswith("distribution_version:"):
                     remote = line.split(":", 1)[1].strip().strip('"')
                     break
-            if _is_newer(remote, _distribution_version(vault)):
+            if _is_newer(remote, _distribution_version(space)):
                 available = remote
         except Exception:  # noqa: BLE001
             # no network: keep whatever the last successful probe found
             try:
                 state = json.loads(cache.read_text(encoding="utf-8"))
                 previous = state.get("available", "")
-                available = previous if _is_newer(previous, _distribution_version(vault)) else ""
+                available = previous if _is_newer(previous, _distribution_version(space)) else ""
             except (json.JSONDecodeError, ValueError, OSError):
                 available = ""
 
@@ -8962,12 +9983,12 @@ def _quiet_update_probe(vault: Path) -> str:
     return available
 
 
-def _unattended_log_to_report(vault: Path) -> Path | None:
+def _unattended_log_to_report(space: Path) -> Path | None:
     """The last session's log, when nobody was in the chat for it and it has not been
     named yet. Derived from the log the run itself wrote, so there is no second marker to
     keep in step, and remembered by name so a resume or a compaction does not say it twice.
     """
-    logs_dir = vault / LOGS_DIR
+    logs_dir = space / LOGS_DIR
     logs = sorted(logs_dir.rglob("*.md"), key=lambda p: p.name) if logs_dir.is_dir() else []
     if not logs:
         return None
@@ -8978,7 +9999,7 @@ def _unattended_log_to_report(vault: Path) -> Path | None:
         return None
     if "session_type: unattended" not in head:
         return None
-    state_file = vault / RUNTIME_DIR / "session-state.json"
+    state_file = space / RUNTIME_DIR / "session-state.json"
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, ValueError, OSError):
@@ -8994,10 +10015,10 @@ def _unattended_log_to_report(vault: Path) -> Path | None:
     return newest
 
 
-def _update_offer_due(vault: Path) -> bool:
+def _update_offer_due(space: Path) -> bool:
     """True once a day. Mentioning an available version is worth one line a day, not one
     per hook run, and the hook runs again on every resume and compaction."""
-    cache = vault / RUNTIME_DIR / "update-check.json"
+    cache = space / RUNTIME_DIR / "update-check.json"
     today = _today()
     try:
         state = json.loads(cache.read_text(encoding="utf-8"))
@@ -9014,7 +10035,69 @@ def _update_offer_due(vault: Path) -> bool:
     return True
 
 
-def _hand_off_to_new_script(vault: Path, from_version: str, to_version: str, *,
+def _housekeeping_due(space: Path) -> bool:
+    """True once a week: has the shape report (thin bundles, area layout) not been surfaced
+    in the last seven days, or never.
+
+    Modelled on `_update_offer_due`, the same reason applies: the hook runs again on every
+    resume and every compaction, so "once per session" is really several times an hour. The
+    retention sweep runs every time regardless, because it is cheap and self-contained; the
+    shape report is a paragraph the user has to read, so it earns one slot a week rather than
+    one per hook run. Marks itself due immediately on a fresh space, so a week-old space that
+    was never checked still gets a first look rather than waiting out the window.
+    """
+    cache = space / RUNTIME_DIR / "housekeeping-check.json"
+    now = datetime.now(timezone.utc)
+    try:
+        state = json.loads(cache.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError, OSError):
+        state = {}
+    checked = str(state.get("checked", ""))
+    if checked:
+        try:
+            if now - datetime.fromisoformat(checked) < timedelta(days=7):
+                return False
+        except ValueError:
+            pass
+    state["checked"] = now.isoformat(timespec="seconds")
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+    return True
+
+
+def _record_update_history(space: Path, from_version: str, to_version: str, result: str) -> None:
+    """One line per applied update, written by the script that applied it.
+
+    It used to be written by the specialist who ran the update, which means it exists only when
+    the update went through that specialist. Every other route left no trace at all: no line, no
+    origin, and afterwards no way to tell from inside the space what had arrived or where from.
+    A trail that depends on who did the work is not a trail, so the step that knows the versions
+    writes it.
+
+    The file is user-immune, so it survives the update it describes; a missing one is created
+    rather than treated as an error, because a space that never updated has nothing to carry
+    forward.
+    """
+    datei = space / SYSTEM_DIR / "update-history.md"
+    try:
+        if not datei.is_file():
+            datei.parent.mkdir(parents=True, exist_ok=True)
+            datei.write_text("# Update history\n\nAudit trail of update, restore and delete "
+                             "operations.\n\n| Date | Operation | From | To | Result |\n"
+                             "|------|-----------|------|-----|--------|\n", encoding="utf-8")
+        zeitpunkt = datetime.now().strftime("%Y-%m-%d %H:%M")
+        with datei.open("a", encoding="utf-8") as f:
+            f.write(f"| {zeitpunkt} | update | {from_version or '?'} | {to_version or '?'} | "
+                    f"{result} |\n")
+    except OSError:
+        # An update that worked is not undone by a line that could not be written.
+        pass
+
+
+def _hand_off_to_new_script(space: Path, from_version: str, to_version: str, *,
                             origin: str = "", replaced: int | None = None,
                             withdrawn: int | None = None) -> int:
     """Everything after the file replacement runs in the new script, not this one.
@@ -9028,12 +10111,12 @@ def _hand_off_to_new_script(vault: Path, from_version: str, to_version: str, *,
     the verification, the version marker and even the success message belong to the
     new side of it.
     """
-    script = vault / SYSTEM_MATERIAL_DIR / "scripts" / "zanmai.py"
+    script = space / SYSTEM_MATERIAL_DIR / "scripts" / "zanmai.py"
     if not script.is_file():
         print(f"error: the new version left no script at {script}, nothing was verified. "
               "Run 'setup update' and 'setup validate' by hand.", file=sys.stderr)
         return 1
-    cmd = [sys.executable, str(script), "setup", "post-upgrade", str(vault),
+    cmd = [sys.executable, str(script), "setup", "post-upgrade", str(space),
            "--from", from_version, "--to", to_version]
     if origin:
         cmd += ["--origin", origin]
@@ -9041,6 +10124,14 @@ def _hand_off_to_new_script(vault: Path, from_version: str, to_version: str, *,
         cmd += ["--replaced", str(replaced)]
     if withdrawn is not None:
         cmd += ["--withdrawn", str(withdrawn)]
+    # Everything this side printed goes out before the new script starts writing. Without the flush
+    # the two streams interleave by buffer rather than by time, and the run reads as if the files
+    # were replaced before the snapshot was taken. Seen exactly that way in a live update: "updated
+    # to 0.6.0, 196 files replaced" stood three lines above "snapshot ok". The snapshot was there
+    # and was first; the output said otherwise, and for the one operation whose whole promise is
+    # "the copy exists before anything is overwritten", the order on screen is the promise.
+    sys.stdout.flush()
+    sys.stderr.flush()
     try:
         return subprocess.run(cmd).returncode
     except OSError as exc:
@@ -9063,15 +10154,15 @@ def cmd_setup_post_upgrade(args: argparse.Namespace) -> int:
     means "the host config was verified at this version" cannot do that; one that
     means "an upgrade to this version was attempted" can.
     """
-    vault = Path(args.vault_root).resolve()
-    to_version = args.to_version or _distribution_version(vault)
+    space = Path(args.space_root).resolve()
+    to_version = args.to_version or _distribution_version(space)
 
     # A refresh that cannot write, an unreadable permission, a full disk: whatever it
     # is, it must come out as a sentence and leave the marker alone. A traceback here
     # would end the upgrade in the one state this whole command exists to prevent,
     # unexplained and half-applied.
     try:
-        refreshed = cmd_setup_update(argparse.Namespace(vault_root=str(vault)))
+        refreshed = cmd_setup_update(argparse.Namespace(space_root=str(space)))
     except OSError as exc:
         print(f"error: the new files are in place but the host refresh could not write ({exc})",
               file=sys.stderr)
@@ -9082,7 +10173,7 @@ def cmd_setup_post_upgrade(args: argparse.Namespace) -> int:
               "repairs it. Run 'setup update' by hand to do it now.", file=sys.stderr)
         return 1
 
-    problems = _verify_host_config(vault)
+    problems = _verify_host_config(space)
     if problems:
         print("error: the new files are in place but the host config is incomplete:", file=sys.stderr)
         for problem in problems:
@@ -9091,7 +10182,9 @@ def cmd_setup_post_upgrade(args: argparse.Namespace) -> int:
               "next session repairs this instead of considering it done", file=sys.stderr)
         return 1
 
-    _record_host_config_version(vault, to_version)
+    _record_host_config_version(space, to_version)
+    _record_update_history(space, args.from_version, to_version,
+                           f"ok, from {args.origin}" if args.origin else "ok")
 
     detail = ""
     if args.replaced is not None:
@@ -9104,14 +10197,14 @@ def cmd_setup_post_upgrade(args: argparse.Namespace) -> int:
     return 0
 
 
-def _update_channel(vault: Path) -> str:
+def _update_channel(space: Path) -> str:
     """The branch `zanmai/user.md` names to track, or "" for the manifest's default.
 
     Update-immune by construction: `user.md` is never touched by an update, so a
     channel choice survives the very upgrades it steers. "release" and "" both
     mean "no override, follow the manifest's `update_branch`" (currently `main`).
     """
-    user_md = vault / SYSTEM_DIR / "user.md"
+    user_md = space / SYSTEM_DIR / "user.md"
     if not user_md.exists():
         return ""
     try:
@@ -9122,9 +10215,9 @@ def _update_channel(vault: Path) -> str:
     return "" if channel in ("", "release") else channel
 
 
-def _set_update_channel(vault: Path, channel: str) -> None:
+def _set_update_channel(space: Path, channel: str) -> None:
     """Persist the channel choice to `zanmai/user.md`. "release" clears the override."""
-    user_md = vault / SYSTEM_DIR / "user.md"
+    user_md = space / SYSTEM_DIR / "user.md"
     if not user_md.exists():
         return
     text = user_md.read_text(encoding="utf-8")
@@ -9137,37 +10230,176 @@ def _set_update_channel(vault: Path, channel: str) -> None:
     user_md.write_text(_render_frontmatter(fm, order) + body, encoding="utf-8")
 
 
+def _apply_distribution_tree(space: Path, tree: Path, manifest: Path) -> tuple[int, int] | None:
+    """Copy an unpacked distribution tree over this space's distribution files.
+
+    Shared by both routes that arrive with a tree: the published archive over HTTPS and a source
+    named by hand. One function rather than two copies, because the containment check below is the
+    part that must not drift. The paths come out of a manifest that just arrived from somewhere
+    else, so they are input and not fact, and a single `../` would write outside the space.
+
+    Returns (written, removed), or None when nothing was applied; the reason is printed.
+    """
+    import shutil
+
+    new_manifest = tree / SYSTEM_MATERIAL_DIR / "manifest.yaml"
+    if not new_manifest.exists():
+        print("error: the new version has no manifest, nothing applied", file=sys.stderr)
+        return None
+
+    new_paths = _manifest_distribution_paths(new_manifest)
+    old_paths = _manifest_distribution_paths(manifest)
+
+    # Resolve BOTH sides: resolving only the candidate refuses every update on macOS, where the
+    # temporary directory is itself a symlink. A guard that then blocks every legitimate update has
+    # not made anything safer, it has traded one failure for a worse one.
+    space_real = space.resolve()
+
+    def contained(rel: str) -> Path | None:
+        if rel.startswith(("/", "\\\\")) or re.match(r"^[A-Za-z]:", rel):
+            return None
+        candidate = (space_real / rel).resolve()
+        if candidate == space_real or space_real not in candidate.parents:
+            return None
+        return candidate
+
+    refused = [rel for rel in set(new_paths) | set(old_paths) if contained(rel) is None]
+    if refused:
+        print("error: the manifest lists paths outside the space, nothing applied:",
+              file=sys.stderr)
+        for rel in sorted(refused)[:10]:
+            print(f"  {rel}", file=sys.stderr)
+        return None
+
+    written = 0
+    for rel in new_paths:
+        src = tree / rel
+        if not src.is_file():
+            continue
+        dst = contained(rel)
+        if dst is None:
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        written += 1
+
+    # files the previous version shipped and this one no longer does
+    removed = 0
+    for rel in old_paths:
+        if rel in new_paths:
+            continue
+        stale = contained(rel)
+        if stale is not None and stale.is_file():
+            stale.unlink()
+            removed += 1
+    return written, removed
+
+
+def _upgrade_from_named_source(space: Path, manifest: Path, source: str, *,
+                               check_only: bool = False) -> int:
+    """Update from a folder, an archive or a URL the caller names, instead of from the release.
+
+    Two cases need this and neither is ordinary: a version that is not published yet has to be
+    tried in a working space before it goes out, and a fix sometimes has to arrive before there is
+    a release to carry it. Both used to end in files copied in by hand, which proves the copy
+    worked and nothing about the update.
+
+    A named source is a decision, so a snapshot is taken every time, without asking whether the
+    version on the other side is newer. It is the one route where the version carries no promise.
+    """
+    import tempfile
+
+    local = _distribution_version(space)
+    with tempfile.TemporaryDirectory() as work:
+        work_path = Path(work)
+        given = Path(source).expanduser()
+        if source.startswith(("http://", "https://")):
+            try:
+                archive = _fetch(source, timeout=180)
+            except Exception as exc:  # noqa: BLE001
+                print(f"error: could not download from {source} ({exc})", file=sys.stderr)
+                return 1
+            tree = _unpack_release(archive, work_path)
+        elif given.is_dir():
+            tree = given.resolve()
+        elif given.is_file():
+            try:
+                tree = _unpack_release(given.read_bytes(), work_path)
+            except Exception as exc:  # noqa: BLE001
+                print(f"error: could not unpack {given} ({exc})", file=sys.stderr)
+                return 1
+        else:
+            print(f"error: no such source: {source}", file=sys.stderr)
+            return 1
+
+        remote = _distribution_version(tree)
+        if not remote:
+            print(f"error: {source} carries no {SYSTEM_MATERIAL_DIR}/VERSION, nothing applied",
+                  file=sys.stderr)
+            return 1
+
+        print(f"going to {local} -> {remote} (from {source})")
+        # A named source can be read without being applied, so `--check` answers here the way it
+        # answers for the release. Refusing it turned the ordinary first step of the update
+        # workflow into a special case, and a workflow with a hole in step one gets improvised.
+        if check_only:
+            return 0
+        snap = argparse.Namespace(space=str(space), reason=f"before going to {remote} from {source}",
+                                  agent="zanmai.py")
+        try:
+            cmd_snapshot_create(snap)
+        except Exception as fehler:  # noqa: BLE001
+            print(f"error: no snapshot could be taken ({fehler}), so nothing was changed.",
+                  file=sys.stderr)
+            return 1
+
+        applied = _apply_distribution_tree(space, tree, manifest)
+
+    if applied is None:
+        return 1
+    written, removed = applied
+    return _hand_off_to_new_script(space, local, remote, origin=source,
+                                   replaced=written, withdrawn=removed)
+
+
 def cmd_setup_upgrade(args: argparse.Namespace) -> int:
     """Replace the distribution files with the newest published version.
 
-    Deliberately independent of how the vault arrived: an unpacked archive
+    Deliberately independent of how the space arrived: an unpacked archive
     updates exactly like a clone. A clone is fast-forwarded through git so it
     stays a clean clone; anything else has the new files fetched over HTTPS.
     Only paths the manifest calls distribution are touched.
     """
-    vault = Path(args.vault_root).resolve()
-    manifest = vault / SYSTEM_MATERIAL_DIR / "manifest.yaml"
+    space = Path(args.space_root).resolve()
+    manifest = space / SYSTEM_MATERIAL_DIR / "manifest.yaml"
     if not manifest.exists():
-        print(f"error: no Zanmai system folder at {vault}", file=sys.stderr)
+        print(f"error: no Zanmai system folder at {space}", file=sys.stderr)
         return 1
+
+    # A source named by hand short-circuits every question about branches and published versions.
+    # It runs the same unpack and the same copy as the release route, so what a test measures here
+    # is the update itself and not a second way of doing it.
+    named = (getattr(args, "from_source", None) or "").strip()
+    if named:
+        return _upgrade_from_named_source(space, manifest, named, check_only=args.check)
 
     requested_channel = getattr(args, "channel", None)
     if requested_channel:
-        _set_update_channel(vault, requested_channel)
+        _set_update_channel(space, requested_channel)
 
-    local = _distribution_version(vault)
-    channel = _update_channel(vault)
+    local = _distribution_version(space)
+    channel = _update_channel(space)
     branch = channel or _manifest_scalar(manifest, "update_branch") or "main"
-    is_clone = bool(_clone_remote(vault))
+    is_clone = bool(_clone_remote(space))
 
     # A named version is a decision, so it is taken as one: forwards or backwards, without asking
     # whether it is newer. The automatic offer still never goes backwards; this is the deliberate
     # way, and it exists because there was none. A release that turns out broken could only be
-    # undone by replacing files by hand in a live vault, which is the one thing E11 forbids.
+    # undone by replacing files by hand in a live space, which is the one thing E11 forbids.
     gewuenscht = (getattr(args, "to", None) or "").strip().lstrip("v")
     ziel_ref = f"refs/tags/v{gewuenscht}" if gewuenscht else f"refs/heads/{branch}"
 
-    # Named per branch, because a clone asks its own git remote and every other vault
+    # Named per branch, because a clone asks its own git remote and every other space
     # asks the manifest's source. It used to be read from the manifest either way,
     # which for a clone read a name that was never assigned: the command crashed with
     # an interpreter error the moment an update genuinely existed, which is the one
@@ -9176,17 +10408,17 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
     # traceback in front of the user rather than a version to say yes to.
     if gewuenscht:
         source = _manifest_scalar(manifest, "update_source")
-        origin = (_clone_remote(vault) if is_clone else source) or "the update source"
+        origin = (_clone_remote(space) if is_clone else source) or "the update source"
         remote = gewuenscht
         if not is_clone and not source:
             print("error: the manifest names no update source", file=sys.stderr)
             return 1
         base = (source or "").strip("/")
     elif is_clone:
-        origin = _clone_remote(vault) or "the repository this vault was cloned from"
-        remote = _remote_version_via_git(vault, branch)
+        origin = _clone_remote(space) or "the repository this space was cloned from"
+        remote = _remote_version_via_git(space, branch)
         if not remote:
-            print("error: could not read a version from this vault's own origin", file=sys.stderr)
+            print("error: could not read a version from this space's own origin", file=sys.stderr)
             return 1
     else:
         source = _manifest_scalar(manifest, "update_source")
@@ -9212,12 +10444,21 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
             return 1
 
     channel_note = f", channel: {channel}" if channel else ""
-    if not gewuenscht and not _is_newer(remote, local):
-        print(f"ok: already on the current version ({local}{channel_note})")
+    # `--force` applies the files again even where the version says there is nothing to do. Two
+    # cases need it and neither is exotic: a release re-cut under the same number carries different
+    # content and is invisible to a comparison of numbers, and an update that broke halfway leaves a
+    # space whose version says it is current while its files are not. Without this the only way out
+    # was replacing files by hand, which is the one thing the update path exists to prevent.
+    erzwingen = bool(getattr(args, "force", False))
+    if not gewuenscht and not _is_newer(remote, local) and not erzwingen:
+        print(f"ok: already on the current version ({local}{channel_note}). "
+              f"Use --force to fetch and apply it again anyway.")
         return 0
-    if gewuenscht and remote == local:
-        print(f"ok: already on {local}")
+    if gewuenscht and remote == local and not erzwingen:
+        print(f"ok: already on {local}. Use --force to apply it again anyway.")
         return 0
+    if erzwingen and not _is_newer(remote, local):
+        print(f"applying {remote} again over {local} (--force){channel_note}")
 
     richtung = "going to" if gewuenscht else "update available:"
     print(f"{richtung} {local} -> {remote} (from {origin}{channel_note})")
@@ -9226,7 +10467,7 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
               "can be reached the same way.")
     if args.check:
         if getattr(args, "changelog", False):
-            changelog = (_remote_changelog_via_git(vault, branch) if is_clone
+            changelog = (_remote_changelog_via_git(space, branch) if is_clone
                          else _remote_changelog_via_https(source, branch))
             if changelog:
                 print("--- remote CHANGELOG.md ---")
@@ -9238,9 +10479,9 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
     # a clone is upgraded through git, so it stays a clean clone and a manual
     # `git pull` keeps working afterwards
     # Before anything is replaced, and only where a version was named: that is the case where the
-    # vault is deliberately moved off a state somebody may want back.
+    # space is deliberately moved off a state somebody may want back.
     if gewuenscht:
-        schnapp = argparse.Namespace(vault=str(vault), reason=f"before going to {remote}",
+        schnapp = argparse.Namespace(space=str(space), reason=f"before going to {remote}",
                                      agent="zanmai.py")
         try:
             cmd_snapshot_create(schnapp)
@@ -9250,132 +10491,151 @@ def cmd_setup_upgrade(args: argparse.Namespace) -> int:
             return 1
 
     if is_clone:
-        ok, problem = (_checkout_version_via_git(vault, remote) if gewuenscht
-                       else _upgrade_via_git(vault, branch))
+        ok, problem = (_checkout_version_via_git(space, remote) if gewuenscht
+                       else _upgrade_via_git(space, branch))
         if ok:
-            applied = _distribution_version(vault)
-            return _hand_off_to_new_script(vault, local, applied, origin="the repository this vault was cloned from")
+            applied = _distribution_version(space)
+            return _hand_off_to_new_script(space, local, applied, origin="the repository this space was cloned from")
         print(f"error: {problem}", file=sys.stderr)
         return 1
 
-    import shutil
     import tempfile
 
     with tempfile.TemporaryDirectory() as work:
-        work_path = Path(work)
         try:
             archive = _fetch(f"https://codeload.github.com/{base}/tar.gz/{ziel_ref}", timeout=180)
         except Exception as exc:  # noqa: BLE001
             print(f"error: could not download the new version ({exc})", file=sys.stderr)
             return 1
 
-        tree = _unpack_release(archive, work_path)
-        new_manifest = tree / SYSTEM_MATERIAL_DIR / "manifest.yaml"
-        if not new_manifest.exists():
-            print("error: the downloaded version has no manifest, nothing applied", file=sys.stderr)
-            return 1
+        tree = _unpack_release(archive, Path(work))
+        applied = _apply_distribution_tree(space, tree, manifest)
 
-        new_paths = _manifest_distribution_paths(new_manifest)
-        old_paths = _manifest_distribution_paths(manifest)
+    if applied is None:
+        return 1
+    written, removed = applied
+    return _hand_off_to_new_script(space, local, remote, replaced=written, withdrawn=removed)
 
-        # Both path lists come out of a manifest that was just downloaded, so they
-        # are input, not fact. Without a containment check, one `../` in a path
-        # writes outside the vault, and the removal loop below deletes outside it.
-        # Resolve BOTH sides: resolving only the candidate refuses every update on
-        # macOS, where the temporary directory is itself a symlink. A guard that then
-        # blocks every legitimate update has not made anything safer, it has only
-        # traded one failure for a worse one.
-        vault_real = vault.resolve()
 
-        def contained(rel: str) -> Path | None:
-            if rel.startswith(("/", "\\\\")) or re.match(r"^[A-Za-z]:", rel):
-                return None
-            candidate = (vault_real / rel).resolve()
-            if candidate == vault_real or vault_real not in candidate.parents:
-                return None
-            return candidate
+def _bundles_without_material(space: Path) -> list[str]:
+    """Top-level bundles in the user's areas whose whole content is their own page.
 
-        refused = [rel for rel in set(new_paths) | set(old_paths) if contained(rel) is None]
-        if refused:
-            print("error: the downloaded manifest lists paths outside the vault, nothing applied:",
-                  file=sys.stderr)
-            for rel in sorted(refused)[:10]:
-                print(f"  {rel}", file=sys.stderr)
-            return 1
+    The two files a bundle always has are its truth file, named after the folder, and the index.
+    A folder with those and nothing else was made for a single item: one trip, one reminder, one
+    appliance. It is not wrong material, it is the wrong shape, and the shape is what makes it
+    invisible later, because a search for the wider matter never reaches it.
 
-        written = 0
-        for rel in new_paths:
-            src = tree / rel
-            if not src.is_file():
+    Only the top level of an area, and only where the truth file is actually there: a folder deeper
+    down is a section of something bigger, and a folder without a truth file is somebody's own
+    filing rather than a bundle.
+
+    A bundle made in the last few weeks is left out, because for that span the empty case has a
+    second reading: setup creates the areas the user named as places to file into, and so does
+    anyone who lays out a matter before filling it. Reporting those the same day would call the
+    intended state a fault. What the window does not do is forgive them forever: a place nothing
+    was ever put into is worth naming once it has had a month to be used.
+    """
+    raus: list[str] = []
+    grenze = (datetime.now() - timedelta(days=EMPTY_BUNDLE_GRACE_DAYS)).timestamp()
+    for bereich in (LIFE_DIR, WORKBENCH_DIR, KNOWLEDGE_DIR):
+        wurzel = space / bereich
+        if not wurzel.is_dir():
+            continue
+        for ordner in sorted(p for p in wurzel.iterdir() if p.is_dir()):
+            wahrheit = ordner / f"{ordner.name}.md"
+            if not wahrheit.is_file():
                 continue
-            dst = contained(rel)
-            if dst is None:
-                continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            written += 1
-
-        # files the previous version shipped and this one no longer does
-        removed = 0
-        for rel in old_paths:
-            if rel in new_paths:
-                continue
-            stale = contained(rel)
-            if stale is not None and stale.is_file():
-                stale.unlink()
-                removed += 1
-
-    return _hand_off_to_new_script(vault, local, remote, replaced=written, withdrawn=removed)
+            eigen = [f for f in ordner.rglob("*")
+                     if f.is_file() and not f.name.startswith(".")
+                     and f != wahrheit and f.name.lower() != "index.md"]
+            if not eigen and wahrheit.stat().st_mtime < grenze:
+                raus.append(f"{bereich}/{ordner.name}")
+    return raus
 
 
 def cmd_setup_validate(args: argparse.Namespace) -> int:
-    vault = Path(args.vault_root).resolve()
+    space = Path(args.space_root).resolve()
     fails: list[str] = []
-    user_md = vault / SYSTEM_DIR / "user.md"
+    user_md = space / SYSTEM_DIR / "user.md"
     if not user_md.exists():
         fails.append("missing zanmai/user.md, run 'setup init' first")
-    manifest_path = vault / SYSTEM_MATERIAL_DIR / "manifest.yaml"
+    manifest_path = space / SYSTEM_MATERIAL_DIR / "manifest.yaml"
     if not manifest_path.exists():
         fails.append("missing zanmai/system/manifest.yaml")
     else:
         for rel in _manifest_distribution_paths(manifest_path):
-            if not (vault / rel).exists():
+            if not (space / rel).exists():
                 fails.append(f"missing distribution file: {rel}")
-    for rel in _required_folders(vault):
-        if not (vault / rel).is_dir():
+    for rel in _required_folders(space):
+        if not (space / rel).is_dir():
             fails.append(f"missing required folder: {rel}. Run 'setup update' to create it.")
+    # A command in a standing rule is read back as an instruction for as long as the space exists,
+    # and no update ever touches these files. The guard stops a wrong one from being written; this
+    # finds the ones that were written before the guard existed, or that a rename made wrong after
+    # the fact. Reported, never corrected: the sentence around the command is the user's.
+    for rel in [USER_FILE, f"{MEMORY_DIR}/general.md"]:
+        datei = space / rel
+        if not datei.is_file():
+            continue
+        try:
+            inhalt = datei.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for befund in _stale_calls(inhalt):
+            fails.append(f"{rel}: {befund}. A rule here runs every session; correct the line by "
+                         f"hand or ask the command with `--help` and write what it answers.")
+
+    # A file the distribution once shipped and no longer lists is only removed by an update when
+    # the version being left still named it. Anything dropped earlier than that stays for ever, and
+    # a leftover under the system folder reads like part of the product: a retired template still
+    # carrying a kind that no longer exists is indistinguishable from a current one. Reported, not
+    # removed, because this is a check and the user decides what goes.
+    if manifest_path.exists():
+        gelistet = set(_manifest_distribution_paths(manifest_path))
+        system_ordner = space / SYSTEM_MATERIAL_DIR
+        if system_ordner.is_dir():
+            fremd = sorted(p.relative_to(space).as_posix() for p in system_ordner.rglob("*")
+                           if p.is_file() and p.relative_to(space).as_posix() not in gelistet
+                           and p.suffix not in (".pyc",) and "__pycache__" not in p.parts)
+            for rel in fremd[:10]:
+                fails.append(f"not in the manifest and still shipped-looking: {rel}. "
+                             f"A leftover from an earlier version; move it out or add it.")
+            if len(fremd) > 10:
+                fails.append(f"... and {len(fremd) - 10} more file(s) under {SYSTEM_MATERIAL_DIR}/ "
+                             f"that the manifest does not list")
+
     for rel in ["INDEX.md", f"{MEMORY_DIR}/general.md", ACTIVITY_LOG_FILE]:
-        if not (vault / rel).is_file():
+        if not (space / rel).is_file():
             fails.append(f"missing generated file: {rel}")
     # Everything the distribution ships and the host must carry: hooks wired, expert
     # and skill adapters present. Same function the upgrade and the session start use,
     # so what passes here is what passes there.
-    for problem in _verify_host_config(vault):
+    for problem in _verify_host_config(space):
         fails.append(f"{problem}. Run 'setup update' to rebuild the host config.")
     # Adapters must also not be left over: no dangling legacy symlink, and nothing
     # for an expert an update dropped from the roster.
-    agents_dir = vault / ".claude" / "agents"
+    agents_dir = space / ".claude" / "agents"
     if agents_dir.is_dir():
         roster = set(_AGENT_NAMES)
         for entry in agents_dir.glob("*.md"):
             if entry.is_symlink() and not entry.exists():
-                fails.append(f"dangling agent adapter: {entry.relative_to(vault)}")
+                fails.append(f"dangling agent adapter: {entry.relative_to(space)}")
                 continue
             try:
                 ours = entry.is_file() and f"{SYSTEM_MATERIAL_DIR}/experts/" in entry.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 ours = False
             if ours and entry.stem not in roster:
-                fails.append(f"stale agent adapter (not in roster): {entry.relative_to(vault)}")
-    # A synced folder is a normal home for a vault, so this is a note rather than a
+                fails.append(f"stale agent adapter (not in roster): {entry.relative_to(space)}")
+    # A synced folder is a normal home for a space, so this is a note rather than a
     # failure. What it reports is the part that is genuinely wrong to copy.
     notes: list[str] = []
-    notes.extend(_memory_size_report(vault))
-    host = _detect_sync_host(vault)
+    notes.extend(_memory_size_report(space))
+    host = _detect_sync_host(space)
     if host:
-        present = [rel for rel in MACHINE_LOCAL_PATHS + BULKY_PATHS if (vault / rel).exists()]
+        present = [rel for rel in MACHINE_LOCAL_PATHS + BULKY_PATHS if (space / rel).exists()]
         how = next((h for name, h in SYNC_HOSTS if name == host), "")
-        notes.append(f"this vault sits under {host}, which is a fine place for it")
+        notes.append(f"this space sits under {host}, which is a fine place for it")
         if present:
             notes.append("these three are worth leaving out of the copy: " + ", ".join(present))
             notes.append(f"  {host}: {how}")
@@ -9383,40 +10643,979 @@ def cmd_setup_validate(args: argparse.Namespace) -> int:
                          "jump-back points that exist for a few days, not a backup worth carrying")
             notes.append("  it is your call, nothing here depends on it")
         conflicts = sorted(
-            str(f.relative_to(vault))
-            for f in vault.glob("**/*")
+            str(f.relative_to(space))
+            for f in space.glob("**/*")
             if f.is_file() and any(mark in f.name.lower() for mark in
                                    ("conflicted copy", "conflict)", "-konflikt", "in konflikt"))
         )
         if conflicts:
             fails.append(
-                f"{len(conflicts)} sync conflict copy/copies in the vault, which break the rule that a "
+                f"{len(conflicts)} sync conflict copy/copies in the space, which break the rule that a "
                 f"fact exists once: {', '.join(conflicts[:5])}"
                 + (" …" if len(conflicts) > 5 else "")
             )
 
-    stray = _unexpected_root_entries(vault)
+    # A bundle is the broad matter, never the single item: travel is a bundle and one trip is a note
+    # in it. That rule was prose in the folder documentation and in the filing expert's contract,
+    # and nothing measured it, so a space filled up with one bundle per trip and one per reminder.
+    # What is measurable without any judgement is the empty case: a folder whose whole content is
+    # its own truth file and an index holds nothing that needed a folder. It is reported, never
+    # changed: where the material goes is the user's call, and a note is one command away.
+    duenn = _bundles_without_material(space)
+    if duenn:
+        fails.append(
+            f"{len(duenn)} bundle(s) hold nothing but their own page: {', '.join(duenn[:5])}"
+            + (" …" if len(duenn) > 5 else "")
+            + ". A bundle is the broad matter, not the single item. Each of these belongs as a note "
+              "inside a wider bundle; `bundle add-file` moves it there."
+        )
+
+    stray = _unexpected_root_entries(space)
     if stray:
         fails.append(
-            f"{len(stray)} entr(y/ies) at the vault root outside the folder architecture: "
+            f"{len(stray)} entr(y/ies) at the space root outside the folder architecture: "
             f"{', '.join(stray[:5])}"
             + (" …" if len(stray) > 5 else "")
             + ". Nothing writes there on its own, this got created outside a Zanmai session, "
-              "move its contents into the right theme and remove it."
+              "move its contents into the right bundle and remove it."
         )
 
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
         return 1
-    print(f"ok: vault at {vault} validates")
+    print(f"ok: space at {space} validates")
     for note in notes:
         print(f"    {note}")
     return 0
 
 
+# Structural changes to an existing space, run by the script and never by a model. A run that moves
+# a few thousand files by hand costs a session and gets it subtly wrong; a function does it in a
+# second and can be checked. Each step is named, runs at most once per space, and is recorded in
+# `zanmai/memory/.migrations` so a repeat update is a no-op. Steps only ever move and rename; nothing
+# here deletes, so a step that turns out wrong is undone from the snapshot the upgrade took first.
+MIGRATIONS_FILE = f"{MEMORY_DIR}/.migrations"
+_RE_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _migrations_done(space: Path) -> dict[str, int]:
+    """Which structural step this space has had, and at which revision of it.
+
+    A line is `name` or `name@revision`; a line without one is revision 1, which is what every
+    space written before revisions existed carries. The highest revision seen wins, so a file that
+    was appended to over several updates reads correctly no matter what order the lines are in.
+    """
+    datei = space / MIGRATIONS_FILE
+    if not datei.is_file():
+        return {}
+    stand: dict[str, int] = {}
+    for zeile in datei.read_text(encoding="utf-8").splitlines():
+        eintrag = zeile.strip()
+        if not eintrag:
+            continue
+        name, _, roh = eintrag.partition("@")
+        try:
+            rev = int(roh) if roh else 1
+        except ValueError:
+            rev = 1
+        stand[name] = max(stand.get(name, 0), rev)
+    return stand
+
+
+def _migration_record(space: Path, name: str, revision: int = 1) -> None:
+    datei = space / MIGRATIONS_FILE
+    datei.parent.mkdir(parents=True, exist_ok=True)
+    with datei.open("a", encoding="utf-8") as f:
+        f.write(f"{name}@{revision}\n")
+
+
+def _holds_nothing(folder: Path) -> bool:
+    """Does this folder hold anything anybody wrote, at any depth.
+
+    The shallow version of this asked only about the first level and called a folder occupied as
+    soon as it held any subfolder at all, empty or not. That mattered on the one day it was wrong:
+    a rename found four target folders that contained nothing but the empty shells of a previous
+    layout, treated each as a name already taken, and would have parked the arriving material
+    beside it under a counter. Four archives would have been split in two, and every path in the
+    search index would have pointed at the half that stayed empty.
+    """
+    try:
+        for eintrag in folder.iterdir():
+            if eintrag.is_dir():
+                if not _holds_nothing(eintrag):
+                    return False
+            elif not eintrag.name.startswith("."):
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def _drop_if_only_metadata(folder: Path) -> None:
+    """A folder holding nothing but hidden OS metadata and empty shells is empty, and goes.
+
+    The two ways of not doing this both leave something behind. Carrying the metadata along gives
+    the file a year it does not have and creates a visible folder whose only content is junk;
+    leaving it where it is keeps the old layout standing as an empty shell. Nothing anybody wrote
+    is ever touched: a single file at any depth stops this.
+    """
+    if not folder.is_dir() or not _holds_nothing(folder):
+        return
+    try:
+        for eintrag in sorted(folder.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            if eintrag.is_dir():
+                eintrag.rmdir()
+            else:
+                eintrag.unlink()
+        folder.rmdir()
+    except OSError:
+        pass
+
+
+def _migrate_journal_to_one_layer(space: Path) -> list[str]:
+    """Four journal layers, each entry its own bundle, become one entry per day under its year.
+
+    `journal/daily/2026/2026-08-22/2026-08-22.md` becomes `journal/2026/2026-08-22.md`. Anything
+    else that sat in the day's bundle moves next to it and keeps its name. Week, month and year
+    notes are not thrown away: they carry text the user may have written themselves, so they move
+    to `journal/<year>/` under their own names and simply stop being written to.
+    """
+    getan: list[str] = []
+    for schicht in ("daily", "weekly", "monthly", "yearly"):
+        wurzel = space / JOURNAL_DIR / schicht
+        if not wurzel.is_dir():
+            continue
+        for eintrag in sorted(wurzel.rglob("*")):
+            # Hidden files are the operating system's, not the journal's: they carry no date, so
+            # they would land in a folder named for the year they do not have.
+            if not eintrag.is_file() or eintrag.name.startswith("."):
+                continue
+            name = eintrag.name
+            teile = eintrag.relative_to(wurzel).parts
+            tagesordner = teile[-2] if len(teile) > 1 else ""
+            if _RE_ISO_DATE.fullmatch(tagesordner) and not name.startswith(tagesordner):
+                name = f"{tagesordner}-{name}"
+            jahr = next((teil for teil in teile if len(teil) == 4 and teil.isdigit()), None) or name[:4]
+            if not (len(jahr) == 4 and jahr.isdigit()):
+                jahr = "undated"
+            ziel = space / JOURNAL_DIR / jahr / name
+            if ziel.exists() and ziel.read_bytes() == eintrag.read_bytes():
+                eintrag.unlink()
+                continue
+            n = 1
+            while ziel.exists():
+                ziel = ziel.with_name(f"{ziel.stem}-{n}{ziel.suffix}")
+                n += 1
+            ziel.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(eintrag), str(ziel))
+            getan.append(f"{eintrag.relative_to(space).as_posix()} -> {ziel.relative_to(space).as_posix()}")
+        for ordner in sorted((d for d in wurzel.rglob("*") if d.is_dir()),
+                             key=lambda d: len(d.parts), reverse=True):
+            _drop_if_only_metadata(ordner)
+        _drop_if_only_metadata(wurzel)
+    return getan
+
+
+# Rooms that were merged or renamed, source first. Six became four, so two of the targets take
+# more than one source and the order below is the order they are folded in.
+_ROOM_MOVES = (
+    ("import", INBOX_DIR),
+    ("doing", WORKBENCH_DIR),
+    ("focus", LIFE_DIR),
+    ("habits", LIFE_DIR),
+    ("trusted", LIFE_DIR),
+    ("records", ARCHIVE_DIR),
+)
+# The frontmatter kind moves with the room it named.
+_KIND_MOVES = {"focus": "life", "habit": "life", "doing": "workbench", "record": "archive"}
+
+
+def _move_areas(space: Path, moves: tuple[tuple[str, str], ...],
+                kinds: dict[str, str]) -> list[str]:
+    """Eleven areas become eight: what was scattered over focus, habits and trusted is one life,
+    and what was kept in records is the same cupboard as the archive.
+
+    Nothing is thrown away and no file is ever written over. Folders of the same name are joined,
+    files of the same name are not: a folder is a container, and two containers with one name hold
+    one thing between them, while two files with one name are two files. The first version counted
+    folders as well, and it split an archive in two because the same cupboard existed under both
+    the old name and the new one. The user was left with `vertraege` and `vertraege-1` holding the
+    same bundles, and every path in the search index pointing at one of the halves.
+
+    The `kind:` line moves with the room, because a file whose kind names a room that no longer
+    exists is invisible to everything that looks by kind.
+    """
+    getan: list[str] = []
+
+    def hinein(quelle: Path, ziel_ordner: Path) -> None:
+        """Move the contents of one folder into another, joining folders, never overwriting."""
+        ziel_ordner.mkdir(parents=True, exist_ok=True)
+        for eintrag in sorted(quelle.iterdir()):
+            if eintrag.name.startswith("."):
+                continue
+            ziel = ziel_ordner / eintrag.name
+            if eintrag.is_dir() and ziel.is_dir():
+                hinein(eintrag, ziel)
+                _drop_if_only_metadata(eintrag)
+                continue
+            n = 1
+            while ziel.exists():
+                ziel = (ziel_ordner / f"{eintrag.stem}-{n}{eintrag.suffix}" if eintrag.is_file()
+                        else ziel_ordner / f"{eintrag.name}-{n}")
+                n += 1
+            shutil.move(str(eintrag), str(ziel))
+            getan.append(f"{eintrag.relative_to(space).as_posix()} -> "
+                         f"{ziel.relative_to(space).as_posix()}")
+
+    for alt_name, ziel_name in moves:
+        quelle = space / alt_name
+        if not quelle.is_dir() or alt_name == ziel_name:
+            continue
+        # An empty shell on the other side is the one setup created, not a name already taken, and
+        # it goes before anything arrives. Left standing it would push the real contents aside.
+        ziel_wurzel = space / ziel_name
+        if ziel_wurzel.is_dir():
+            for vorhanden in list(ziel_wurzel.iterdir()):
+                if vorhanden.is_dir():
+                    _drop_if_only_metadata(vorhanden)
+        hinein(quelle, ziel_wurzel)
+        _drop_if_only_metadata(quelle)
+
+    # The kind line, in everything the user owns. A file under the system folder is the
+    # distribution's and is replaced by the update itself.
+    for datei in sorted(space.rglob("*.md")):
+        rel = datei.relative_to(space).as_posix()
+        if rel.startswith((f"{SYSTEM_DIR}/system/", f"{HISTORY_DIR}/", f"{TRASH_DIR}/")):
+            continue
+        try:
+            text = datei.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        neu_text = re.sub(rf"(?m)^kind: *({'|'.join(re.escape(k) for k in kinds)}) *$",
+                          lambda m: f"kind: {kinds[m.group(1)]}", text) if kinds else text
+        if neu_text != text:
+            datei.write_text(neu_text, encoding="utf-8")
+            getan.append(f"kind rewritten in {rel}")
+
+    # Paths the machine keeps for itself: the routing table the user built and the open-work pages.
+    for pfad in [space / SYSTEM_DIR / "routing.json"] + sorted((space / SYSTEM_DIR / "open").rglob("*")):
+        if not pfad.is_file() or pfad.suffix not in (".json", ".md"):
+            continue
+        try:
+            text = pfad.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        neu_text = text
+        for alt_name, ziel_name in moves:
+            neu_text = re.sub(rf'(?<=["\'`\s(]){re.escape(alt_name)}/', f"{ziel_name}/", neu_text)
+        # The journal lost its four layers in the step before this one, and a routing rule written
+        # while they existed still sends material to `journal/daily`, which no longer exists. A
+        # rule that points nowhere is worse than none: the import runs, reports a target, and the
+        # material lands where nobody looks.
+        neu_text = re.sub(r'(?<=["\'`\s(])journal/(daily|weekly|monthly|yearly)\b',
+                          "journal", neu_text)
+        if neu_text != text:
+            pfad.write_text(neu_text, encoding="utf-8")
+            getan.append(f"paths rewritten in {pfad.relative_to(space).as_posix()}")
+
+    # The master index is written by the machine, and its headings are the old rooms. Replacing a
+    # section only works where the heading exists, so an old index would keep `## Focus` for ever
+    # and never show what is in `life/`. It is rebuilt from the template and the previous one goes
+    # to the trash rather than over the edge: it is generated, but it was the user's page.
+    master = space / "INDEX.md"
+    if master.is_file():
+        text = master.read_text(encoding="utf-8", errors="ignore")
+        if "\n## Life\n" not in text:
+            ablage = space / TRASH_DIR / "INDEX.md"
+            n = 1
+            while ablage.exists():
+                ablage = space / TRASH_DIR / f"INDEX-{n}.md"
+                n += 1
+            ablage.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(master), str(ablage))
+            vorname = ""
+            benutzer = space / USER_FILE
+            if benutzer.is_file():
+                treffer = re.search(r'(?m)^first_name: *"?([^"\n]*)"?',
+                                    benutzer.read_text(encoding="utf-8", errors="ignore"))
+                vorname = (treffer.group(1).strip() if treffer else "")
+            master.write_text(_render_master_index(vorname), encoding="utf-8")
+            _update_master_index(space)
+            getan.append(f"INDEX.md rebuilt for the new rooms, the old one is in {TRASH_DIR}/")
+
+    return getan
+
+
+def _migrate_archive_db_name(space: Path) -> list[str]:
+    """The archive index keeps what it has read across the rename of `records` to `archive`.
+
+    The file is named after the command family, and the family was renamed while the file was not.
+    The next read then opened a fresh, empty database beside a full one and reported an empty
+    index, which reads exactly like an archive nobody has filled yet. Everything that had been read
+    was invisible while every command reported success, and that is the shape of failure that costs
+    the most to notice.
+
+    A step of its own rather than a line inside the rename, because a space that already took the
+    rename records it as done and never runs it again. The repair has to be able to arrive after
+    the damage.
+    """
+    import sqlite3
+
+    getan: list[str] = []
+    alt = space / RUNTIME_DIR / "records.sqlite3"
+    neu = space / RUNTIME_DIR / ARCHIVE_DB
+    if not alt.is_file():
+        return getan
+
+    def dokumente(pfad: Path) -> int:
+        """How many documents that database holds. An unreadable file holds none."""
+        if not pfad.is_file():
+            return 0
+        try:
+            db = sqlite3.connect(str(pfad))
+            try:
+                return db.execute("SELECT count(*) FROM documents").fetchone()[0]
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001
+            return 0
+
+    # Both sides full is the one case where nothing is safe to do automatically: whichever way it
+    # went, somebody's reading would be thrown away. It is said out loud instead.
+    if dokumente(neu) > 0:
+        getan.append(f"{RUNTIME_DIR}/records.sqlite3 left as it is: {ARCHIVE_DB} already holds "
+                     f"documents, so the two have to be looked at")
+        return getan
+
+    if neu.is_file():
+        # An empty database created by a read that came before this step. It goes where everything
+        # goes that is no longer needed, never over the edge.
+        ziel = space / TRASH_DIR / datetime.now().strftime("%Y-%m-%d") / ARCHIVE_DB
+        ziel.parent.mkdir(parents=True, exist_ok=True)
+        n = 1
+        while ziel.exists():
+            ziel = ziel.with_name(f"{ziel.stem}-{n}{ziel.suffix}")
+            n += 1
+        shutil.move(str(neu), str(ziel))
+        getan.append(f"empty {ARCHIVE_DB} moved to {ziel.relative_to(space).as_posix()}")
+
+    shutil.move(str(alt), str(neu))
+    getan.append(f"{RUNTIME_DIR}/records.sqlite3 -> {RUNTIME_DIR}/{ARCHIVE_DB}")
+    return getan
+
+
+def _rename_in_archive_index(space: Path,
+                             moves: tuple[tuple[str, str], ...]) -> list[str]:
+    """Every path inside the archive index moves with the area it points into.
+
+    Renaming the database file was only half of it. The rows inside still named the area each
+    document came from, so a search answered in full and handed back paths that all led nowhere,
+    with no error anywhere. That is worse than an index that is plainly broken: it looks like an
+    archive whose files somebody deleted.
+
+    A step of its own, and not a line inside the rename, so it also reaches a space that already
+    took the rename. Whether a row is rewritten is decided per row against the disk, never by
+    string replacement alone: the area move resolved name collisions by appending a counter, so the
+    obvious new path is a guess until the file is actually there. A row whose file cannot be found
+    is left exactly as it was and counted, because a wrong path that is honest about itself can
+    still be searched for by hand, and a rewritten wrong path cannot.
+    """
+    import sqlite3
+
+    pfad = space / RUNTIME_DIR / ARCHIVE_DB
+    if not pfad.is_file():
+        return []
+
+    getan: list[str] = []
+    try:
+        db = sqlite3.connect(str(pfad))
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        try:
+            zeilen = [r[0] for r in db.execute("SELECT path FROM documents").fetchall()]
+        except Exception:  # noqa: BLE001 -- not an archive index, nothing to do
+            return []
+
+        umgeschrieben = 0
+        offen = 0
+        for alt_pfad in zeilen:
+            wurzel = alt_pfad.split("/", 1)[0]
+            ziel_wurzel = next((neu for alt, neu in moves if alt == wurzel), "")
+            if not ziel_wurzel:
+                continue
+            neuer = f"{ziel_wurzel}/{alt_pfad.split('/', 1)[1]}" if "/" in alt_pfad else ziel_wurzel
+            if not (space / neuer).exists():
+                offen += 1
+                continue
+            db.execute("UPDATE documents SET path = ? WHERE path = ?", (neuer, alt_pfad))
+            # The searchable text carries the path as its first line, so that the name of a file
+            # can be searched for and not only its content. Moving the path column alone leaves
+            # that line naming the old area: a search for the area that no longer exists returns
+            # every document, and a search for the one they are all in returns nothing. Both
+            # answers look like ordinary results.
+            zeile = db.execute("SELECT body FROM content WHERE path = ?", (alt_pfad,)).fetchone()
+            if zeile is not None:
+                rumpf = zeile[0].split("\n", 1)[1] if "\n" in zeile[0] else ""
+                db.execute("DELETE FROM content WHERE path = ?", (alt_pfad,))
+                db.execute("INSERT INTO content (path, body) VALUES (?, ?)",
+                           (neuer, f"{_index_name_words(neuer)}\n{rumpf}"))
+            umgeschrieben += 1
+        # The name line is checked against the path itself, not against a list of old area names.
+        # The narrow version of this only repaired a row whose path was still wrong, so a space
+        # whose paths had already been corrected kept the old name in its searchable text for ever:
+        # the one repair that could reach it was the one that decided there was nothing to do. What
+        # has to hold is simple and has no history in it, so it is stated that way: the first line
+        # of the text is the path as words.
+        nachgezogen = 0
+        for jetzt_pfad, koerper in db.execute("SELECT path, body FROM content").fetchall():
+            soll = _index_name_words(jetzt_pfad)
+            kopf, _, rumpf = koerper.partition("\n")
+            if kopf == soll:
+                continue
+            db.execute("DELETE FROM content WHERE path = ?", (jetzt_pfad,))
+            db.execute("INSERT INTO content (path, body) VALUES (?, ?)",
+                       (jetzt_pfad, f"{soll}\n{rumpf}"))
+            nachgezogen += 1
+
+        if umgeschrieben or nachgezogen:
+            db.commit()
+        if umgeschrieben:
+            getan.append(f"{umgeschrieben} path(s) in the archive index moved to their new area")
+        if nachgezogen:
+            getan.append(f"{nachgezogen} document(s) in the archive index had a searchable name "
+                         f"that no longer matched their path")
+        if offen:
+            getan.append(f"{offen} path(s) in the archive index point to a file that is not at the "
+                         f"new place either; left as they are, `archive index` reads them again")
+    finally:
+        db.close()
+    return getan
+
+
+# What a rename may not touch: anything that records what happened. The activity log, the update
+# history, the operation reports and the journal are statements about a day that is over, and on
+# that day the folder really was called what it was called. Correcting them makes the record wrong
+# in order to make a path right, and the path in a finished report leads nowhere useful anyway.
+# Found the hard way: a first run rewrote 134 lines of an activity log before anybody looked.
+_TEXT_PATH_SKIP = (f"{SYSTEM_DIR}/system/", f"{HISTORY_DIR}/", f"{TRASH_DIR}/", f"{LOGS_DIR}/",
+                   f"{JOURNAL_DIR}/")
+_TEXT_PATH_SKIP_FILES = frozenset({
+    ACTIVITY_LOG_FILE,
+    f"{SYSTEM_DIR}/update-history.md",
+    f"{MEMORY_DIR}/briefing.md",
+})
+
+
+def _rename_in_notes(space: Path,
+                     moves: tuple[tuple[str, str], ...]) -> list[str]:
+    """Paths the user or an expert wrote into a note follow the area they point into.
+
+    The area move renamed folders and rewrote what the machine keeps for itself. What it left alone
+    was every sentence that names a path: a note saying where the documents for someone are kept, a
+    `source_detail` recording where a text came from. Those read as correct and lead nowhere, and
+    nothing about them looks broken, which is why nobody finds them.
+
+    Two limits keep this from doing damage in order to be thorough. A candidate is only rewritten
+    when something is actually at the new path, so a guess is never written into somebody's text.
+    And it has to be written as a path, with the slash that makes it one: the old area names are
+    ordinary words in running prose, and correcting a link is not worth corrupting a sentence.
+    """
+    getan: list[str] = []
+    ziele = dict(moves)
+    muster = re.compile(r"(?<=[\"'`\s(\[])(" + "|".join(re.escape(a) for a, _ in moves)
+                        + r")/([A-Za-z0-9._\-/]*)")
+    for datei in sorted(space.rglob("*.md")):
+        rel = datei.relative_to(space).as_posix()
+        if rel.startswith(_TEXT_PATH_SKIP) or rel in _TEXT_PATH_SKIP_FILES:
+            continue
+        try:
+            alt_text = datei.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        def ersetze(m: re.Match) -> str:
+            neu_wurzel = ziele[m.group(1)]
+            rest = m.group(2)
+            kandidat = f"{neu_wurzel}/{rest}" if rest else f"{neu_wurzel}/"
+            if not (space / kandidat.rstrip("/")).exists():
+                return m.group(0)
+            return kandidat
+
+        neu_text = muster.sub(ersetze, alt_text)
+        if neu_text != alt_text:
+            datei.write_text(neu_text, encoding="utf-8")
+            getan.append(f"paths rewritten in {rel}")
+    return getan
+
+
+# Files an earlier version shipped under the system folder and no version ships now. An update only
+# withdraws what the version being left still listed, so anything dropped before that stays for
+# ever, and a leftover there reads like part of the product: a documentation page for an area that
+# no longer exists, a template carrying a retired kind. Named one by one rather than derived,
+# because deriving them means comparing against a manifest that has itself been wrong.
+_RETIRED_SYSTEM_FILES = (
+    f"{SYSTEM_MATERIAL_DIR}/docs/records.md",
+    f"{SYSTEM_MATERIAL_DIR}/templates/record.md",
+)
+
+
+def _neuer_als(eins: Path, anderes: Path) -> bool:
+    """Is the first the more recent of the two, folders included.
+
+    A folder answers with the newest thing in it, because a folder's own timestamp says when
+    something was added to it and not when its contents last changed.
+    """
+    def jung(pfad: Path) -> float:
+        try:
+            if pfad.is_dir():
+                zeiten = [f.stat().st_mtime for f in pfad.rglob("*") if f.is_file()]
+                return max(zeiten) if zeiten else pfad.stat().st_mtime
+            return pfad.stat().st_mtime
+        except OSError:
+            return 0.0
+    return jung(eins) > jung(anderes)
+
+
+# What moved out of the documentation, and where to. The documentation is for the person who owns
+# the space; these four were instructions to a specialist and sat there because there was nowhere
+# else. A reader looking for help found working notes, and a specialist looking for its own method
+# found it in a folder it never opens.
+_DOC_MOVES = (
+    (f"{SYSTEM_MATERIAL_DIR}/docs/reed-methodology.md",
+     f"{SYSTEM_MATERIAL_DIR}/experts/reed/methodology.md"),
+    (f"{SYSTEM_MATERIAL_DIR}/docs/reed-source-pipelines.md",
+     f"{SYSTEM_MATERIAL_DIR}/experts/reed/source-pipelines.md"),
+    (f"{SYSTEM_MATERIAL_DIR}/docs/media-prompt-craft.md",
+     f"{SYSTEM_MATERIAL_DIR}/skills/media/prompt-craft.md"),
+    (f"{SYSTEM_MATERIAL_DIR}/docs/operating-principles.md",
+     f"{SYSTEM_MATERIAL_DIR}/operating-principles-reasoning.md"),
+)
+
+
+def _migrate_docs_out_of_the_manual(space: Path) -> list[str]:
+    """Take the leftovers of four pages out of the documentation folder.
+
+    The update writes the pages at their new place by itself, because the manifest lists them there.
+    What it does not do is remove the old copies: a withdrawal only reaches files the version being
+    left still listed, and these were listed under their old names. Both would then sit in the space,
+    the old one visible in the documentation index of an older reader.
+    """
+    getan: list[str] = []
+    for alt, neu in _DOC_MOVES:
+        verirrt = space / alt
+        if verirrt.is_file() and _move_into(space, verirrt, TRASH_DIR, "trashed", dated=True) == 0:
+            getan.append(f"{alt} is not part of the documentation any more, it moved to {neu}")
+    return getan
+
+
+def _migrate_empty_journal_days(space: Path) -> list[str]:
+    """Take out journal days that hold a heading and nothing else.
+
+    A day exists as a file only once something has been written into it, which is why nothing
+    creates an empty one. A heading is not something written into it: a day whose whole content is
+    `## Tasks` says there is a task and there is none. The user opens it, finds nothing, and now
+    doubts every other day too. These came from a task that was added and later taken out again,
+    which left its heading standing.
+
+    Only where nothing at all is left besides headings and blank lines. One word of anybody's text
+    and the file stays exactly as it is.
+    """
+    getan: list[str] = []
+    wurzel = space / JOURNAL_DIR
+    if not wurzel.is_dir():
+        return getan
+    for datei in sorted(wurzel.rglob("*.md")):
+        try:
+            zeilen = datei.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        inhalt = [z for z in zeilen if z.strip() and not z.lstrip().startswith("#")]
+        if inhalt:
+            continue
+        if _move_into(space, datei, TRASH_DIR, "trashed", dated=True) == 0:
+            getan.append(f"{datei.relative_to(space).as_posix()} held a heading and nothing else")
+    return getan
+
+
+def _migrate_brands_into_system(space: Path) -> list[str]:
+    """Bring the brand under what Zanmai keeps, from the area it sat in.
+
+    It was in two places at once and that is not a tidiness question: the command that counts brands
+    read one of them and the specialist who writes a brand wrote the other, so a space could hold a
+    brand that no run could find. One place, and the one that four specialists already read by path.
+
+    The move goes through the general rename, so the search index, the routing table and any
+    sentence naming the old path follow along. A brand folder can hold thousands of files, and they
+    are moved rather than copied, so the size of it costs nothing.
+    """
+    if not (space / f"{LIFE_DIR}/brands").is_dir():
+        return []
+    return rename_areas(space, ((f"{LIFE_DIR}/brands", DESIGN_DIR),))
+
+
+def _migrate_retention_to_a_difference(space: Path) -> list[str]:
+    """Reduce the user's keeping terms to their confirmation and what they changed.
+
+    The file used to be a full copy of the shipped periods, which made it a second list of the same
+    thing: it aged, an update could not reach it because it is the user's, and a space answered with
+    wording the product had retired. What is kept is the decision, not the copy.
+
+    Where a space carried two of these files, both are read and the newer confirmation wins, so a
+    confirmation written into the copy that was left behind is not lost.
+    """
+    ziel = space / SYSTEM_DIR / RETENTION_FILE
+    quellen = [p for p in (ziel, space / RETENTION_FILE) if p.is_file()]
+    if not quellen:
+        return []
+
+    gelesen: list[dict] = []
+    for p in quellen:
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict):
+            gelesen.append(d)
+    if not gelesen:
+        return []
+
+    bestaetigt = max((str(d.get("_confirmed") or "") for d in gelesen), default="")
+    geprueft = max((str(d.get("_checked") or "") for d in gelesen), default="")
+    if not bestaetigt:
+        return []
+
+    # Only what actually differs from what ships today. A period whose wording matches is dropped:
+    # keeping it would recreate the copy this step exists to remove.
+    vorgabe = {str(e.get("category")): e for e in _retention_defaults().get("terms", [])}
+    abweichend = []
+    for d in gelesen:
+        for e in d.get("terms", []):
+            name = str(e.get("category") or "")
+            if not name:
+                continue
+            if name not in vorgabe or any(e.get(k) != vorgabe[name].get(k)
+                                          for k in ("years", "label", "why")):
+                if not any(str(a.get("category")) == name for a in abweichend):
+                    abweichend.append(e)
+
+    schlank = {"_comment": ("What you confirmed about how long things are kept, and anything you "
+                            "changed. The periods themselves ship with Zanmai and are improved with "
+                            "it; only your decision lives here."),
+               "_confirmed": bestaetigt}
+    if geprueft:
+        schlank["_checked"] = geprueft
+    if abweichend:
+        schlank["terms"] = abweichend
+
+    alt_gross = max(len(json.dumps(d)) for d in gelesen)
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    ziel.write_text(json.dumps(schlank, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    getan = [f"{SYSTEM_DIR}/{RETENTION_FILE} now holds your decision instead of a copy of the "
+             f"periods ({alt_gross} bytes down to {len(json.dumps(schlank))}), confirmed "
+             f"{bestaetigt}"]
+    if len(quellen) > 1:
+        weg = space / RETENTION_FILE
+        if _move_into(space, weg, TRASH_DIR, "trashed", dated=True) == 0:
+            getan.append(f"a second {RETENTION_FILE} at the space root was read first and then "
+                         f"moved to {TRASH_DIR}/")
+    if abweichend:
+        getan.append(f"{len(abweichend)} period(s) you had changed were kept")
+    return getan
+
+
+def _migrate_retention_without_jurisdiction(space: Path) -> list[str]:
+    """Take a keeping-terms file out of use that still carries the shape this product withdrew.
+
+    The terms used to be per legal category and per country, which is a promise nobody here can
+    keep: the figures differ by jurisdiction, they change, and being wrong about one of them costs
+    a document somebody needed. They were replaced by three plain buckets and no country at all.
+
+    A space that was set up before that keeps its old file for ever, because the keeping terms are
+    the user's and no update touches them. So a space answers "how long is this kept" with figures
+    the product retired, under a confirmation date the user does not recognise. The file goes to
+    the trash rather than being rewritten, and Zanmai falls back to the shipped suggestion and puts
+    it to the user once, which is the same path a new space takes.
+
+    Recognised by `_jurisdiction`, a field the current shape does not have and the old one always
+    did. A file somebody wrote themselves in the current shape carries no such field and is not
+    touched.
+    """
+    datei = space / SYSTEM_DIR / RETENTION_FILE
+    if not datei.is_file():
+        return []
+    try:
+        daten = json.loads(datei.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(daten, dict) or "_jurisdiction" not in daten:
+        return []
+    if _move_into(space, datei, TRASH_DIR, "trashed", dated=True) != 0:
+        return []
+    return [f"{SYSTEM_DIR}/{RETENTION_FILE} carried the retired shape, with a legal category per "
+            f"country. It went to {TRASH_DIR}/, and the shipped suggestion applies until you "
+            f"confirm one"]
+
+
+def _migrate_stray_root_copies(space: Path) -> list[str]:
+    """Take what the machine keeps out of the space root, where earlier versions kept it.
+
+    These are not stray writes, they are a move nobody finished. The machine's own files lived at
+    the root until they were gathered under the system folder, and the versions that gathered them
+    started writing to the new place without taking the old copies along. Both then existed, with
+    different content, and the older one is the one a person opens because it is the one they can
+    see.
+
+    Named from the constants rather than from a list typed out here, so a folder that moves under
+    the system folder tomorrow is covered by this the day it moves. Only an exact name at the root
+    counts: a note somebody wrote called `memory.md` is not this, and a folder of their own called
+    `logs` is not either, because the names compared are the ones the machine owns.
+    """
+    getan: list[str] = []
+    eigene = {Path(rel).name for rel in (
+        OPEN_DIR, RUNTIME_DIR, MEMORY_DIR, LOGS_DIR, HISTORY_DIR, SCRATCH_DIR, TRASH_DIR,
+        DESIGN_DIR, CONNECTIONS_DIR, EXTENSIONS_DIR, SYSTEM_MATERIAL_DIR, USER_FILE,
+        f"{SYSTEM_DIR}/{ROUTING_FILE}", f"{SYSTEM_DIR}/{RETENTION_FILE}",
+        f"{SYSTEM_DIR}/{ALIASES_FILE}", f"{SYSTEM_DIR}/update-history.md")}
+    for name in sorted(eigene):
+        verirrt = space / name
+        richtig = space / SYSTEM_DIR / name
+        if not verirrt.exists() or verirrt == richtig:
+            continue
+        # Only where the machine already keeps its own copy in the right place. Without that this
+        # would move the one working copy of something into the trash and call it tidying up.
+        if not richtig.exists():
+            getan.append(f"{name} sits at the space root and nothing is under {SYSTEM_DIR}/ yet, "
+                         f"so it was left alone and needs a look")
+            continue
+        # "The new place holds it" is not the same as "the new place holds the newer one". A
+        # confirmation written into the old copy after the move was made would be tidied away here
+        # and never seen again, and the file it went missing from is the one that says how long
+        # documents are kept. Where the old copy is the newer one, nothing is moved and the two are
+        # put to the user, because which one is right is a question about their decisions.
+        if _neuer_als(verirrt, richtig):
+            getan.append(f"{name} at the space root is NEWER than the copy under {SYSTEM_DIR}/, so "
+                         f"nothing was moved. Compare the two: something was written to the old "
+                         f"place after the move")
+            continue
+        if _move_into(space, verirrt, TRASH_DIR, "trashed", dated=True) == 0:
+            getan.append(f"{name} at the space root belonged under {SYSTEM_DIR}/ and went to "
+                         f"{TRASH_DIR}/, where the copy under {SYSTEM_DIR}/ is the one in use")
+    return getan
+
+
+def _migrate_archive_db_restale(space: Path) -> list[str]:
+    """Read a document into the index again where a step of this update changed the file itself.
+
+    The index holds a copy of the text as it was at the moment it was read. A rename moves the file
+    and rewrites lines inside it, and until now nothing read it again: the copy in the index kept
+    the old field values, so a search for a retired word answered with documents that no longer
+    contain it, quoting text that is not there any more.
+
+    Runs last, after every step that could have touched a file. Two limits keep it cheap enough to
+    sit in every update. Only text is considered, because a step of an update rewrites a field or a
+    path and never touches a scan; and only a file whose size no longer matches the index is read
+    again, because a modification time changes whenever a checkout puts a file back, without a
+    single character having changed. Measured on a real archive: the time-based question read all
+    55 documents, the size-based one read the 14 that had actually changed. On an archive with
+    thousands of scans in it, the difference is hours of text recognition.
+    """
+    pfad = space / RUNTIME_DIR / ARCHIVE_DB
+    if not pfad.is_file():
+        return []
+
+    import sqlite3
+    try:
+        db = sqlite3.connect(str(pfad))
+    except Exception:  # noqa: BLE001
+        return []
+    try:
+        try:
+            zeilen = db.execute("SELECT path, size, mtime FROM documents").fetchall()
+        except Exception:  # noqa: BLE001
+            return []
+        getan: list[str] = []
+        for rel, groesse, zeit in zeilen:
+            datei = space / rel
+            if datei.suffix.lower() not in _TEXT_SUFFIXES:
+                continue
+            try:
+                stat = datei.stat()
+            except OSError:
+                continue
+            if stat.st_size == groesse:
+                continue
+            art, text = _read_as_text(datei)
+            if not art:
+                continue
+            db.execute("DELETE FROM content WHERE path = ?", (rel,))
+            db.execute("INSERT INTO content (path, body) VALUES (?, ?)",
+                       (rel, f"{_index_name_words(rel)}\n{text}"))
+            db.execute("UPDATE documents SET size = ?, mtime = ?, kind = ? WHERE path = ?",
+                       (stat.st_size, stat.st_mtime, art, rel))
+            getan.append(f"{rel} read into the archive index again")
+        if getan:
+            db.commit()
+            return getan
+    finally:
+        db.close()
+    return []
+
+
+def _migrate_retire_system_files(space: Path) -> list[str]:
+    """Take what the distribution no longer ships out of the system folder, into the trash.
+
+    Into the trash and not over the edge, like everything else: the file was the product's, but a
+    space is the user's, and a step that quietly removes things from it is not one they can check
+    afterwards.
+    """
+    getan: list[str] = []
+    for rel in _RETIRED_SYSTEM_FILES:
+        pfad = space / rel
+        if pfad.is_file() and _move_into(space, pfad, TRASH_DIR, "trashed", dated=True) == 0:
+            getan.append(f"{rel} is not part of the distribution any more, moved to {TRASH_DIR}/")
+    return getan
+
+
+def rename_areas(space: Path, moves: tuple[tuple[str, str], ...],
+                 kinds: dict[str, str] | None = None) -> list[str]:
+    """Rename areas in a space, everywhere a path can live. The whole checklist, in order.
+
+    Until 1.0 the areas can still change, so this is the mechanism rather than one migration: a
+    future rename is a list of pairs and a raised revision, not six places to remember. The order
+    matters and is the reason this is one function. Folders move first, because every step after it
+    decides whether to rewrite a path by asking whether the file is at the new place. The index
+    follows, then the notes, and the master index last, because it is rebuilt from what the others
+    left behind.
+
+    Six places hold a path, and the day one of them was forgotten cost a working archive that
+    reported success on every command:
+
+    1. the folders themselves, with their `kind:` fields
+    2. the machine's own files: the routing table, the pages of open work
+    3. the search index: the path column of every row
+    4. the search index again: the path is the first line of the searchable text
+    5. sentences in notes that name a path
+    6. the master index, whose headings are the area names
+
+    Records of what happened are not on that list and never will be. The activity log, the
+    operation reports and the journal say what was true on a day, and on that day the folder really
+    was called what it was called.
+    """
+    getan = _move_areas(space, moves, kinds or {})
+    getan += _rename_in_archive_index(space, moves)
+    getan += _rename_in_notes(space, moves)
+    return getan
+
+
+def _migrate_rooms_to_eight(space: Path) -> list[str]:
+    """Eleven areas become eight, through the general rename."""
+    return _move_areas(space, _ROOM_MOVES, _KIND_MOVES)
+
+
+def _migrate_archive_db_paths(space: Path) -> list[str]:
+    """The archive index follows the areas of the eight-area move."""
+    return _rename_in_archive_index(space, _ROOM_MOVES)
+
+
+def _migrate_area_paths_in_text(space: Path) -> list[str]:
+    """Sentences naming a path follow the areas of the eight-area move."""
+    return _rename_in_notes(space, _ROOM_MOVES)
+
+
+# Name, revision, step. Raise the revision when the step itself was wrong, never when only the data
+# changed: it is the one way a fix reaches a space that already ran the faulty version, and it costs
+# one repeat run everywhere else.
+def _migrate_routing_keeps_a_file(space: Path) -> list[str]:
+    """Take the sentence out of a routing rule that told a file to stay in the inbox.
+
+    A rule could once say that, and the mechanic enforced it. It is gone, because a file left in the
+    inbox is read again at every session start and cannot be told from one that arrived this
+    morning. The sentence in the rule is not gone with it: it sits in the user's own words, it
+    contradicts what now happens, and the run that reads the rule follows the sentence.
+
+    So the sentence goes and nothing takes its place. What the file's own fate should be is the
+    user's answer, in `keep`, and guessing it here would be the same mistake in the other direction:
+    a rule that quietly starts discarding a file the user wanted kept. Left empty, it is asked once,
+    the next time such a file arrives.
+    """
+    veraltet = re.compile(
+        r"[^.;\n]*\b(stays? where it is|stays put|bleibt liegen|"
+        r"nicht (gel[öo]scht|entfernt|verschoben|abgelegt)|"
+        r"not (be )?(deleted|removed|moved|filed))\b[^.;\n]*[.;]?", re.I)
+    pfad = _routing_path(space)
+    daten = _routing(space)
+    regeln = daten.get("rules") if isinstance(daten.get("rules"), list) else []
+    geaendert: list[str] = []
+    for regel in regeln:
+        if not isinstance(regel, dict):
+            continue
+        anweisung = str(regel.get("do") or "")
+        gekuerzt = veraltet.sub("", anweisung).strip(" ;,")
+        if gekuerzt != anweisung.strip(" ;,"):
+            regel["do"] = re.sub(r"\s{2,}", " ", gekuerzt)
+            geaendert.append(str(regel.get("name", "?")))
+    if geaendert:
+        pfad.write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        _append_activity_log(space, "zanmai.py",
+                             f"routing: took the stay-in-the-inbox sentence out of "
+                             f"{len(geaendert)} rule(s): {', '.join(geaendert)}")
+    return geaendert
+
+
+_MIGRATIONS = (
+    ("journal-one-layer", 1, _migrate_journal_to_one_layer),
+    # 2: two folders of the same name were counted as two things, which split an archive that
+    # existed under both the old area name and the new one.
+    ("rooms-to-eight", 2, _migrate_rooms_to_eight),
+    ("archive-db-name", 1, _migrate_archive_db_name),
+    # 3: the searchable text kept the old area name. Revision 2 only repaired rows whose path was
+    # also still wrong, which is never the case in a space that already ran revision 1.
+    ("archive-db-paths", 3, _migrate_archive_db_paths),
+    # 2: the first version rewrote the activity log, the operation reports and the journal, which
+    # are records of days that are over.
+    ("area-paths-in-text", 2, _migrate_area_paths_in_text),
+    ("retire-system-files", 1, _migrate_retire_system_files),
+    ("brands-into-system", 1, _migrate_brands_into_system),
+    ("empty-journal-days", 1, _migrate_empty_journal_days),
+    ("docs-out-of-the-manual", 1, _migrate_docs_out_of_the_manual),
+    ("retention-without-jurisdiction", 1, _migrate_retention_without_jurisdiction),
+    ("retention-as-a-difference", 1, _migrate_retention_to_a_difference),
+    ("stray-root-copies", 1, _migrate_stray_root_copies),
+    ("archive-db-restale", 1, _migrate_archive_db_restale),
+    ("routing-keeps-a-file", 1, _migrate_routing_keeps_a_file),
+)
+
+
+def _run_space_migrations(space: Path) -> list[str]:
+    """Every structural step this space has not had at its current revision, in order.
+
+    The revision is what makes a correction reach the spaces that need it most. A step used to be
+    recorded by name alone, so a space that had run a faulty version of it was the one space the
+    fix could never arrive in: the name was there, the step was skipped for ever, and the damage
+    stayed while every later update reported success. Raising the revision of a step makes it run
+    again everywhere, which is why every step here has to be safe to run twice. They are: each one
+    decides per file, against the disk, and does nothing where there is nothing to do.
+    """
+    schon = _migrations_done(space)
+    zeilen: list[str] = []
+    for name, revision, schritt in _MIGRATIONS:
+        if schon.get(name, 0) >= revision:
+            continue
+        try:
+            bewegt = schritt(space)
+        except OSError as fehler:
+            zeilen.append(f"migration {name} could not finish ({fehler}); nothing recorded, it runs again")
+            continue
+        _migration_record(space, name, revision)
+        if bewegt:
+            zeilen.append(f"migration {name}: {len(bewegt)} file(s) moved")
+    return zeilen
+
+
 def cmd_setup_update(args: argparse.Namespace) -> int:
-    """Post-merge mechanic refresh for an updated vault. The git fetch and the
+    """Post-merge mechanic refresh for an updated space. The git fetch and the
     ff-merge happen outside this command (Pepper runs them via Bash with the
     user-facing TL;DR preview gate). After the working tree carries the new
     distribution, this command refreshes the host-side state that does not
@@ -9424,14 +11623,14 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
     `.claude/skills/`, `.claude/settings.json`, and the top-level folders the
     manifest requires (empty ones carry no files, so git cannot deliver them).
     Idempotent, safe to run repeatedly on the same merged state."""
-    vault = Path(args.vault_root).resolve()
-    if not vault.exists():
-        print(f"fail: vault root does not exist: {vault}", file=sys.stderr)
+    space = Path(args.space_root).resolve()
+    if not space.exists():
+        print(f"fail: space root does not exist: {space}", file=sys.stderr)
         return 1
-    user_md = vault / SYSTEM_DIR / "user.md"
+    user_md = space / SYSTEM_DIR / "user.md"
     if not user_md.exists():
         print(
-            f"fail: vault not initialised (no zanmai/user.md). Run 'setup init' first.",
+            f"fail: space not initialised (no zanmai/user.md). Run 'setup init' first.",
             file=sys.stderr,
         )
         return 1
@@ -9446,22 +11645,37 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
 
     # Folders an empty release cannot deliver, since git carries no empty directory.
     # Same list `setup init` creates from and `setup validate` checks against.
-    for rel in _required_folders(vault):
-        _vault_mkdir(vault, vault / rel, parents=True, exist_ok=True)
+    for rel in _required_folders(space):
+        _space_mkdir(space, space / rel, parents=True, exist_ok=True)
 
-    _install_agent_symlinks(vault, _AGENT_NAMES)
-    _install_skill_symlinks(vault, _SKILL_SYMLINK_MAP)
+    # Both ignore lists, rewritten from the current folder names. A release that renames an area
+    # otherwise leaves a space excluding a folder that no longer exists and committing one that does.
+    _write_ignore_rules(space)
 
-    settings_path = vault / ".claude" / "settings.json"
+    # Structural steps the script does itself, before anything else reads the tree.
+    for zeile in _run_space_migrations(space):
+        print(f"  {zeile}")
+
+    # Again, because a rename removes empty shells so that arriving material is not pushed aside
+    # into `<name>-1`, and a required folder that happened to be empty is such a shell. It is the
+    # end state that has to be complete, not the starting one: `zanmai/design` was created above,
+    # emptied as a shell during the move, and the space then failed its own structure check.
+    for rel in _required_folders(space):
+        _space_mkdir(space, space / rel, parents=True, exist_ok=True)
+
+    _install_agent_symlinks(space, _AGENT_NAMES)
+    _install_skill_symlinks(space, _SKILL_SYMLINK_MAP)
+
+    settings_path = space / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(
-        _render_settings_json(vault, python_cmd=python_cmd), encoding="utf-8"
+        _render_settings_json(space, python_cmd=python_cmd), encoding="utf-8"
     )
 
     # Merge the baseline allow-rules (zanmai.py + the experts' MCP tools) into
     # settings.local.json: add any that are missing, keep whatever the user added.
-    local_path = vault / ".claude" / "settings.local.json"
-    baseline = json.loads(_render_settings_local_json(vault, python_cmd=python_cmd))
+    local_path = space / ".claude" / "settings.local.json"
+    baseline = json.loads(_render_settings_local_json(space, python_cmd=python_cmd))
     existing: dict = {}
     if local_path.exists():
         try:
@@ -9475,23 +11689,23 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
     existing.setdefault("permissions", {})["allow"] = allow
     local_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
-    # Carry a vault that still keeps its work objects in the old `.base` folder across. Once,
+    # Carry a space that still keeps its work objects in the old `.base` folder across. Once,
     # here rather than on first read: a migration that runs inside a read runs during every
-    # session start, and one that never runs leaves a vault silently holding two lists.
-    umzug = _work_adopt_legacy(vault)
+    # session start, and one that never runs leaves a space silently holding two lists.
+    umzug = _work_adopt_legacy(space)
     if umzug:
         print(f"    {umzug}")
 
-    # Backfill a lessons file for any expert added after this vault was
+    # Backfill a lessons file for any expert added after this space was
     # initialised. Memory is user-immune: create only, never overwrite.
     for agent in _MEMORY_AGENTS:
-        lessons = vault / MEMORY_DIR / "agents" / agent / "lessons.md"
+        lessons = space / MEMORY_DIR / "agents" / agent / "lessons.md"
         if not lessons.exists():
             lessons.parent.mkdir(parents=True, exist_ok=True)
             lessons.write_text(_render_agent_lessons(agent.capitalize()), encoding="utf-8")
 
     print(
-        f"ok: refresh complete at {vault} "
+        f"ok: refresh complete at {space} "
         f"(agent symlinks, skill symlinks, settings.json, settings.local.json)"
     )
     return 0
@@ -9499,11 +11713,11 @@ def cmd_setup_update(args: argparse.Namespace) -> int:
 
 # Snapshot ----
 
-def _set_auto_snapshots_flag(vault_root: Path, enabled: bool) -> int:
+def _set_auto_snapshots_flag(space_root: Path, enabled: bool) -> int:
     """Flip `auto_snapshots` in `zanmai/user.md`. Replaces an existing
     `auto_snapshots` line; if it is not present, inserts `auto_snapshots:`
     before the closing frontmatter delimiter."""
-    user_md = vault_root / SYSTEM_DIR / "user.md"
+    user_md = space_root / SYSTEM_DIR / "user.md"
     if not user_md.exists():
         print(f"fail: {user_md} not found (run 'setup init' first)", file=sys.stderr)
         return 1
@@ -9533,16 +11747,16 @@ def _set_auto_snapshots_flag(vault_root: Path, enabled: bool) -> int:
             print("fail: could not locate frontmatter block in user.md", file=sys.stderr)
             return 1
     user_md.write_text(updated, encoding="utf-8")
-    print(f"ok: auto_snapshots {'enabled' if enabled else 'disabled'} in {user_md.relative_to(vault_root)}")
+    print(f"ok: auto_snapshots {'enabled' if enabled else 'disabled'} in {user_md.relative_to(space_root)}")
     return 0
 
 
 def cmd_snapshot_enable(args: argparse.Namespace) -> int:
-    return _set_auto_snapshots_flag(Path(args.vault).resolve(), True)
+    return _set_auto_snapshots_flag(Path(args.space).resolve(), True)
 
 
 def cmd_snapshot_disable(args: argparse.Namespace) -> int:
-    return _set_auto_snapshots_flag(Path(args.vault).resolve(), False)
+    return _set_auto_snapshots_flag(Path(args.space).resolve(), False)
 
 
 # What the history never takes in. Two of them are the machine's own bookkeeping, and one is the
@@ -9559,9 +11773,9 @@ _HISTORY_EXCLUDE = (
 )
 
 
-def _git(vault: Path, *args: str, check: bool = True,
+def _git(space: Path, *args: str, check: bool = True,
          env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    """Run git against the history repository: its own git dir, the vault as the working tree.
+    """Run git against the history repository: its own git dir, the space as the working tree.
 
     Two repositories share this folder. The distribution's `.git/` tracks what ships and is how an
     update arrives; this one tracks what the user owns and never leaves the machine. Keeping them
@@ -9569,85 +11783,196 @@ def _git(vault: Path, *args: str, check: bool = True,
     copy of everything.
     """
     env = {**os.environ,
-           "GIT_DIR": str(vault / HISTORY_DIR),
-           "GIT_WORK_TREE": str(vault),
+           "GIT_DIR": str(space / HISTORY_DIR),
+           "GIT_WORK_TREE": str(space),
            "GIT_CONFIG_NOSYSTEM": "1",
            **(env_extra or {})}
-    result = subprocess.run(["git", *args], env=env, cwd=str(vault),
+    result = subprocess.run(["git", *args], env=env, cwd=str(space),
                             capture_output=True, text=True)
     if check and result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)}: {result.stderr.strip() or result.stdout.strip()}")
     return result
 
 
-def _history_ready(vault: Path) -> bool:
-    return (vault / HISTORY_DIR / "HEAD").is_file()
+def _history_ready(space: Path) -> bool:
+    return (space / HISTORY_DIR / "HEAD").is_file()
 
 
-def _history_ensure(vault: Path) -> list[str]:
+def _history_ensure(space: Path) -> list[str]:
     """Create the history repository if it is not there. Idempotent, says what it did.
 
-    The excludes live in the repository's own `info/exclude`, not in a `.gitignore` in the vault: a
+    The excludes live in the repository's own `info/exclude`, not in a `.gitignore` in the space: a
     file in the working tree would be read by both repositories, and the two want opposite things.
     """
     notes: list[str] = []
-    if not _history_ready(vault):
-        (vault / HISTORY_DIR).parent.mkdir(parents=True, exist_ok=True)
-        _git(vault, "init", "-q", "-b", "main")
+    if not _history_ready(space):
+        (space / HISTORY_DIR).parent.mkdir(parents=True, exist_ok=True)
+        _git(space, "init", "-q", "-b", "main")
         notes.append(f"started the history in {HISTORY_DIR}/")
-    (vault / HISTORY_DIR / "info").mkdir(parents=True, exist_ok=True)
-    (vault / HISTORY_DIR / "info" / "exclude").write_text(
+    (space / HISTORY_DIR / "info").mkdir(parents=True, exist_ok=True)
+    (space / HISTORY_DIR / "info" / "exclude").write_text(
         "# What the history leaves out. Written by zanmai.py, edits are overwritten.\n"
         + "\n".join(_HISTORY_EXCLUDE) + "\n", encoding="utf-8")
     # An identity, so a commit never fails on a machine where git was never configured. It is local
     # to this repository and says what it is, because nobody signed up to be an author here.
-    _git(vault, "config", "user.name", "Zanmai")
-    _git(vault, "config", "user.email", "zanmai@localhost")
-    _git(vault, "config", "gc.auto", "256")
+    _git(space, "config", "user.name", "Zanmai")
+    _git(space, "config", "user.email", "zanmai@localhost")
+    _git(space, "config", "gc.auto", "256")
     return notes
 
 
 def cmd_snapshot_list(args: argparse.Namespace) -> int:
     """List the snapshots, newest first: when, why, and the name to restore from."""
-    vault = Path(args.vault).resolve()
-    if not _history_ready(vault):
+    space = Path(args.space).resolve()
+    if not _history_ready(space):
         print("no snapshots yet. The first one is taken before anything overwrites your material.")
         return 0
-    log = _git(vault, "log", "--format=%h  %ad  %s", "--date=format:%Y-%m-%d %H:%M", check=False)
+    log = _git(space, "log", "--format=%h  %ad  %s", "--date=format:%Y-%m-%d %H:%M", check=False)
     if log.returncode != 0 or not log.stdout.strip():
         print("no snapshots yet. The first one is taken before anything overwrites your material.")
         return 0
     print(log.stdout, end="")
     anzahl = len(log.stdout.strip().splitlines())
-    groesse = _lesbare_groesse(sum(f.stat().st_size for f in (vault / HISTORY_DIR).rglob("*") if f.is_file()))
+    groesse = _lesbare_groesse(sum(f.stat().st_size for f in (space / HISTORY_DIR).rglob("*") if f.is_file()))
     print(f"\n{anzahl} snapshot(s), {groesse} on disk for all of them together.")
     return 0
 
 
-def cmd_snapshot_restore(args: argparse.Namespace) -> int:
-    """Put one file back the way it was in a snapshot. The current version goes to the trash first.
+def _restore_whole_space(space: Path, snapshot: str) -> int:
+    """Put the whole space back the way it was in one snapshot, in one operation.
 
-    Only a named path, never the whole vault: restoring everything is a decision about material the
-    user may have worked on since, and that is a conversation, not a flag.
+    This exists because the documentation promised it and the command could not do it: an update
+    replaces well over a hundred files, and putting them back one named path at a time is not a way
+    back, it is a way to build a half-and-half state by hand. The snapshot before an update is only
+    a way back if it can be taken as a whole.
+
+    What makes it safe is not that it asks, it is that nothing is destroyed. A snapshot of the
+    current state is taken first, so going back is itself reversible, and anything that exists now
+    and did not exist then goes to the trash rather than over the edge, named one by one in the
+    output. The runtime folder is outside the history entirely, so an index or a cache is neither
+    restored nor removed.
     """
-    vault = Path(args.vault).resolve()
-    if not _history_ready(vault):
+    if not _history_ready(space):
+        print("fail: there are no snapshots to restore from", file=sys.stderr)
+        return 1
+    if _git(space, "rev-parse", "--verify", f"{snapshot}^{{commit}}", check=False).returncode != 0:
+        print(f"fail: no such snapshot: {snapshot}. `snapshot list` shows what there is.",
+              file=sys.stderr)
+        return 1
+
+    # The state being left has to be reachable afterwards, or this command is the one operation in
+    # Zanmai with no way back out of it.
+    sicherung = argparse.Namespace(space=str(space), reason=f"before going back to {snapshot}",
+                                   agent="zanmai.py")
+    try:
+        cmd_snapshot_create(sicherung)
+    except Exception as fehler:  # noqa: BLE001
+        print(f"error: the current state could not be snapshotted ({fehler}), so nothing was "
+              f"changed.", file=sys.stderr)
+        return 1
+
+    def dateien(ref: str) -> set[str]:
+        out = _git(space, "ls-tree", "-r", "--name-only", ref, check=False)
+        return {z for z in out.stdout.splitlines() if z.strip()}
+
+    damals = dateien(snapshot)
+    jetzt = dateien("HEAD")
+
+    # Never through its own trash, and never into the history: both would move a folder into
+    # itself. Their content is the record of what was already put aside.
+    seither = sorted(p for p in (jetzt - damals)
+                     if not p.startswith((f"{TRASH_DIR}/", f"{HISTORY_DIR}/")))
+    weggelegt: list[str] = []
+    geblieben: list[str] = []
+    for rel in seither:
+        pfad = space / rel
+        if not pfad.is_file():
+            continue
+        # A file another rule protects stays where it is, and that is right: a keeping rule does
+        # not stop applying because a restore is running. What was missing is that the answer got
+        # lost, printed as a failure line at the top of a run that then succeeded completely.
+        if _move_into(space, pfad, TRASH_DIR, "trashed", dated=True) == 0:
+            weggelegt.append(rel)
+        else:
+            geblieben.append(rel)
+
+    aus = _git(space, "checkout", snapshot, "--", ".", check=False)
+    if aus.returncode != 0:
+        print(f"error: the space could not be put back ({aus.stderr.strip()}). The state before "
+              f"this attempt is in the snapshot just taken.", file=sys.stderr)
+        return 1
+
+    # Folders the snapshot never had stay behind otherwise, because git carries no empty folder and
+    # a checkout cannot remove what it does not know. A space after a way back looked like neither
+    # state: both layouts side by side, the new ones empty. Only empty ones go, so nothing anybody
+    # put anywhere is touched.
+    leer = 0
+    for ordner in sorted((d for d in space.rglob("*") if d.is_dir()),
+                         key=lambda d: len(d.parts), reverse=True):
+        rel = ordner.relative_to(space).as_posix()
+        if rel.startswith((f"{TRASH_DIR}", f"{HISTORY_DIR}", ".git")):
+            continue
+        if any(ordner.iterdir()):
+            continue
+        if any(p.startswith(f"{rel}/") for p in damals):
+            continue
+        ordner.rmdir()
+        leer += 1
+
+    _append_activity_log(space, "zanmai.py", f"restored the whole space from snapshot {snapshot}")
+    print(f"ok: the space is back as it was in {snapshot} ({len(damals)} file(s)).")
+    if weggelegt:
+        print(f"{len(weggelegt)} file(s) that did not exist then went to {TRASH_DIR}/, restorable:")
+        for rel in weggelegt[:20]:
+            print(f"  {rel}")
+        if len(weggelegt) > 20:
+            print(f"  ... and {len(weggelegt) - 20} more")
+    if leer:
+        print(f"{leer} empty folder(s) that did not exist then were removed.")
+    if geblieben:
+        print(f"{len(geblieben)} file(s) stayed where they are, because a rule of yours protects "
+              f"them. Look at each one: the snapshot may hold the same material under its old "
+              f"path, and then you have it twice.")
+        for rel in geblieben:
+            print(f"  {rel}")
+    print("The state you just left is a snapshot of its own, so this step is undoable as well.")
+    return 0
+
+
+def cmd_snapshot_restore(args: argparse.Namespace) -> int:
+    """Put back what a snapshot held: one named file, or the whole space with `--all`.
+
+    One path at a time is the ordinary case and stays the default. The whole space is the case an
+    update needs, and it was missing while the documentation named it as the way back from a bad
+    update.
+    """
+    space = Path(args.space).resolve()
+    if getattr(args, "all", False):
+        if args.path:
+            print("fail: --path and --all ask for different things; use one of them",
+                  file=sys.stderr)
+            return 1
+        return _restore_whole_space(space, args.snapshot)
+    if not args.path:
+        print("fail: name the path to put back, or --all for the whole space", file=sys.stderr)
+        return 1
+    if not _history_ready(space):
         print("fail: there are no snapshots to restore from", file=sys.stderr)
         return 1
     rel = args.path.replace("\\", "/").lstrip("/")
-    zeigt = _git(vault, "show", f"{args.snapshot}:{rel}", check=False)
+    zeigt = _git(space, "show", f"{args.snapshot}:{rel}", check=False)
     if zeigt.returncode != 0:
         print(f"fail: {rel} is not in snapshot {args.snapshot}. `snapshot list` shows what there is, "
               f"and `snapshot show --snapshot <name>` lists what a snapshot holds.", file=sys.stderr)
         return 1
-    jetzt = vault / rel
+    jetzt = space / rel
     if jetzt.is_file():
-        rc = _move_into(vault, jetzt, TRASH_DIR, "trashed", dated=True)
+        rc = _move_into(space, jetzt, TRASH_DIR, "trashed", dated=True)
         if rc != 0:
             return rc
-    _vault_mkdir(vault, jetzt.parent, parents=True, exist_ok=True)
-    _git(vault, "checkout", args.snapshot, "--", rel)
-    _append_activity_log(vault, "zanmai.py", f"restored {rel} from snapshot {args.snapshot}")
+    _space_mkdir(space, jetzt.parent, parents=True, exist_ok=True)
+    _git(space, "checkout", args.snapshot, "--", rel)
+    _append_activity_log(space, "zanmai.py", f"restored {rel} from snapshot {args.snapshot}")
     print(f"ok: {rel} is back as it was in {args.snapshot}. The version that was there went to "
           f"{TRASH_DIR}/, so this is undoable too.")
     return 0
@@ -9655,18 +11980,18 @@ def cmd_snapshot_restore(args: argparse.Namespace) -> int:
 
 def cmd_snapshot_show(args: argparse.Namespace) -> int:
     """What one snapshot holds, or what changed in it."""
-    vault = Path(args.vault).resolve()
-    if not _history_ready(vault):
+    space = Path(args.space).resolve()
+    if not _history_ready(space):
         print("no snapshots yet")
         return 0
     if args.path:
-        out = _git(vault, "show", f"{args.snapshot}:{args.path.lstrip('/')}", check=False)
+        out = _git(space, "show", f"{args.snapshot}:{args.path.lstrip('/')}", check=False)
         if out.returncode != 0:
             print(f"fail: {args.path} is not in snapshot {args.snapshot}", file=sys.stderr)
             return 1
         print(out.stdout, end="")
         return 0
-    out = _git(vault, "show", "--stat", "--format=%h  %ad  %s",
+    out = _git(space, "show", "--stat", "--format=%h  %ad  %s",
                "--date=format:%Y-%m-%d %H:%M", args.snapshot, check=False)
     if out.returncode != 0:
         print(f"fail: no such snapshot: {args.snapshot}", file=sys.stderr)
@@ -9675,9 +12000,9 @@ def cmd_snapshot_show(args: argparse.Namespace) -> int:
     return 0
 
 
-def _snapshot_entries(vault: Path) -> list[tuple[str, str, str]]:
+def _snapshot_entries(space: Path) -> list[tuple[str, str, str]]:
     """Every snapshot, newest first: full hash, committed date in ISO, subject line."""
-    log = _git(vault, "log", "--format=%H%x1f%cI%x1f%s", check=False)
+    log = _git(space, "log", "--format=%H%x1f%cI%x1f%s", check=False)
     if log.returncode != 0 or not log.stdout.strip():
         return []
     eintraege = []
@@ -9688,7 +12013,7 @@ def _snapshot_entries(vault: Path) -> list[tuple[str, str, str]]:
     return eintraege
 
 
-def _sweep_snapshots(vault: Path) -> list[str]:
+def _sweep_snapshots(space: Path) -> list[str]:
     """Cut the snapshot history back to its keeping window.
 
     A snapshot is a point to jump back to, taken before an update or a large edit, and whether that
@@ -9696,7 +12021,7 @@ def _sweep_snapshots(vault: Path) -> list[str]:
     pile: 25 of them held 2.6 GB, almost all of it the user's own video
     and slide files carried along a second time.
 
-    The newest one always survives, however old it is. A vault nobody touched for three weeks would
+    The newest one always survives, however old it is. A space nobody touched for three weeks would
     otherwise sit with no jump-back point at all, which is the one state this whole mechanism exists
     to prevent.
 
@@ -9705,29 +12030,29 @@ def _sweep_snapshots(vault: Path) -> list[str]:
     dropped ones held are then unreachable and go with the prune. Their hashes change, which is why
     `snapshot list` is the way to name one rather than a hash written down somewhere.
     """
-    if not _history_ready(vault):
+    if not _history_ready(space):
         return []
-    eintraege = _snapshot_entries(vault)
+    eintraege = _snapshot_entries(space)
     if len(eintraege) < 2:
         return []
     grenze = datetime.now().astimezone() - timedelta(days=SNAPSHOT_RETENTION_DAYS)
     behalten = [e for e in eintraege if datetime.fromisoformat(e[1]) >= grenze] or [eintraege[0]]
     if len(behalten) == len(eintraege):
         return []
-    vorher = sum(f.stat().st_size for f in (vault / HISTORY_DIR).rglob("*") if f.is_file())
+    vorher = sum(f.stat().st_size for f in (space / HISTORY_DIR).rglob("*") if f.is_file())
     elternteil = ""
     for commit, datum, betreff in reversed(behalten):   # oldest first, so each gets its parent
-        baum = _git(vault, "rev-parse", f"{commit}^{{tree}}").stdout.strip()
+        baum = _git(space, "rev-parse", f"{commit}^{{tree}}").stdout.strip()
         args = ["commit-tree", baum, "-m", betreff]
         if elternteil:
             args += ["-p", elternteil]
-        elternteil = _git(vault, *args,
+        elternteil = _git(space, *args,
                           env_extra={"GIT_AUTHOR_DATE": datum, "GIT_COMMITTER_DATE": datum}
                           ).stdout.strip()
-    _git(vault, "update-ref", "refs/heads/main", elternteil)
-    _git(vault, "reflog", "expire", "--expire=now", "--all", check=False)
-    _git(vault, "gc", "--prune=now", "--quiet", check=False)
-    nachher = sum(f.stat().st_size for f in (vault / HISTORY_DIR).rglob("*") if f.is_file())
+    _git(space, "update-ref", "refs/heads/main", elternteil)
+    _git(space, "reflog", "expire", "--expire=now", "--all", check=False)
+    _git(space, "gc", "--prune=now", "--quiet", check=False)
+    nachher = sum(f.stat().st_size for f in (space / HISTORY_DIR).rglob("*") if f.is_file())
     weg = len(eintraege) - len(behalten)
     return [f"dropped {weg} snapshot(s) older than {SNAPSHOT_RETENTION_DAYS} days, "
             f"{len(behalten)} left, {_lesbare_groesse(vorher)} -> {_lesbare_groesse(nachher)}. "
@@ -9737,23 +12062,23 @@ def _sweep_snapshots(vault: Path) -> list[str]:
 
 def cmd_snapshot_compact(args: argparse.Namespace) -> int:
     """Let git pack the history down. Loses nothing, every snapshot stays."""
-    vault = Path(args.vault).resolve()
-    if not _history_ready(vault):
+    space = Path(args.space).resolve()
+    if not _history_ready(space):
         print("no history to compact")
         return 0
-    vorher = sum(f.stat().st_size for f in (vault / HISTORY_DIR).rglob("*") if f.is_file())
-    _git(vault, "gc", "--quiet")
-    nachher = sum(f.stat().st_size for f in (vault / HISTORY_DIR).rglob("*") if f.is_file())
+    vorher = sum(f.stat().st_size for f in (space / HISTORY_DIR).rglob("*") if f.is_file())
+    _git(space, "gc", "--quiet")
+    nachher = sum(f.stat().st_size for f in (space / HISTORY_DIR).rglob("*") if f.is_file())
     print(f"ok: history packed, {_lesbare_groesse(vorher)} -> {_lesbare_groesse(nachher)}. "
           f"Every snapshot is still there.")
     return 0
 
 
-def _read_auto_snapshots_flag(vault_root: Path) -> bool:
+def _read_auto_snapshots_flag(space_root: Path) -> bool:
     """Return the `auto_snapshots` flag from `zanmai/user.md` (default true).
-    Default-true means a vault without user.md (e.g. the builder's own dist
+    Default-true means a space without user.md (e.g. the builder's own dist
     tree) is never blocked by this check."""
-    user_md = vault_root / SYSTEM_DIR / "user.md"
+    user_md = space_root / SYSTEM_DIR / "user.md"
     if not user_md.exists():
         return True
     try:
@@ -9765,9 +12090,9 @@ def _read_auto_snapshots_flag(vault_root: Path) -> bool:
 
 
 def cmd_snapshot_create(args: argparse.Namespace) -> int:
-    """Take a snapshot: commit the whole vault into the history repository.
+    """Take a snapshot: commit the whole space into the history repository.
 
-    A snapshot used to be a full copy of the vault, which cost what the user owns every single time
+    A snapshot used to be a full copy of the space, which cost what the user owns every single time
     while protecting one change. Measured: two copies, thirteen gigabytes, for three
     gigabytes of material, because each copy also copied the copies before it. The history stores
     every file once by content, so an unchanged file costs nothing on the second snapshot and a
@@ -9775,16 +12100,16 @@ def cmd_snapshot_create(args: argparse.Namespace) -> int:
 
     Respects `auto_snapshots: false` in `zanmai/user.md`.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     if not args.reason.strip():
         print("fail: reason-slug empty", file=sys.stderr)
         return 1
     reason = _slugify(args.reason)
-    if not _read_auto_snapshots_flag(vault):
+    if not _read_auto_snapshots_flag(space):
         print(f"skip: auto_snapshots disabled in {USER_FILE}")
         return 0
-    if not vault.is_dir():
-        print(f"fail: not a directory: {vault}", file=sys.stderr)
+    if not space.is_dir():
+        print(f"fail: not a directory: {space}", file=sys.stderr)
         return 1
     if shutil.which("git") is None:
         print("fail: git is not on this machine, and the history is a git repository. "
@@ -9792,23 +12117,23 @@ def cmd_snapshot_create(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        for note in _history_ensure(vault):
+        for note in _history_ensure(space):
             print(f"ok: {note}")
-        _git(vault, "add", "-A")
-        stand = _git(vault, "status", "--porcelain")
-        if not stand.stdout.strip() and _git(vault, "rev-parse", "HEAD", check=False).returncode == 0:
-            letzte = _git(vault, "log", "-1", "--format=%h %s", check=False).stdout.strip()
+        _git(space, "add", "-A")
+        stand = _git(space, "status", "--porcelain")
+        if not stand.stdout.strip() and _git(space, "rev-parse", "HEAD", check=False).returncode == 0:
+            letzte = _git(space, "log", "-1", "--format=%h %s", check=False).stdout.strip()
             print(f"ok: nothing has changed since the last snapshot ({letzte}), so there is nothing "
                   f"to take. That one still covers you.")
             return 0
-        _git(vault, "commit", "-q", "-m", reason)
-        kurz = _git(vault, "rev-parse", "--short", "HEAD").stdout.strip()
+        _git(space, "commit", "-q", "-m", reason)
+        kurz = _git(space, "rev-parse", "--short", "HEAD").stdout.strip()
     except RuntimeError as exc:
         print(f"fail: the snapshot could not be taken ({exc}). Nothing has been changed.",
               file=sys.stderr)
         return 1
 
-    _append_activity_log(vault, "zanmai.py", f"snapshot {kurz} ({reason})")
+    _append_activity_log(space, "zanmai.py", f"snapshot {kurz} ({reason})")
     print(f"snapshot ok: {kurz} ({reason})")
     return 0
 
@@ -9851,13 +12176,13 @@ def _scan_load_json(path: Path) -> dict:
         return {}
 
 
-def _discover_mcp_servers(vault: Path) -> list[tuple[str, str]]:
+def _discover_mcp_servers(space: Path) -> list[tuple[str, str]]:
     """MCP servers Claude Code knows on this machine, read from its config:
     global servers (settings.json, ~/.claude.json top-level), this project's
-    servers (~/.claude.json projects[<vault>] and a project-local .mcp.json),
+    servers (~/.claude.json projects[<space>] and a project-local .mcp.json),
     plus servers configured for ANOTHER folder (scope "other folder"). The last
     group is not reachable here, but it is an access the user already has and
-    that already works, so it is reused for this vault instead of establishing a
+    that already works, so it is reused for this space instead of establishing a
     second one beside it. Returns sorted (name, scope) pairs. Coupled to Claude
     Code's private layout by necessity, every read is defensive, a layout change
     just yields fewer."""
@@ -9870,14 +12195,14 @@ def _discover_mcp_servers(vault: Path) -> list[tuple[str, str]]:
         found.setdefault(name, "global")
     projects = cj.get("projects") or {}
     for key, entry in projects.items():
-        if key == str(vault) or not isinstance(entry, dict):
+        if key == str(space) or not isinstance(entry, dict):
             continue
         for name in (entry.get("mcpServers") or {}):
             found.setdefault(name, "other folder")
-    proj = projects.get(str(vault)) or {}
+    proj = projects.get(str(space)) or {}
     for name in (proj.get("mcpServers") or {}):
         found[name] = "project"
-    for name in (_scan_load_json(vault / ".mcp.json").get("mcpServers") or {}):
+    for name in (_scan_load_json(space / ".mcp.json").get("mcpServers") or {}):
         found[name] = "project"
     return sorted(found.items())
 
@@ -9890,13 +12215,13 @@ def _discover_plugins() -> list[str]:
 
 
 def cmd_connection_scan(args: argparse.Namespace) -> int:
-    """Discover connectable sources for this vault: MCP servers and enabled
+    """Discover connectable sources for this space: MCP servers and enabled
     plugins from Claude Code's config, plus CLIs on PATH and (macOS) relevant
-    apps. Project-aware, only servers reachable from this vault are listed.
+    apps. Project-aware, only servers reachable from this space are listed.
     Informational; registers nothing. The reads of Claude Code's config are
     defensive, so a layout change degrades gracefully."""
-    vault = Path(args.vault).resolve()
-    mcp = _discover_mcp_servers(vault)
+    space = Path(args.space).resolve()
+    mcp = _discover_mcp_servers(space)
     plugins = _discover_plugins()
     found_cli = [(name, desc) for name, desc in _CONNECTION_SCAN_CLIS.items() if shutil.which(name)]
     print("# Connection scan")
@@ -9904,7 +12229,7 @@ def cmd_connection_scan(args: argparse.Namespace) -> int:
     print()
     reachable = [(name, scope) for name, scope in mcp if scope != "other folder"]
     elsewhere = [name for name, scope in mcp if scope == "other folder"]
-    print("## MCP servers (reachable from this vault)")
+    print("## MCP servers (reachable from this space)")
     if reachable:
         for name, scope in reachable:
             print(f"  {name:<34} ({scope})")
@@ -9915,7 +12240,7 @@ def cmd_connection_scan(args: argparse.Namespace) -> int:
         print("## Already configured for another folder (not reachable here)")
         for name in elsewhere:
             print(f"  {name}")
-        print("  A working access the user already has: reuse it for this vault, do not build a second one.")
+        print("  A working access the user already has: reuse it for this space, do not build a second one.")
         print()
     print("## Enabled plugins (may provide tools or skills)")
     if plugins:
@@ -9953,7 +12278,7 @@ def cmd_connection_scan(args: argparse.Namespace) -> int:
 # ----------------------------------------------------------------------------
 
 # Derived from the bundle kinds, never hand-kept. Written out by hand, these three lists were a
-# copy of a fact that lives above them, and the copy fell behind: `doing/` became a vault root and
+# copy of a fact that lives above them, and the copy fell behind: `workbench/` became a space root and
 # a bundle folder, and neither list heard about it, so the desk was not protected but unwatched.
 # Anything writable there landed with no frontmatter check and no index check at all.
 _HOOK_ENFORCED_KIND_PREFIXES = tuple(f"{f}/" for f in BUNDLE_FOLDERS) + (
@@ -9970,10 +12295,39 @@ _HOOK_EXEMPT_SUFFIXES = (".pdf", ".png", ".jpg", ".jpeg", ".gif", ".ics", ".webp
 _HOOK_NEVER_TARGETS = {
     f"/{SYSTEM_MATERIAL_DIR}/": f"Distribution files live here; changes get overwritten on update. Use {EXTENSIONS_DIR}/ for user-side additions.",
     f"/{HISTORY_DIR}/": "Only `zanmai.py snapshot` writes here. Take a snapshot instead of writing into the history.",
-    f"/{USER_FILE}": "Only `zanmai.py setup init` writes the owner file. To change personalisation, edit manually outside this tool or re-run the setup workflow.",
     f"/{ARCHIVE_DIR}/": "Nothing is written here directly. Use `zanmai.py file archive <path>` from where the file is now, so it keeps its path and can be restored.",
     f"/{TRASH_DIR}/": "Nothing is written here directly. Use `zanmai.py file trash <path>` from where the file is now, so it keeps its path and can be restored.",
 }
+
+# The files where something stays true after this session ends. A refusal is wrong here, because
+# these files do have to change; what is wrong is changing them without the user. So this list does
+# not block, it hands the decision to the host, which stops and shows the user what would be
+# written before anything is.
+#
+# The distinction to the list above is what the user gets out of it. Up there, writing is always the
+# wrong move and another command does the job. Down here, writing is sometimes exactly right, and
+# only the user knows which time it is.
+#
+# `user.md` sat in the list above and that was the defect, not the protection: a standing rule in it
+# was wrong, the guard refused every attempt to correct it, and the user was told to edit the file
+# by hand. A guard that shuts the repair route while the damage route stays open protects nothing.
+_HOOK_ASK_TARGETS = {
+    f"{USER_FILE}": "the owner file, which holds personalisation and standing rules",
+    f"{SYSTEM_DIR}/{ROUTING_FILE}": "the routing table, which decides where incoming material goes",
+    f"{SYSTEM_DIR}/{RETENTION_FILE}": "the keeping terms, which decide how long documents stay",
+}
+
+
+def _hook_names_path(text: str, ziel: str) -> bool:
+    """Does this call name that space path, absolute or relative?
+
+    Written after the guard was tried in a real space and stayed silent: it matched on a leading
+    slash, and a run works from the space root, so it writes `zanmai/memory/general.md` without one.
+    The guard would have held against every absolute path and let through the form that actually
+    gets typed. What is required instead is that nothing word-like sits directly in front, so
+    `myzanmai/user.md` is a different file and stays one.
+    """
+    return re.search(rf"(?:^|[^\w.\-]){re.escape(ziel)}", text) is not None
 _HOOK_ALLOWED_KINDS = set(KIND_FIELDS)
 
 
@@ -9991,12 +12345,17 @@ def _guard_refused(payload: dict, guard: str, grund: str) -> None:
 
     Never fails loudly. A guard that cannot write its note still has to make its decision.
     """
+    _guard_notiz(payload, guard, "refused", grund)
+
+
+def _guard_notiz(payload: dict, guard: str, art: str, grund: str) -> None:
+    """One line in the activity log for a guard that fired. Never fails loudly."""
     try:
         start = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or "."
-        vault = _find_vault_root(Path(start))
-        if vault is None:
+        space = _find_space_root(Path(start))
+        if space is None:
             return
-        _append_activity_log(vault, guard, f"refused: {' '.join(str(grund).split())[:300]}")
+        _append_activity_log(space, guard, f"{art}: {' '.join(str(grund).split())[:300]}")
     except Exception:  # noqa: BLE001 -- a note that cannot be written never blocks the decision
         return
 
@@ -10009,7 +12368,7 @@ def _hook_read_payload() -> dict:
     dict on parse error so the hook never blocks because of a malformed pipe.
 
     The payload is kept because stdin can only be read once, and the refusal note written after the
-    guard returns needs the working directory in it to find the vault."""
+    guard returns needs the working directory in it to find the space."""
     global _LAST_PAYLOAD
     # A hook is given its payload on a pipe that closes. Anywhere else stdin may be open with
     # nothing on it and no end of file coming, and a plain `.read()` there waits for ever: the hook
@@ -10042,6 +12401,46 @@ def _hook_read_payload() -> dict:
     except (json.JSONDecodeError, OSError, ValueError, AttributeError, TypeError):
         _LAST_PAYLOAD = {}
     return _LAST_PAYLOAD
+
+
+def _hook_nein(text: str) -> int:
+    """Turn a call away without dressing it as a crash, and return its exit code.
+
+    A guard that has to refuse still does not have to look like a failure. Written to stderr with a
+    non-zero exit, a refusal reaches the person as a red block of error text for something the run
+    can put right by itself in the next breath, and it did: an ordinary handover to a specialist
+    showed up as twenty red lines while the second attempt went through a moment later. The host
+    reads this off stdout instead, stops the call the same way, and shows the reason as a note.
+
+    Kept apart from `_hook_frage` on purpose. That one hands the decision to the user, where they
+    are the only one who can make it. This one makes the decision and says why, where there is
+    nothing for them to decide.
+    """
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": text,
+    }}))
+    return 0
+
+
+def _hook_frage(text: str) -> int:
+    """Put a guard's finding to the user as a question rather than a wall, and return its exit code.
+
+    A wall teaches how to get around it; a question teaches why. These guards catch a move that is
+    usually the wrong one and now and then exactly right, and the person at the keyboard is the only
+    one who knows which it is this time. Three guards stay hard, because no later yes repairs what
+    they catch: writing into somebody else's system, deleting, overwriting a distribution file.
+
+    The host reads this off stdout and asks; the exit code stays 0, since a non-zero one is the
+    refusal this is replacing.
+    """
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": text,
+    }}))
+    return 0
 
 
 def _hook_relative_under_prefix(path: str, prefixes: tuple[str, ...]) -> tuple[str, str] | None:
@@ -10148,15 +12547,13 @@ def cmd_hook_checkbox_guard(args: argparse.Namespace) -> int:
                else "removing a task" if weg and not dazu
                else "changing a task")
         beispiel = (dazu or weg)[0]
-        print(f"checkbox-guard: refusing {tool} on {rel}, because it is {was}: {beispiel}",
-              file=sys.stderr)
-        print("  A task line never arrives as a side effect of editing a file.", file=sys.stderr)
-        print("  Asked for one, write it with `zanmai.py task add --text ... [--file ...] "
-              "[--due YYYY-MM-DD]`, and tick it off with `task done`.", file=sys.stderr)
-        print("  Not asked for one: an obligation you worked out goes in the reply as a sentence, "
-              "and something you still owe goes on a work object via `zanmai.py work`.",
-              file=sys.stderr)
-        return 2
+        return _hook_frage(
+            f"checkbox-guard: this {tool} on {rel} is {was}: {beispiel}. A task line rarely belongs "
+            f"in a file edit. Asked for one, `zanmai.py task add --text ... [--file ...] "
+            f"[--due YYYY-MM-DD]` writes it and `task done` ticks it off. Not asked for one: an "
+            f"obligation you worked out goes in the reply as a sentence, something still owed goes "
+            f"on a work object via `zanmai.py work`. Say yes where the line is the user's own text."
+        )
     return 0
 
 
@@ -10314,12 +12711,12 @@ def _hook_prose_binds(file_path: str, text: str) -> bool:
     import of the user's own writing. A content file that cannot carry frontmatter at all (JSON,
     plain text, a template) has no such marker, and requiring one there meant the guard bound on
     nothing: every deliverable is built from files of exactly that kind. Those bind on being
-    written, with `import/` exempt because that is where the user's own material arrives.
+    written, with `inbox/` exempt because that is where the user's own material arrives.
     """
     datei = Path(file_path)
     if datei.suffix.lower() in (".md", ".markdown"):
         return _hook_authored_by_ai(text, datei)
-    if f"/{IMPORT_DIR}/" in f"/{file_path}":
+    if f"/{INBOX_DIR}/" in f"/{file_path}":
         return False
     return True
 
@@ -10413,7 +12810,7 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
     of the three conditions on its own was enough to make the guard silent, which is the same failure
     `library-check-guard` had before 0.3.5, a guard bound to a tool rather than to the moment the
     decision is made. So: every content file type, frontmatter required only where a file can carry
-    it, and a Python build resolving into a `doing/<slug>/` bundle read as what it is, a write.
+    it, and a Python build resolving into a `workbench/<slug>/` bundle read as what it is, a write.
 
     The refusal names the line and what to do instead, because a refusal with no route named produces
     a report about the refusal rather than the work.
@@ -10442,12 +12839,12 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
                 if _HOOK_EM_DASH in gescannt or _HOOK_EN_DASH_SENTENCE.search(gescannt)]
         if not dazu:
             return 0
-        print(f"prose-guard: refusing this build, {len(dazu)} line(s) of the text it writes use a "
-              f"dash as sentence punctuation. First: {' '.join(dazu[0].split())[:140]}",
-              file=sys.stderr)
-        print("  Finish the thought, or split it into two sentences. A hyphen inside a compound word "
-              "and a number range keep their dash.", file=sys.stderr)
-        return 2
+        return _hook_frage(
+            f"prose-guard: {len(dazu)} line(s) of the text this writes use a dash as sentence "
+            f"punctuation. First: {' '.join(dazu[0].split())[:140]}. Finishing the thought or "
+            f"splitting it into two sentences reads better. A hyphen inside a compound word and a "
+            f"number range keep their dash, and a quotation keeps whatever it came with."
+        )
 
     file_path = tool_input.get("file_path", "")
     suffix = Path(file_path).suffix.lower()
@@ -10482,19 +12879,19 @@ def cmd_hook_prose_guard(args: argparse.Namespace) -> int:
         if not dazu and not dazu_real:
             continue
         rel = Path(file_path).name
+        teile = [f"prose-guard: {tool} on {rel}."]
         if dazu:
-            print(f"prose-guard: refusing {tool} on {rel}, {len(dazu)} line(s) use a dash as sentence "
-                  f"punctuation. First: {dazu[0][:140]}", file=sys.stderr)
-            print("  Finish the thought, or split it into two sentences. A hyphen inside a compound word "
-                  "and a number range keep their dash.", file=sys.stderr)
+            teile.append(f"{len(dazu)} line(s) use a dash as sentence punctuation. First: "
+                         f"{dazu[0][:140]}. Finishing the thought or splitting it in two reads "
+                         f"better; a compound word and a number range keep their dash.")
         if dazu_real:
             zeile, grund = dazu_real[0]
-            print(f"prose-guard: refusing {tool} on {rel}, {len(dazu_real)} line(s) read as generic AI "
-                  f"phrasing or a leftover placeholder. First: {zeile[:140]} [{grund}]", file=sys.stderr)
-            print("  Say the concrete thing instead, or fill in the real value.", file=sys.stderr)
-        print("  Rewrite those lines and write the file again; the rest of the content is fine.",
-              file=sys.stderr)
-        return 2
+            teile.append(f"{len(dazu_real)} line(s) read as generic phrasing or a leftover "
+                         f"placeholder. First: {zeile[:140]} [{grund}]. Say the concrete thing, or "
+                         f"fill in the real value.")
+        teile.append("The rest of the content is fine. Say yes where the wording is quoted or the "
+                     "user's own.")
+        return _hook_frage(" ".join(teile))
     return 0
 
 
@@ -10550,28 +12947,345 @@ def cmd_hook_kind_required(args: argparse.Namespace) -> int:
     if not fm.get("slug"):
         print(f"kind-required: refusing {payload.get('tool_name')} on {rel}, frontmatter 'slug' required", file=sys.stderr)
         return 2
+
+    # The fields a kind actually requires, not just that it has a kind at all. `KIND_FIELDS` has
+    # carried them since the schema existed and nothing read them: the guard checked `kind` and
+    # `slug` and passed everything else, while `CLAUDE.md` told the user it enforced the required
+    # fields. A rule that is announced and not applied is worse than one that is absent, because
+    # nobody goes looking for the gap.
+    #
+    # Only on a bundle's main file. A member inside the bundle carries the bundle from where it
+    # lies, and demanding a goal on every note in a focus bundle would make the bundle unusable
+    # for anything but its own hub.
+    pflicht = KIND_FIELDS.get(kind, {}).get("required", ())
+    if pflicht and Path(file_path).stem == Path(file_path).parent.name:
+        fehlt = [f for f in pflicht if not str(fm.get(f, "")).strip()]
+        if fehlt:
+            print(f"kind-required: refusing {payload.get('tool_name')} on {rel}. A `{kind}` bundle's "
+                  f"main file carries {', '.join(pflicht)}; missing: {', '.join(fehlt)}.",
+                  file=sys.stderr)
+            return 2
     return 0
 
 
-def cmd_hook_permission_guard(args: argparse.Namespace) -> int:
-    """PreToolUse Write|Edit hook: hard-block writes into the never-do bucket.
+# A shell command that writes says so somewhere in its own text. Reading is left alone: a guard that
+# stops `cat` and `rg` on a protected file is a guard the user clicks away twenty times a day, and a
+# warning that appears too often stops being read.
+# Two things that look like a redirect and write nothing: sending output to the bit bucket, and
+# pointing one channel at another (`2>&1`, `>&2`). Both sit at the end of ordinary reads, so both
+# come out of the text before anything goes looking for a target. The first form was missing when
+# this was written and held the command every session opens with for a write; the second was found
+# the same day by running the guard against the shapes a shell actually produces.
+_HOOK_SHELL_NO_TARGET = re.compile(r"(&|\d)?>>?\s*(/dev/null|&\s*\d|&\s*-)")
+# A redirect with a target, plus the commands that write without one. Deliberately not anchored to
+# `echo` or `printf` with anything in between: a pattern that allowed any run of characters between
+# the word and the arrow reached across `&&` into the next command, so a read that merely started
+# with an echo and ended with a redirect of its errors was held for a write to the file it read.
+# Two questions, not one, because they need different text. A redirect is shell syntax and can never
+# stand inside quotes, so it is looked for with the quoted spans taken out. Everything else is a
+# command word or an API call whose arguments ARE quoted, and taking the quotes out would blind it:
+# `open('/v/zanmai/user.md','w')` inside a here-document is a write, and the mode flag it is
+# recognised by sits in quotes.
+_HOOK_SHELL_REDIRECT = re.compile(r">>?\s*\S")
+_HOOK_SHELL_WRITES = re.compile(
+    r"\btee\b|\bsed\s+-i|\bmv\b|\bcp\b|\btouch\b|\bdd\b|"
+    r"write_text|open\([^)]*['\"][aw]",
+    re.I,
+)
 
-    What is in the bucket and the sentence saying what to do instead both live in
-    `_HOOK_NEVER_TARGETS`, so this docstring does not name them a second time and cannot fall
-    behind them."""
+
+_HOOK_ZITATE = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+def _hook_shell_writes(text: str) -> bool:
+    """Does this shell call write anything, or does it only read.
+
+    One function rather than two patterns every caller has to combine correctly, because that
+    combination going wrong is the same failure in a new place.
+
+    Quoted spans come out first, and that is not tidiness: a shell redirect can never sit inside
+    quotes, but a greater-than can, and does. `awk 'NR>1 && /^### Step/{p=1}' file` reads a file and
+    was refused as a write to it, because `>1` looked like a redirect. The same shape hits every
+    comparison, every arrow in a message and every regexp with a bracket. What is inside quotes is
+    an argument, not a target.
+    """
+    ohne_zitate = _HOOK_ZITATE.sub(" ", text)
+    if _HOOK_SHELL_REDIRECT.search(_HOOK_SHELL_NO_TARGET.sub(" ", ohne_zitate)):
+        return True
+    return bool(_HOOK_SHELL_WRITES.search(text))
+
+
+# How many standing rules the general memory may hold, and how long each may be. Both halves are
+# needed: a cap on the count alone is walked around by hanging the next case onto an existing rule,
+# which is how one entry there grew seven clauses out of seven incidents and stopped being read.
+#
+# Ten because a set nobody can hold in their head at the moment of acting works like no set at all,
+# and it still costs the user their time and leaves the impression the matter was dealt with.
+MEMORY_RULE_CAP = 10
+# Measured in characters, not in lines, and that is the point. The rule this cap exists for sits on
+# a single line of markdown and runs 1655 characters: seven clauses from seven incidents, each one
+# hung onto the one before it. Counting lines would have called that one rule and passed it.
+MEMORY_RULE_MAX_CHARS = 300
+
+
+def _memory_rules(space: Path) -> list[str]:
+    """One entry per standing rule in the general memory, the text as written.
+
+    A rule is a top-level list item under the sections that say how things are done. Open threads
+    and decisions are not counted: they describe a situation, they do not tell a later session what
+    to do.
+    """
+    datei = space / MEMORY_DIR / "general.md"
+    if not datei.is_file():
+        return []
+    regeln: list[str] = []
+    zaehlt = False
+    for zeile in datei.read_text(encoding="utf-8").splitlines():
+        if zeile.startswith("## "):
+            zaehlt = zeile[3:].strip().lower() in ("preferences", "lessons")
+            continue
+        if not zaehlt:
+            continue
+        if zeile.startswith("- "):
+            regeln.append(zeile[2:].strip())
+        elif regeln and zeile.strip():
+            regeln[-1] = f"{regeln[-1]} {zeile.strip()}"
+    return regeln
+
+
+def _memory_rule_note(space: Path) -> str:
+    """What the user needs in order to decide, when the write is a rule in the general memory."""
+    regeln = _memory_rules(space)
+    if not regeln:
+        return ""
+    lang = sorted((r for r in regeln if len(r) > MEMORY_RULE_MAX_CHARS), key=len, reverse=True)
+    satz = f" The file holds {len(regeln)} standing rule(s) today."
+    if len(regeln) >= MEMORY_RULE_CAP:
+        satz += (f" That is at or over the cap of {MEMORY_RULE_CAP}, so a new one means another has "
+                 f"to go, and which one is your call.")
+    if lang:
+        satz += (f" {len(lang)} of them run past {MEMORY_RULE_MAX_CHARS} characters, which is how a "
+                 f"cap gets walked around: the next case is hung onto an existing rule instead of "
+                 f"counted. The longest is {len(lang[0])} characters and starts "
+                 f"'{lang[0][:60]}'.")
+    return satz
+
+
+# The script's own invocation, in every shape it is actually run in: bare relative, absolute, or
+# via the `$CLAUDE_PROJECT_DIR` the hook wiring itself uses, quoted or not. Matched so it can be
+# taken out of the guard text before the never-do and ask-first checks run, because invoking the
+# script is a read of it, never a write into it.
+_SCRIPT_INVOCATION_RE = re.compile(r'''["']?[^\s"']*zanmai/system/scripts/zanmai\.py["']?''')
+
+
+# Where a path in a command is not a path in this space. Both of these cost a real interruption in
+# a live space: a command that rewrote a file on the user's own server was stopped and put to them
+# as a write to the routing table, because the text being sent over named that table.
+#
+# The guards below protect paths inside this space. A path that reaches another machine, or that is
+# being written into a file as its content, is neither, and reading it as a target is the same
+# mistake three guards have now made: taking the whole command line for the thing it acts on.
+_FREMDER_RECHNER_RE = re.compile(
+    r"\b(?:ssh|scp|rsync|sftp)\b(?:\s+-\S+)*\s+\S+"     # the command and where it goes
+    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\S+))*",             # and everything it hands over
+)
+
+# A here-document is the body of a command, and whether that body is a target depends on the
+# command. `python3 - <<EOF` runs it here, so a path inside it is written here, and that is the case
+# the never-do list exists for. `cat > file <<EOF` and anything piped to another machine write the
+# body down as text; the paths in it are words in a file, not writes.
+_LOKALER_INTERPRETER_RE = re.compile(r"(?:^|[|;&]\s*)(?:python3?|bash|sh|zsh|node|perl|ruby)\s+-?\s*<<")
+_HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\1", re.DOTALL)
+
+
+def _ohne_fremden_rechner(text: str) -> str:
+    """The command with everything that runs on, or is sent to, another machine taken out."""
+    return _FREMDER_RECHNER_RE.sub(" ", text)
+
+
+def _ohne_inhalts_heredoc(text: str) -> str:
+    """The command with every here-document body removed that is written down rather than run."""
+    if _LOKALER_INTERPRETER_RE.search(text):
+        return text
+    return _HEREDOC_RE.sub(" ", text)
+
+
+def _hook_guard_text(payload: dict) -> str:
+    """Everything in this call that could name a path, whatever the tool is called.
+
+    The old version asked whether the tool was `Write` or `Edit`. That is a question about how
+    something is written, and the answer decided whether a file was protected. A `python3 - <<EOF`
+    over Bash writes the same file and was never asked. So the question is now what the call says,
+    not which tool it arrived through.
+    """
+    ti = payload.get("tool_input") or {}
+    if not isinstance(ti, dict):
+        return ""
+    teile = [str(ti.get(k) or "") for k in ("file_path", "command", "notebook_path", "path")]
+    text = " ".join(t for t in teile if t).replace("\\", "/")
+    text = _ohne_fremden_rechner(text)
+    text = _ohne_inhalts_heredoc(text)
+    # A here-document body is deliberately NOT taken out here, though it is content rather than a
+    # target. It is also how a write gets past a guard that only reads the command line:
+    # `python3 - <<EOF` with the path inside the body is the exact case this guard was written for,
+    # and stripping bodies let it through again. What separates content from target is the shape of
+    # the path, and that is handled where the never-list is matched.
+    # The script's own invocation path names `zanmai/system/` too, and every Bash call that both
+    # writes something and runs the script this way (the normal way) put that path in front of
+    # every never-do check: a plain `... > zanmai/logs/today.md` alongside
+    # `zanmai/system/scripts/zanmai.py` in the same command line was refused as a write into the
+    # distribution folder, because the guard reads the whole line rather than the write target.
+    # Running the script is never itself a write there, so its own path is stripped before the
+    # never-do and ask-first checks look at what is left.
+    return _SCRIPT_INVOCATION_RE.sub(" ", text)
+
+
+# A call to this script, written into a sentence: the command, then sub-commands and options in
+# the order they were typed. A placeholder or a word of prose ends the call rather than breaking it.
+_SELF_CALL = re.compile(
+    r"zanmai\.py\s+([a-z][a-z0-9-]*)((?:\s+(?:[a-z][a-z0-9-]*|--[a-z][a-z0-9-]*))*)")
+
+
+def _unknown_in_call(aufruf: str) -> str:
+    """The first part of a call to this script that does not exist, or "" if it all does.
+
+    Asked of the running script's own parser rather than of a list, because a list agrees with
+    whoever wrote it and this has to agree with what a command will actually accept.
+    """
+    teile = aufruf.split()
+    if not teile:
+        return ""
+    pfad: list[str] = []
+    for wort in teile:
+        if wort.startswith("--"):
+            break
+        pfad.append(wort)
+    # Sub-commands, longest first: a word of prose after a real command is not an error, an unknown
+    # word in place of a real sub-command is. `--help` on the shorter path settles which it is.
+    while pfad:
+        lauf = subprocess.run([sys.executable, str(Path(__file__).resolve()), *pfad, "--help"],
+                              capture_output=True, text=True, timeout=30)
+        if lauf.returncode == 0:
+            hilfe = lauf.stdout
+            for wort in teile:
+                if wort.startswith("--") and wort not in hilfe:
+                    return wort
+            return ""
+        pfad.pop()
+    # Nothing left that the parser knows, so this was a sentence and not a call: "the AI plans,
+    # `zanmai.py` does the writes" must not stop a write. A guard that fires on prose is one the
+    # user learns to route around, and a typo in a command name is caught where the shipped text is
+    # checked, not here.
+    return ""
+
+
+def _stale_calls(text: str) -> list[str]:
+    """Every call to this script in that text that names something the script does not have.
+
+    The reason this sits in the guard and not in a check somebody runs: the text goes into a file
+    that stays true after this session, and no update ever touches those files again. A command
+    written from memory into a standing rule is read back as an instruction for years. One was:
+    a flag that never existed in any version, in a rule that ran at every session start.
+    """
+    gefunden: list[str] = []
+    for m in _SELF_CALL.finditer(text):
+        aufruf = f"{m.group(1)}{m.group(2)}"
+        try:
+            fehlt = _unknown_in_call(aufruf)
+        except (OSError, subprocess.SubprocessError):
+            return []  # cannot ask the parser, so nothing is claimed about the text
+        if fehlt and fehlt not in gefunden:
+            gefunden.append(f"`zanmai.py {aufruf.strip()}` names {fehlt}, which does not exist")
+    return gefunden
+
+
+def cmd_hook_permission_guard(args: argparse.Namespace) -> int:
+    """PreToolUse hook: hard-block the never-do bucket, and put the durable files to the user.
+
+    Two lists, two behaviours, and the difference is what the user gets out of it.
+    `_HOOK_NEVER_TARGETS` is refused, because writing there is always the wrong move and another
+    command does the job. `_HOOK_ASK_TARGETS` is handed to the host, which stops and shows the user
+    what would be written, because those files do have to change and only the user knows when.
+
+    Both lists are checked against everything the call names, not against the name of the tool. A
+    guard that asks how something is written protects the path only from the tools that announce
+    themselves.
+    """
     payload = _hook_read_payload()
     if not payload:
         return 0
-    if payload.get("tool_name", "") not in ("Write", "Edit"):
+    tool = payload.get("tool_name", "")
+    text = _hook_guard_text(payload)
+    if not text:
         return 0
-    file_path = payload.get("tool_input", {}).get("file_path", "")
+    ist_shell = tool == "Bash"
+    # A shell call is only interesting where it writes; a Write or an Edit always writes.
+    schreibt = (not ist_shell) or _hook_shell_writes(text)
+
+    # With the closing slash kept, so the folder is matched as a folder. Without it, `archive` and
+    # `trash` are ordinary words: a command mentioning the archive in a comment, a filename, or a
+    # sentence it writes was refused as a write into `archive/`. Three times now a guard has read
+    # the whole command line as if it were the write target, so the shape of the match is the fix,
+    # not another exception bolted on.
+    for target, advice in _HOOK_NEVER_TARGETS.items():
+        if _hook_names_path(text, target.strip("/") + "/") and schreibt:
+            print(f"permission-guard: refusing {tool} on '{text.strip()[:120]}'. This path is in "
+                  f"the never-do bucket. {advice}", file=sys.stderr)
+            return 2
+
+    # Before the question of whether this write is wanted comes the question of whether what it says
+    # is true. A rule in one of these files outlives every session and no update corrects it, so a
+    # command typed from memory is read back as an instruction for as long as the space exists.
+    if schreibt and not ist_shell:
+        inhalt = str((payload.get("tool_input") or {}).get("content")
+                     or (payload.get("tool_input") or {}).get("new_string") or "")
+        if inhalt and any(_hook_names_path(text, ziel) for ziel in _HOOK_ASK_TARGETS):
+            for befund in _stale_calls(inhalt):
+                print(f"permission-guard: refusing {tool}. {befund}. Ask the command itself with "
+                      f"`--help` and write what it answers; a rule in this file is read back for "
+                      f"years and no update corrects it.", file=sys.stderr)
+                return 2
+        # A rule naming a specific date or a specific running instance is a note about a moment,
+        # not a standing rule, and general.md exists to hold only what still applies without
+        # knowing when or where it was written. `_lage_statt_regel` already catches this by
+        # wording, but only at session-close, after the write already reached the user as a
+        # decision to click through by hand, more than once in one evening before this existed.
+        if inhalt and _hook_names_path(text, "general.md"):
+            klein = inhalt.lower()
+            if (any(w in klein for w in _LAGE_WOERTER)
+                    or _MEMORY_RULE_DATE_RE.search(inhalt)
+                    or _MEMORY_RULE_INSTANCE_RE.search(inhalt)):
+                print(f"permission-guard: refusing this write to general.md. It names a specific "
+                      f"date or a specific running instance, which makes it a note about a moment "
+                      f"rather than a standing rule. A dated correction belongs in the session "
+                      f"record or the activity log; general.md holds only what still applies "
+                      f"without knowing when or where it was written.", file=sys.stderr)
+                return 2
+
+    for target, was in _HOOK_ASK_TARGETS.items():
+        if _hook_names_path(text, target) and schreibt:
+            zusatz = ""
+            if target.endswith("general.md"):
+                wurzel = _session_find_space_root() or Path.cwd()
+                try:
+                    zusatz = _memory_rule_note(wurzel)
+                except OSError:
+                    zusatz = ""
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
+                "permissionDecisionReason": (
+                    f"permission-guard: this writes {was}. It stays true after this session ends, "
+                    f"so it is the user's call and not the run's. The full text that would be "
+                    f"written is in the call above.{zusatz} Three ways out: let it through as it "
+                    f"stands, refuse it and nothing is written, or refuse it and say what should be "
+                    f"written instead."),
+            }}, ensure_ascii=False))
+            return 0
+
+    file_path = (payload.get("tool_input") or {}).get("file_path", "")
     if not file_path:
         return 0
-    norm = file_path.replace("\\", "/")
-    for target, advice in _HOOK_NEVER_TARGETS.items():
-        if target in norm:
-            print(f"permission-guard: refusing {payload.get('tool_name')} on '{file_path}'. This path is in the never-do bucket. {advice}", file=sys.stderr)
-            return 2
 
     # Emptying a file is deleting it with the name left behind, and the delete-guard cannot see it
     # because no shell runs. A file that holds something keeps holding something.
@@ -10591,7 +13305,7 @@ def cmd_hook_permission_guard(args: argparse.Namespace) -> int:
 # which path a verb would hit, because a command line can hide that behind a variable, a glob, a pipe
 # or a subshell, and a guard that has to parse shell to decide is a guard that can be talked around.
 # What it does decide is whether the word is being run as a command at all. `trash` is also a folder
-# in every vault and a sub-command of this very script, so matching it anywhere in the line refused
+# in every space and a sub-command of this very script, so matching it anywhere in the line refused
 # `ls zanmai/trash`, a find that excludes the trash, and `zanmai.py file trash` itself, which is the
 # way out the refusal message recommends.
 _DELETE_COMMANDS = frozenset({"rm", "rmdir", "unlink", "shred", "trash", "truncate", "mkfs"})
@@ -10612,7 +13326,7 @@ _HANDS_OVER = frozenset({"xargs", "-exec", "-execdir", "-ok", "-okdir"})
 
 
 # What an operating system leaves lying around. None of it is anybody's material, none of it is
-# worth a trip through the vault's trash, and refusing to remove it refuses the whole chained
+# worth a trip through the space's trash, and refusing to remove it refuses the whole chained
 # command it sits in: a copy that only added files was turned down because it tidied up two
 # `.DS_Store` afterwards, and the error text then offered `file trash`, which would have filed
 # them. The guard exists for the user's material, and this is not it.
@@ -10707,10 +13421,10 @@ VIDEO_MIN_GAP = 1.0          # s of silence before it counts as a pause worth re
 # gap where somebody is visibly thinking, and that is around a second.
 
 
-def _video_job_dir(vault: Path, slug: str) -> Path:
+def _video_job_dir(space: Path, slug: str) -> Path:
     """Working area for one job. Under temp: intermediates are volatile by design and the
     retention sweep clears them, while what the user keeps goes to their own bundle."""
-    d = vault / SCRATCH_DIR / "video" / slug
+    d = space / SCRATCH_DIR / "video" / slug
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -10726,10 +13440,10 @@ def _ffprobe_json(ffprobe: str, path: Path, *args: str) -> dict:
         return {}
 
 
-def _video_probe(vault: Path, path: Path) -> dict:
+def _video_probe(space: Path, path: Path) -> dict:
     """What the file actually is, read from the file. Never assumed, never rounded: a frame rate
     guessed as 24 where the source is 24000/1001 drifts a frame every forty seconds."""
-    ffprobe = _tool_path(vault, "ffprobe") or _tool_path(vault, "ffmpeg")
+    ffprobe = _tool_path(space, "ffprobe") or _tool_path(space, "ffmpeg")
     if not ffprobe:
         return {}
     d = _ffprobe_json(ffprobe, path, "-show_streams", "-show_format", "-show_chapters")
@@ -10755,12 +13469,12 @@ def _video_probe(vault: Path, path: Path) -> dict:
 
 def cmd_video_probe(args: argparse.Namespace) -> int:
     """What a file is, measured. Every later step reads these numbers."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
     if not src.is_file():
         print(f"fail: no such file: {src}", file=sys.stderr)
         return 1
-    info = _video_probe(vault, src)
+    info = _video_probe(space, src)
     if not info:
         print("fail: cannot read this file, and nothing will be guessed instead. "
               "Missing ffprobe: `tools ensure ffprobe`.", file=sys.stderr)
@@ -10825,22 +13539,22 @@ def cmd_video_transcribe(args: argparse.Namespace) -> int:
     be switched on explicitly, and fast attention has to be off, or the alignment is skipped without
     a word and every timing comes back as the decoder's guess.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
     if not src.is_file():
         print(f"fail: no such file: {src}", file=sys.stderr)
         return 1
-    job = _video_job_dir(vault, args.slug)
+    job = _video_job_dir(space, args.slug)
     ziel = job / f"{src.stem}.words.json"
     if ziel.is_file() and not args.force:
         d = json.loads(ziel.read_text(encoding="utf-8"))
         print(f"ok: already transcribed, {len(d.get('words', []))} word(s) at "
-              f"{ziel.relative_to(vault)} (--force to redo)")
+              f"{ziel.relative_to(space)} (--force to redo)")
         return 0
 
-    ffmpeg = _tool_path(vault, "ffmpeg")
-    whisper = _tool_path(vault, "whisper")
-    model = _whisper_model(vault)
+    ffmpeg = _tool_path(space, "ffmpeg")
+    whisper = _tool_path(space, "whisper")
+    model = _whisper_model(space)
     fehlt = []
     if not ffmpeg:
         fehlt.append("ffmpeg, which turns the recording into what the recogniser reads")
@@ -10897,7 +13611,7 @@ def cmd_video_transcribe(args: argparse.Namespace) -> int:
     }, ensure_ascii=False, indent=1), encoding="utf-8")
     (job / f"{src.stem}.txt").write_text(text + "\n", encoding="utf-8")
     print(f"ok: {len(worte)} word(s), timings {'aligned' if preset else 'from the decoder only'}, "
-          f"at {ziel.relative_to(vault)}")
+          f"at {ziel.relative_to(space)}")
     return 0
 
 
@@ -10925,7 +13639,7 @@ def cmd_video_cutsheet(args: argparse.Namespace) -> int:
     passages either butt up exactly or stay a real distance apart, because a gap of a few
     hundredths shows a flash of untreated picture at the seam.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     blatt = Path(args.file).expanduser()
     if not blatt.is_file():
         print(f"fail: no such cut sheet: {blatt}", file=sys.stderr)
@@ -11050,7 +13764,7 @@ def cmd_video_propose(args: argparse.Namespace) -> int:
     threshold) and leaves every decision about content to the skill that reads it afterwards. The
     spoken line travels with each segment so the whole cut can be checked by reading.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     worte_datei = Path(args.words).expanduser()
     if not worte_datei.is_file():
         print(f"fail: no such transcript: {worte_datei}", file=sys.stderr)
@@ -11165,10 +13879,10 @@ def cmd_video_cut(args: argparse.Namespace) -> int:
     levelled once at the end, because encoding each piece separately puts a click at every join.
     And the frame rate comes from the source as an exact fraction.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     blatt = Path(args.file).expanduser()
     ziel = Path(args.out).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg:
         print("fail: ffmpeg missing: `tools ensure ffmpeg`.", file=sys.stderr)
         return 1
@@ -11185,7 +13899,7 @@ def cmd_video_cut(args: argparse.Namespace) -> int:
     for s in segmente:
         if s["source"] not in quellen:
             quellen.append(s["source"])
-    probe = _video_probe(vault, Path(quellen[0]).expanduser())
+    probe = _video_probe(space, Path(quellen[0]).expanduser())
     fps = args.fps or probe.get("fps_exact") or "25/1"
     # Where several sources meet, the target size is a decision and not a side effect of which file
     # happened to be listed first. Stated here, said out loud below, so nobody discovers afterwards
@@ -11199,7 +13913,7 @@ def cmd_video_cut(args: argparse.Namespace) -> int:
     else:
         zb, zh = int(probe.get("width") or 1920), int(probe.get("height") or 1080)
     groessen = {(int(g.get("width") or 0), int(g.get("height") or 0))
-                for g in (_video_probe(vault, Path(q).expanduser()) for q in quellen)}
+                for g in (_video_probe(space, Path(q).expanduser()) for q in quellen)}
     if len(groessen) > 1 and not args.size:
         print(f"note: sources differ in size ({', '.join(f'{w}x{h}' for w, h in sorted(groessen))}); "
               f"everything is brought to {zb}x{zh}, taken from the first source. Pass --size to "
@@ -11249,7 +13963,7 @@ def cmd_video_cut(args: argparse.Namespace) -> int:
     if r.returncode != 0:
         print(f"fail: the cut did not render.\n{(r.stderr or '')[-800:]}", file=sys.stderr)
         return 1
-    raus = _video_probe(vault, ziel)
+    raus = _video_probe(space, ziel)
     print(f"ok: {len(segmente)} segment(s) into {ziel}, "
           f"{_spoken_length(raus.get('duration', 0.0))}, {raus.get('fps')} fps, "
           f"{ziel.stat().st_size / 1e6:.1f} MB")
@@ -11370,7 +14084,7 @@ def cmd_video_correct(args: argparse.Namespace) -> int:
     count, and from there every timing belongs to the wrong word: the captions drift, the cut drifts
     with them, and nothing says so.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     wd = Path(args.words).expanduser()
     if not wd.is_file():
         print(f"fail: no such transcript: {wd}", file=sys.stderr)
@@ -11445,7 +14159,7 @@ def cmd_video_caption(args: argparse.Namespace) -> int:
     platforms prefer; burning in is for short pieces where the look is part of the piece. Never
     caption something that is already captioned, so the input is stated rather than assumed.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     wd = Path(args.words).expanduser()
     if not wd.is_file():
         print(f"fail: no such transcript: {wd}", file=sys.stderr)
@@ -11475,12 +14189,12 @@ def cmd_video_caption(args: argparse.Namespace) -> int:
     print(f"ok: {len(zeilen)} caption line(s) at {srt}")
 
     if args.burn:
-        return _burn_captions(vault, Path(args.burn).expanduser(),
+        return _burn_captions(space, Path(args.burn).expanduser(),
                               Path(args.burn_out) if args.burn_out else None, zeilen, args)
     return 0
 
 
-def _burn_captions(vault: Path, quelle: Path, ziel: Path | None, zeilen: list[dict],
+def _burn_captions(space: Path, quelle: Path, ziel: Path | None, zeilen: list[dict],
                    args: argparse.Namespace) -> int:
     """Draw the captions as images and lay them over the picture.
 
@@ -11490,7 +14204,7 @@ def _burn_captions(vault: Path, quelle: Path, ziel: Path | None, zeilen: list[di
     ourselves works on every build, gives the brand's own typeface and box, and needs one image per
     line rather than per word, which is what keeps it renderable at length.
     """
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg or not quelle.is_file():
         print("fail: need ffmpeg and the file to draw into", file=sys.stderr)
         return 1
@@ -11501,7 +14215,7 @@ def _burn_captions(vault: Path, quelle: Path, ziel: Path | None, zeilen: list[di
               file=sys.stderr)
         return 1
     ziel = ziel or quelle.with_name(quelle.stem + "-captioned.mp4")
-    info = _video_probe(vault, quelle)
+    info = _video_probe(space, quelle)
     breite, hoehe = int(info.get("width") or 1920), int(info.get("height") or 1080)
     # Everything is proportional to the frame, so the same numbers hold at any resolution.
     groesse = max(14, round(hoehe * args.font_size / 1080))
@@ -11513,7 +14227,7 @@ def _burn_captions(vault: Path, quelle: Path, ziel: Path | None, zeilen: list[di
     except OSError:
         schrift = ImageFont.load_default()
 
-    ordner = _video_job_dir(vault, args.slug) / "captions"
+    ordner = _video_job_dir(space, args.slug) / "captions"
     ordner.mkdir(parents=True, exist_ok=True)
     mess = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
     maxbreite = breite - 2 * round(breite * 0.06)
@@ -11614,10 +14328,10 @@ def cmd_video_reframe(args: argparse.Namespace) -> int:
     width. Fitting keeps everything and fills the rest with a blurred enlargement of the same
     picture, which loses nothing and is what platforms are used to seeing.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
     ziel = Path(args.out).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg or not src.is_file():
         print("fail: need ffmpeg and an existing file", file=sys.stderr)
         return 1
@@ -11625,7 +14339,7 @@ def cmd_video_reframe(args: argparse.Namespace) -> int:
         print(f"fail: unknown format {args.format}, expected one of "
               f"{', '.join(VIDEO_FORMATS)}", file=sys.stderr)
         return 1
-    info = _video_probe(vault, src)
+    info = _video_probe(space, src)
     bw, bh = int(info.get("width") or 1920), int(info.get("height") or 1080)
     zw, zh = VIDEO_FORMATS[args.format]
     hoehe = args.height or (1920 if zh > zw else 1080)
@@ -11668,10 +14382,10 @@ def cmd_video_mix(args: argparse.Namespace) -> int:
     between one generation of quality loss and two. The bed sits well below speech and does not
     duck: where it is too loud, the level is wrong, and a sidechain only hides that.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
     ziel = Path(args.out).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg or not src.is_file():
         print("fail: need ffmpeg and an existing file", file=sys.stderr)
         return 1
@@ -11692,7 +14406,7 @@ def cmd_video_mix(args: argparse.Namespace) -> int:
         if not musik.is_file():
             print(f"fail: no such music file: {musik}", file=sys.stderr)
             return 1
-        dauer = _video_probe(vault, src).get("duration", 0.0)
+        dauer = _video_probe(space, src).get("duration", 0.0)
         cmd += ["-stream_loop", "-1", "-i", str(musik), "-filter_complex",
                 f"[0:a]{sprache}[v];"
                 f"[1:a]volume={args.music_db}dB,afade=t=out:st={max(0.0, dauer - 2.0)}:d=2[m];"
@@ -11722,9 +14436,9 @@ def cmd_video_export(args: argparse.Namespace) -> int:
     Naming by purpose fixes that, and refusing to write over an existing master fixes the worse
     version of it, where the good file is gone and the loss shows up weeks later.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg or not src.is_file():
         print("fail: need ffmpeg and an existing file", file=sys.stderr)
         return 1
@@ -11766,17 +14480,17 @@ def cmd_video_brand(args: argparse.Namespace) -> int:
     frame rate and audio layout or the join tears. They are re-encoded to match rather than the
     other way round: the piece is the master here, the bumper is the guest.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
     ziel = Path(args.out).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg or not src.is_file():
         print("fail: need ffmpeg and an existing file", file=sys.stderr)
         return 1
-    info = _video_probe(vault, src)
+    info = _video_probe(space, src)
     breite, hoehe = int(info.get("width") or 1920), int(info.get("height") or 1080)
     fps = info.get("fps_exact") or "25/1"
-    zwischen = _video_job_dir(vault, args.slug)
+    zwischen = _video_job_dir(space, args.slug)
 
     mit_logo = src
     if args.logo:
@@ -11828,7 +14542,7 @@ def cmd_video_brand(args: argparse.Namespace) -> int:
         # A bumper without a sound track cannot simply be joined to one that has: the join needs
         # the same number of streams on both sides, so silence is generated for its exact length
         # rather than hoping the concat sorts it out.
-        hat_ton = bool(_video_probe(vault, quelle).get("audio"))
+        hat_ton = bool(_video_probe(space, quelle).get("audio"))
         cmd_b = [ffmpeg, "-y", "-i", str(quelle)]
         if not hat_ton:
             cmd_b += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
@@ -11873,13 +14587,13 @@ def cmd_video_brand(args: argparse.Namespace) -> int:
         return 1
     was = [x for x, y in (("intro", args.intro), ("outro", args.outro), ("logo", args.logo)) if y]
     print(f"ok: {', '.join(was)} applied, "
-          f"{_spoken_length(_video_probe(vault, ziel).get('duration', 0.0))} at {ziel}")
+          f"{_spoken_length(_video_probe(space, ziel).get('duration', 0.0))} at {ziel}")
     return 0
 
 
 def cmd_video_chapters(args: argparse.Namespace) -> int:
     """Chapter marks from the transcript, as a list to paste and as metadata in the file."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     wd = Path(args.words).expanduser()
     if not wd.is_file():
         print(f"fail: no such transcript: {wd}", file=sys.stderr)
@@ -11922,9 +14636,9 @@ def cmd_video_thumbnail(args: argparse.Namespace) -> int:
     lacks; brightness is checked so a candidate is not a cut to black. Choosing between the
     candidates is a judgement and stays with whoever is looking at them.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg or not src.is_file():
         print("fail: need ffmpeg and an existing file", file=sys.stderr)
         return 1
@@ -11933,8 +14647,8 @@ def cmd_video_thumbnail(args: argparse.Namespace) -> int:
     except ImportError:
         print("fail: needs the image library: `tools ensure pillow`.", file=sys.stderr)
         return 1
-    dauer = _video_probe(vault, src).get("duration", 0.0)
-    raus = Path(args.out).expanduser() if args.out else _video_job_dir(vault, args.slug) / "thumbs"
+    dauer = _video_probe(space, src).get("duration", 0.0)
+    raus = Path(args.out).expanduser() if args.out else _video_job_dir(space, args.slug) / "thumbs"
     raus.mkdir(parents=True, exist_ok=True)
     kandidaten = []
     for i in range(args.sample):
@@ -11971,7 +14685,7 @@ def cmd_video_text(args: argparse.Namespace) -> int:
     honoured: a corrected word changes the captions, not the picture, and moving a paragraph is not
     supported, so a text that has been reordered is reported rather than half-applied.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     wd = Path(args.words).expanduser()
     if not wd.is_file():
         print(f"fail: no such transcript: {wd}", file=sys.stderr)
@@ -12070,13 +14784,13 @@ def cmd_video_sync(args: argparse.Namespace) -> int:
     two signals line up best. Measured on the loudness envelope rather than the waveform, which
     survives different microphones, different rooms and different gain.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     a, b = Path(args.a).expanduser(), Path(args.b).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg or not a.is_file() or not b.is_file():
         print("fail: need ffmpeg and both files", file=sys.stderr)
         return 1
-    job = _video_job_dir(vault, args.slug)
+    job = _video_job_dir(space, args.slug)
     huellen = []
     for name, quelle in (("a", a), ("b", b)):
         wav = job / f"sync-{name}.wav"
@@ -12144,9 +14858,9 @@ def cmd_video_timeline(args: argparse.Namespace) -> int:
     where it is quiet, where somebody is talking, and roughly what about. Read this first and pull
     individual frames only for a spot the strip actually raises a question about.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg or not src.is_file():
         print("fail: need ffmpeg and an existing file", file=sys.stderr)
         return 1
@@ -12156,12 +14870,12 @@ def cmd_video_timeline(args: argparse.Namespace) -> int:
         print("fail: needs the image library: `tools ensure pillow`.", file=sys.stderr)
         return 1
 
-    info = _video_probe(vault, src)
+    info = _video_probe(space, src)
     dauer = info.get("duration") or 0.0
     if dauer <= 0:
         print("fail: cannot read the duration", file=sys.stderr)
         return 1
-    arbeit = _video_job_dir(vault, args.slug)
+    arbeit = _video_job_dir(space, args.slug)
     n = max(4, min(args.columns, 24))
     # Both even. An odd height is rejected outright by the colour format every JPEG uses, and
     # the error it produces ("invalid argument") says nothing about which of the two numbers
@@ -12245,13 +14959,13 @@ def cmd_video_brief(args: argparse.Namespace) -> int:
     The point of looking before working is to spend less, not more. An analysis that costs as much
     as the edit has defeated itself.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
     if not src.is_file():
         print(f"fail: no such file: {src}", file=sys.stderr)
         return 1
-    ffmpeg = _tool_path(vault, "ffmpeg")
-    info = _video_probe(vault, src)
+    ffmpeg = _tool_path(space, "ffmpeg")
+    info = _video_probe(space, src)
     dauer = info.get("duration", 0.0)
     print(f"# {src.name}")
     print(f"{_spoken_length(dauer)}, {info.get('width')}x{info.get('height')}, "
@@ -12282,7 +14996,7 @@ def cmd_video_brief(args: argparse.Namespace) -> int:
     gestueckelt = False
     if ffmpeg and dauer > args.sample_over:
         stuecke, laenge = [], args.sample_seconds
-        arbeit = _video_job_dir(vault, args.slug or "brief")
+        arbeit = _video_job_dir(space, args.slug or "brief")
         for i, start in enumerate((0.0, max(0.0, dauer / 2 - laenge / 2), max(0.0, dauer - laenge))):
             stueck = arbeit / f"sample{i}.wav"
             subprocess.run([ffmpeg, "-y", "-ss", f"{start:.2f}", "-t", str(laenge), "-i", str(src),
@@ -12302,11 +15016,11 @@ def cmd_video_brief(args: argparse.Namespace) -> int:
                 print(f"\nlonger than {_spoken_length(args.sample_over)}, so the words come from "
                       f"three samples of {laenge:.0f}s: the start, the middle and the end")
     if args.slug:
-        ns = argparse.Namespace(vault=str(vault), file=str(probe_quelle), slug=args.slug,
+        ns = argparse.Namespace(space=str(space), file=str(probe_quelle), slug=args.slug,
                                 language=args.language, lexicon=None, dtw_preset=None, force=False)
         with contextlib.redirect_stdout(io.StringIO()):
             cmd_video_transcribe(ns)
-        wd = _video_job_dir(vault, args.slug) / f"{probe_quelle.stem}.words.json"
+        wd = _video_job_dir(space, args.slug) / f"{probe_quelle.stem}.words.json"
         if wd.is_file():
             worte = json.loads(wd.read_text(encoding="utf-8")).get("words", [])
 
@@ -12330,7 +15044,7 @@ def cmd_video_brief(args: argparse.Namespace) -> int:
         spec = (_load_register().get("tools") or {}).get(tid)
         if not spec:
             continue
-        if not _detect_tool(vault, tid, spec, _current_os()).get("present"):
+        if not _detect_tool(space, tid, spec, _current_os()).get("present"):
             fehlend.append(tid)
     if fehlend:
         print(f"\nmissing for parts of the pipeline: {', '.join(fehlend)}")
@@ -12341,13 +15055,13 @@ def cmd_video_brief(args: argparse.Namespace) -> int:
     # What the piece would be dressed in. Asked here because it is the question that gets skipped:
     # a run that finds nothing quietly picks its own colours and typeface, and the user first sees
     # the choice in a finished render.
-    marken = sorted(d.name for d in (vault / DESIGN_DIR).iterdir()
-                    if d.is_dir()) if (vault / DESIGN_DIR).is_dir() else []
+    marken = sorted(d.name for d in (space / DESIGN_DIR).iterdir()
+                    if d.is_dir()) if (space / DESIGN_DIR).is_dir() else []
     print()
     if marken:
         print(f"brand(s) available: {', '.join(marken)}")
     else:
-        print("no brand set in this vault. Anything visible (captions, a logo, an opening, a "
+        print("no brand set in this space. Anything visible (captions, a logo, an opening, a "
               "graphic) has no colours, typeface or mark to take, so ask before making them up: "
               "which brand, or which colours and typeface, or explicitly plain.")
 
@@ -12356,8 +15070,8 @@ def cmd_video_brief(args: argparse.Namespace) -> int:
     # Separate frames cost that much each, and twenty-four of them cost more than the edit.
     if ffmpeg:
         ns = argparse.Namespace(
-            vault=str(vault), file=str(src),
-            words=str(_video_job_dir(vault, args.slug) / f"{probe_quelle.stem}.words.json")
+            space=str(space), file=str(src),
+            words=str(_video_job_dir(space, args.slug) / f"{probe_quelle.stem}.words.json")
             if worte else None,
             columns=args.columns, slug=args.slug or "brief", out=None)
         print()
@@ -12376,13 +15090,13 @@ def cmd_video_check(args: argparse.Namespace) -> int:
     every time. The other two are a brightness step at a join, which is what round-tripping
     footage through a browser costs, and a length that does not match what was asked for.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg or not src.is_file():
         print("fail: need ffmpeg and an existing file", file=sys.stderr)
         return 1
-    info = _video_probe(vault, src)
+    info = _video_probe(space, src)
     befunde: list[str] = []
     print(f"{src.name}: {_spoken_length(info.get('duration', 0.0))}, "
           f"{info.get('width')}x{info.get('height')}, {info.get('fps')} fps")
@@ -12447,20 +15161,20 @@ def cmd_video_check(args: argparse.Namespace) -> int:
 def cmd_video_frames(args: argparse.Namespace) -> int:
     """Pull frames so they can be read. The eyes of the review loop, and of picking usable
     moments out of footage that already exists."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     src = Path(args.file).expanduser()
-    ffmpeg = _tool_path(vault, "ffmpeg")
+    ffmpeg = _tool_path(space, "ffmpeg")
     if not ffmpeg:
         print("fail: ffmpeg missing: `tools ensure ffmpeg`.", file=sys.stderr)
         return 1
     if not src.is_file():
         print(f"fail: no such file: {src}", file=sys.stderr)
         return 1
-    raus = Path(args.out).expanduser() if args.out else _video_job_dir(vault, args.slug) / "frames"
+    raus = Path(args.out).expanduser() if args.out else _video_job_dir(space, args.slug) / "frames"
     raus.mkdir(parents=True, exist_ok=True)
     zeiten = [float(x) for x in args.at.split(",")] if args.at else []
     if not zeiten:
-        dauer = _video_probe(vault, src).get("duration", 0.0)
+        dauer = _video_probe(space, src).get("duration", 0.0)
         n = max(1, args.count)
         zeiten = [dauer * (i + 0.5) / n for i in range(n)]
     geschrieben = []
@@ -12518,7 +15232,7 @@ def cmd_hook_park_guard(args: argparse.Namespace) -> int:
 
 
 def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
-    """PreToolUse Bash hook: refuse to delete anything in the vault.
+    """PreToolUse Bash hook: refuse to delete anything in the space.
 
     The AI does not delete. Not with `rm`, not with a find, not by emptying a file, not "just this
     once because it is obviously junk". Everything that goes away goes through `zanmai.py file trash`
@@ -12537,18 +15251,17 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
     command = (payload.get("tool_input", {}) or {}).get("command", "") or ""
     if not command.strip():
         return 0
-    # A move out of the drop area is the same act as throwing it away, and `zanmai.py file trash`
-    # is where the condition on that lives: content in the vault first, or the user's own words.
+    # A move out of the inbox is the same act as throwing it away, and `zanmai.py file trash`
+    # is where the condition on that lives: content in the space first, or the user's own words.
     # Left out, the whole gate is one `mv` wide. `cp` is not caught on purpose: it leaves the
     # original lying, so nothing is lost and the next session start reads it again.
     if _MOVE_VERB_RE.search(command) and _IMPORT_PATH_RE.search(command):
         print(
-            f"delete-guard: refusing this command. It moves something out of `{IMPORT_DIR}/` by hand, "
+            f"delete-guard: refusing this command. It moves something out of `{INBOX_DIR}/` by hand, "
             f"which skips the check that the material actually arrived somewhere. Where it belongs "
-            f"in the vault, move it with `zanmai.py file archive --path <path>` or file it where it "
+            f"in the space, move it with `zanmai.py file archive --path <path>` or file it where it "
             f"goes. Where it is done with, file the content first, then `zanmai.py file trash --path "
-            f"<path> --filed-to <where it landed>`, or `--user-said \"<their words>\"` where the "
-            f"user said it can go unfiled.",
+            f"<path> --filed-to <where it landed>`.",
             file=sys.stderr,
         )
         return 2
@@ -12559,18 +15272,18 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
     if any(hint in command for hint in _DELETE_ALLOWED_HINTS):
         return 0
     # Two different situations reach this point and they need two different answers. Answering both
-    # with the vault's trash sent a run that only wanted to clear its own unpacked archive off to
+    # with the space's trash sent a run that only wanted to clear its own unpacked archive off to
     # `file trash`, which is for the user's material and wrong for a scratch directory. It then went
     # looking for a way around instead of moving its work to where clearing up is allowed.
     print(
         f"delete-guard: refusing this command, it removes things and nothing in Zanmai removes "
         f"things. To give a kept document a better name or put it in another section, that is "
-        f"`zanmai.py records rename` and `zanmai.py records move`, which take the search index "
+        f"`zanmai.py archive rename` and `zanmai.py archive move`, which take the search index "
         f"along; a hand-rolled move leaves the index pointing at where the file used to be. "
         f"If this is the user's material and it is meant to go, use `zanmai.py file trash --path "
         f"<path>`, which keeps the file and its original path so `zanmai.py file restore` can bring "
         f"it back. If it "
-        f"is your own working material, it does not belong outside the vault: put intermediates in "
+        f"is your own working material, it does not belong outside the space: put intermediates in "
         f"`{SCRATCH_DIR}/<task>/`, where clearing up is permitted and the retention sweep clears "
         f"what is left after {SCRATCH_RETENTION_DAYS} days. That sweep is the only thing that really "
         f"deletes. Found: {treffer!r}.",
@@ -12583,7 +15296,7 @@ def cmd_hook_delete_guard(args: argparse.Namespace) -> int:
 # the same way the delete verbs are: working out which of the two paths is the source means parsing
 # shell, and a guard that parses shell can be talked around. A refusal costs a sentence.
 _MOVE_VERB_RE = re.compile(r"(?:^|[\s;&|(])(?:sudo\s+|command\s+|env\s+)*mv\b")
-_IMPORT_PATH_RE = re.compile(r"(?:^|[\s'\"=/])" + IMPORT_DIR + r"/")
+_IMPORT_PATH_RE = re.compile(r"(?:^|[\s'\"=/])" + INBOX_DIR + r"/")
 
 _PPTX_SAVE_RE = re.compile(r'\.save\(\s*["\']([^"\']+\.pptx)["\']')
 _PYTHON_RUN_RE = re.compile(r"(?:^|[\s;&|])python3?\b")
@@ -12609,7 +15322,7 @@ _SLIDE_LIBRARY_RE = re.compile(r"slide[-_]library\.py\s+(?:[-\w/.]*\s+)*?(" +
 # behaviour in the command, where the deck hint above can see it. That is the line between a build
 # and somebody ticking a checkbox off in a markdown file with a throwaway script.
 _PY_SCRIPT_RUN_RE = re.compile(r"(?:^|[\s;&|])python3?\s+(?!-)([^\s;&|]*\.py)\b")
-# The vault's own CLI never writes a deck, whatever it is asked to do, and neither does asking any
+# The space's own CLI never writes a deck, whatever it is asked to do, and neither does asking any
 # script for its help text. Binding those meant a plain `zanmai.py journal --help` was refused
 # because the shell happened to stand in a bundle called `ci`, a word that turns up constantly in
 # marketing work. A guard has to be able to tell a build from a question.
@@ -12620,17 +15333,17 @@ def _ohne_heredoc(command: str) -> str:
 
 _NIE_DECK = ("zanmai.py", "image-edit.py", "design-check.py", "document.py")
 _HILFE_RE = re.compile(r"(?:^|\s)(--help|-h)\b")
-# Preceded by start, a slash, a quote or whitespace: a doing/<slug> path shows up embedded in a
+# Preceded by start, a slash, a quote or whitespace: a workbench/<slug> path shows up embedded in a
 # quoted .save() argument, after a `cd`, or as a bare relative path, not only at a path boundary.
-_DOING_SLUG_RE = re.compile(r"(?:^|[/'\"\s])" + re.escape(DOING_DIR) + r"/([^/'\"\s]+)")
+_WORKBENCH_SLUG_RE = re.compile(r"(?:^|[/'\"\s])" + re.escape(WORKBENCH_DIR) + r"/([^/'\"\s]+)")
 
 
 # A word that shows up in a bundle name but names nothing on its own. Requiring a link on these
 # would fire on every second line. Kept deliberately short: only words that are structural in a
-# vault name, never topic words, because a topic word is exactly what should be linked.
-def _library_guard_slug(command: str, vault: Path | None = None,
+# space name, never topic words, because a topic word is exactly what should be linked.
+def _library_guard_slug(command: str, space: Path | None = None,
                         cwd: str | None = None) -> str | None:
-    """The `doing/<slug>` bundle a Bash command produces into, or None.
+    """The `workbench/<slug>` bundle a Bash command produces into, or None.
 
     Two ways to know. The command names the path, which is the case a `cd` or an absolute
     argument covers. Or the command says nothing because the working directory is already
@@ -12638,18 +15351,18 @@ def _library_guard_slug(command: str, vault: Path | None = None,
     dropping the `cd` was used as the way past the guard. Reading the working directory closes
     that, and it is the same fact either way.
     """
-    match = _DOING_SLUG_RE.search(command)
+    match = _WORKBENCH_SLUG_RE.search(command)
     if match:
         return match.group(1)
     # The working directory of the shell that runs the command, which the hook payload carries,
     # never the hook process's own. Found in practice: a hook runs from the project root, so
-    # `Path.cwd()` here is always the vault root and the whole branch was dead code. That made the
+    # `Path.cwd()` here is always the space root and the whole branch was dead code. That made the
     # 0.3.5 fix for a dropped `cd` ineffective, and it never showed because nothing tested it from
     # inside a bundle.
     hier = Path(cwd) if cwd else Path.cwd()
     # The root is searched from there too. Searching from the hook process's own directory found
-    # the wrong vault, or none, whenever the shell stood somewhere else.
-    wurzel = vault if vault is not None else _find_vault_root(hier)
+    # the wrong space, or none, whenever the shell stood somewhere else.
+    wurzel = space if space is not None else _find_space_root(hier)
     if wurzel is None:
         return None
     try:
@@ -12657,13 +15370,13 @@ def _library_guard_slug(command: str, vault: Path | None = None,
     except (ValueError, OSError):
         return None
     teile = rel.parts
-    if len(teile) >= 2 and teile[0] == DOING_DIR:
+    if len(teile) >= 2 and teile[0] == WORKBENCH_DIR:
         return teile[1]
     return None
 
 
 def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
-    """PreToolUse Bash hook: refuse to save a `.pptx` into a `doing/<slug>/` bundle until
+    """PreToolUse Bash hook: refuse to save a `.pptx` into a `workbench/<slug>/` bundle until
     `slide-library.py check <library> --task <slug>` has run at least once for that slug.
 
     The `powerpoint` skill's library-first order (Match, then Adapt, then Compose, only
@@ -12679,7 +15392,7 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
     own `.save(...)` is invisible here. Found on a real run: a `sales-play-bauen.py`
     invocation slipped past the guard entirely, no `.pptx` literal for the old regex to
     find, because the save lived inside the script, not the command line. Any Python run
-    that resolves into a `doing/<slug>/` bundle now binds the same way, whether or not the
+    that resolves into a `workbench/<slug>/` bundle now binds the same way, whether or not the
     filename is visible, because a script's own behaviour cannot be known without running
     it; the check itself is cheap enough that gating a script that turns out not to touch
     a deck costs one extra command, not a wasted build.
@@ -12709,28 +15422,24 @@ def cmd_hook_library_check_guard(args: argparse.Namespace) -> int:
         baut_deck = bool(_PPTX_HINT_RE.search(command)) or bool(fremde)
     if not baut_deck:
         return 0
-    vault = _session_find_vault_root()
-    slug = _library_guard_slug(command, vault, cwd=payload.get("cwd"))
+    space = _session_find_space_root()
+    slug = _library_guard_slug(command, space, cwd=payload.get("cwd"))
     if slug is None:
         return 0
-    # Against the vault root, never against the working directory. Found on a real run
+    # Against the space root, never against the working directory. Found on a real run
     # with the shell sitting in the bundle, `Path.cwd()` looked for the marker at
-    # `doing/<slug>/zanmai/temp/<slug>/`, which cannot exist, so a run that had done the check
+    # `workbench/<slug>/zanmai/temp/<slug>/`, which cannot exist, so a run that had done the check
     # was refused anyway and went looking for a way around a guard that was right in principle.
-    checked = (vault or Path.cwd()) / SCRATCH_DIR / slug / "library-checked.json"
+    checked = (space or Path.cwd()) / SCRATCH_DIR / slug / "library-checked.json"
     if checked.is_file():
         return 0
-    print(
-        f"library-check-guard: refusing this save. {slug!r} has no record of "
-        f"`slide-library.py check <library> --task {slug}` having run. Run that first: it "
-        f"prints the brand's own slides, so a matching one can be cloned and filled in "
-        f"seconds, the cheap tier this save is skipping past. If nothing in the library "
-        f"carries this shape of content, composing from scratch is still the honest "
-        f"answer, run the check first anyway; its only job is proving the library was "
-        f"looked at before the deck was written.",
-        file=sys.stderr,
+    return _hook_frage(
+        f"library-check-guard: {slug!r} has no record of `slide-library.py check <library> --task "
+        f"{slug}` having run. That check prints the brand's own slides, so a matching one can be "
+        f"cloned and filled in seconds, which is the cheap tier this save skips past. If nothing in "
+        f"the library carries this shape of content, composing from scratch is still the honest "
+        f"answer; the check only proves the library was looked at first."
     )
-    return 2
 
 
 # The label that marks a handover as briefed. Matching on the user's own block rather than on a
@@ -12740,7 +15449,7 @@ _BRIEF_MARKER = "What the user said:"
 
 # The same heading in the languages a handover is actually written in, because the rule above this
 # one says Steve writes in the user's writing language and a handover is mostly the user's own
-# quoted words. A German vault therefore wrote "Was der Nutzer gesagt hat", was refused, lost the
+# quoted words. A German space therefore wrote "Was der Nutzer gesagt hat", was refused, lost the
 # whole assembled dispatch and rebuilt it with an English heading in an otherwise German prompt.
 # The guard checks that the user's words were carried over; which language the label is in says
 # nothing about whether they were.
@@ -12772,7 +15481,7 @@ _OUTWARD_VERBS = ("create", "update", "delete", "publish", "post", "send", "add"
 def cmd_hook_outward_guard(args: argparse.Namespace) -> int:
     """PreToolUse on MCP tools: make a write into somebody else's system a decision the user takes.
 
-    Writing into the vault is reversible and private. Writing into Confluence, a mailbox, a ticket
+    Writing into the space is reversible and private. Writing into Confluence, a mailbox, a ticket
     system or a repository is neither: colleagues see it, and an undo does not reach them. Hard Rule 3
     says such a write waits for an explicit yes in the same message. That was prose, and prose at this
     point does not hold: a session was asked in the chat where information was missing,
@@ -12805,7 +15514,7 @@ def cmd_hook_outward_guard(args: argparse.Namespace) -> int:
         "hookEventName": "PreToolUse",
         "permissionDecision": "ask",
         "permissionDecisionReason": (
-            f"outward-guard: this writes into {dienst}, outside the vault. Other people see it and an "
+            f"outward-guard: this writes into {dienst}, outside the space. Other people see it and an "
             f"undo does not reach them, so it waits for the user rather than happening on the way "
             f"past (Hard Rule 3). If they asked for it, this is one confirmation. If they asked a "
             f"question, answer it in the chat instead."),
@@ -12822,7 +15531,7 @@ def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
     principles section 4).
 
     The check is on the parameter, not on who is being addressed. Scoping it to
-    the vault's own experts left the identical outage one agent name away: a
+    the space's own experts left the identical outage one agent name away: a
     generic helper agent blocks the loop exactly as long as a named expert does.
 
     A nested dispatch is exempt. The payload carries `agent_id` only when the
@@ -12855,25 +15564,14 @@ def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
         # just read the user's words knows what they said. Handing the dispatch back is what puts
         # the interview where it belongs, in front of the send-off, with the user still there. The
         # expert cannot hold it: it runs in the background and has nobody to ask.
-        print(
-            f"dispatch-guard: refusing this {subagent} dispatch, its handover is missing the two "
-            f"labelled blocks. What this checks is formal, and only that: one of "
-            f"{', '.join(repr(m) for m in _BRIEF_MARKERS[:2])} has to appear, in English or in the "
-            f"user's language. A handover can be rich in detail and still be "
-            f"refused here, which is what happened the first time this fired in the field. "
-            f"The expert never met the user, and it runs in the background where it cannot ask, so "
-            f"whatever is missing here gets invented and comes back looking like the expert's "
-            f"fault. Put two labelled blocks at the top of the prompt. '{_BRIEF_MARKER}': their "
-            f"words, quoted or close to it, nothing added; a file or link is named as what came "
-            f"with the ask, not transcribed as content. 'What I concluded:' where it lands, which "
-            f"format, how big the job is, form and destination only, never new subject matter. "
-            f"Then read this expert's own contract for what it needs, and fill the gaps: a fact "
-            f"that sits in the vault or on disk you go and find, that is your job. What is "
-            f"load-bearing, missing, and only the user can know, you ask now, in one numbered "
-            f"round with a recommended answer each so they can wave it through, and you wait. See "
-            f"`{SYSTEM_MATERIAL_DIR}/skills/brief/SKILL.md`.",
-            file=sys.stderr)
-        return 2
+        return _hook_nein(
+            f"dispatch-guard: this {subagent} handover carries no brief, so it is not sent. "
+            f"Put two labelled blocks at the top of the prompt. '{_BRIEF_MARKER}': the "
+            f"user's own words, quoted or close to it, nothing added. 'What I concluded:': "
+            f"where it lands, which format, how big the job is, form and destination only. "
+            f"A fact that sits in the space you go and find; what only the user knows you ask "
+            f"now, before the send-off, because the expert runs in the background and has "
+            f"nobody to ask. See `{SYSTEM_MATERIAL_DIR}/skills/brief/SKILL.md`.")
     korrigiert = dict(tool_input)
     korrigiert["run_in_background"] = True
     print(json.dumps({"hookSpecificOutput": {
@@ -12895,20 +15593,21 @@ def cmd_hook_dispatch_guard(args: argparse.Namespace) -> int:
 
 # Session-start hook helpers (consolidated from former session-start.py).
 
+# How far back the session start reads the journal: the current day and the seven before it.
+# There were three of these, one per journal layer, from when the journal had four. The other
+# two have not been read by anything since the journal became one layer per day.
 _SESSION_DAILY_WINDOW_DAYS = 7
-_SESSION_WEEKLY_WINDOW_DAYS = 28
-_SESSION_MONTHLY_WINDOW_DAYS = 92
 
 # What the session-start hook may print. The host caps hook output at 10,000 characters and
 # replaces anything longer with a 2 KB preview plus a path to a file, without telling the model
 # that it is looking at a fragment. The cap is undocumented in the hooks reference and the two
 # reports about it (anthropics/claude-code #44086, #70460) are closed as not planned, so this is
 # ours to stay under. The budget sits below the cap rather than at it: what the hook prints grows
-# with the vault, and the margin is what keeps a busy vault from silently crossing the line.
+# with the space, and the margin is what keeps a busy space from silently crossing the line.
 _HOOK_OUTPUT_BUDGET = 9000
 
 
-def _session_find_vault_root() -> Path | None:
+def _session_find_space_root() -> Path | None:
     """Walk upward from cwd to find a folder that has zanmai/user.md."""
     cwd = Path.cwd().resolve()
     for path in [cwd] + list(cwd.parents):
@@ -12924,9 +15623,9 @@ def _session_parse_frontmatter(text: str) -> dict[str, str]:
     return _hook_extract_frontmatter(text) or {}
 
 
-def _session_read_marker(vault: Path) -> datetime:
+def _session_read_marker(space: Path) -> datetime:
     """Read .last-session-end. Fall back to three days ago."""
-    marker = vault / MEMORY_DIR / ".last-session-end"
+    marker = space / MEMORY_DIR / ".last-session-end"
     if marker.exists():
         text = marker.read_text(encoding="utf-8").strip()
         try:
@@ -12936,8 +15635,8 @@ def _session_read_marker(vault: Path) -> datetime:
     return datetime.now(timezone.utc) - timedelta(days=3)
 
 
-def _session_load_index(vault: Path) -> dict | None:
-    idx_path = vault / MEMORY_DIR / "vault-index.json"
+def _session_load_index(space: Path) -> dict | None:
+    idx_path = space / MEMORY_DIR / "space-index.json"
     if not idx_path.exists():
         return None
     try:
@@ -12960,14 +15659,10 @@ def _session_parse_entry_timestamp(entry: dict) -> datetime | None:
     return None
 
 
-_SESSION_JOURNAL_WINDOWS = {
-    DAILY_DIR: _SESSION_DAILY_WINDOW_DAYS,
-    WEEKLY_DIR: _SESSION_WEEKLY_WINDOW_DAYS,
-    MONTHLY_DIR: _SESSION_MONTHLY_WINDOW_DAYS,
-}
+_SESSION_JOURNAL_WINDOWS = {JOURNAL_DIR: _SESSION_DAILY_WINDOW_DAYS}
 
 
-def _session_collect_recent_journal(index: dict, vault: Path) -> list[dict]:
+def _session_collect_recent_journal(index: dict, space: Path) -> list[dict]:
     """Journal entries recent enough to matter for the greet, each kind with its own window."""
     now = datetime.now(timezone.utc)
     files = index.get("files", [])
@@ -12980,7 +15675,7 @@ def _session_collect_recent_journal(index: dict, vault: Path) -> list[dict]:
         cutoff = now - timedelta(days=_SESSION_JOURNAL_WINDOWS[root])
         ts = _session_parse_entry_timestamp(entry)
         if ts is None:
-            abs_path = vault / path
+            abs_path = space / path
             if not abs_path.exists():
                 continue
             ts = datetime.fromtimestamp(abs_path.stat().st_mtime, timezone.utc)
@@ -12990,7 +15685,7 @@ def _session_collect_recent_journal(index: dict, vault: Path) -> list[dict]:
     return matches
 
 
-def _session_aggregate_tokens(notes: list[dict], vault: Path) -> dict[str, int]:
+def _session_aggregate_tokens(notes: list[dict], space: Path) -> dict[str, int]:
     counts: dict[str, int] = {}
     for n in notes:
         seen_in_this_note: set[str] = set()
@@ -13005,10 +15700,10 @@ def _session_aggregate_tokens(notes: list[dict], vault: Path) -> dict[str, int]:
     return counts
 
 
-def _session_existing_bundle_slugs(vault: Path) -> set[str]:
+def _session_existing_bundle_slugs(space: Path) -> set[str]:
     bundles: set[str] = set()
     for kind in BUNDLE_FOLDERS:
-        kind_dir = vault / kind
+        kind_dir = space / kind
         if not kind_dir.is_dir():
             continue
         for p in kind_dir.iterdir():
@@ -13017,7 +15712,7 @@ def _session_existing_bundle_slugs(vault: Path) -> set[str]:
     return bundles
 
 
-def _session_suggest_themes(token_counts: dict[str, int], bundles: set[str], top_n: int = 3) -> list[tuple[str, int]]:
+def _session_suggest_bundles(token_counts: dict[str, int], bundles: set[str], top_n: int = 3) -> list[tuple[str, int]]:
     candidates: dict[str, int] = {}
     for slug in bundles:
         norm = slug.lower().replace("-", "")
@@ -13036,18 +15731,18 @@ def _session_suggest_themes(token_counts: dict[str, int], bundles: set[str], top
     return ranked[:top_n]
 
 
-def _session_known_entities(vault: Path) -> dict[str, str]:
+def _session_known_entities(space: Path) -> dict[str, str]:
     """Map slug -> human label for contacts and top-level bundles, the entities
     a journal entry might mention by name."""
     ents: dict[str, str] = {}
     for folder in CONTACT_FOLDERS:
-        d = vault / folder
+        d = space / folder
         if d.is_dir():
             for f in d.iterdir():
                 if f.is_file() and f.suffix == ".md":
                     ents[f.stem] = _human_label_for_slug(f.stem)
     for kind in BUNDLE_FOLDERS:
-        d = vault / kind
+        d = space / kind
         if d.is_dir():
             for b in d.iterdir():
                 if b.is_dir():
@@ -13055,14 +15750,14 @@ def _session_known_entities(vault: Path) -> dict[str, str]:
     return ents
 
 
-def _session_journal_link_candidates(notes: list[dict], vault: Path, top_n: int = 5) -> list[dict]:
+def _session_journal_link_candidates(notes: list[dict], space: Path, top_n: int = 5) -> list[dict]:
     """Known entities mentioned in recent periodic notes as plain text but not
     yet wikilinked there, ranked by recurrence (how many recent notes mention
     each unlinked). Conservative link proposals, capture becoming connected over
     time, without auto-linking. Reads the recent note bodies directly, so it does
     not depend on index freshness."""
     prefixes = tuple(f"{r}/" for r in _SESSION_JOURNAL_WINDOWS)
-    ents = _session_known_entities(vault)
+    ents = _session_known_entities(space)
     matchers = {
         slug: re.compile(r"\b" + re.escape(label) + r"\b", re.IGNORECASE)
         for slug, label in ents.items()
@@ -13076,7 +15771,7 @@ def _session_journal_link_candidates(notes: list[dict], vault: Path, top_n: int 
         if not path.startswith(prefixes):
             continue
         try:
-            body = (vault / path).read_text(encoding="utf-8", errors="ignore")
+            body = (space / path).read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         for slug, rx in matchers.items():
@@ -13091,17 +15786,17 @@ def _session_journal_link_candidates(notes: list[dict], vault: Path, top_n: int 
     return sorted(hits.values(), key=lambda x: (-x["count"], x["slug"]))[:top_n]
 
 
-def _session_index_stale(vault: Path, index: dict | None) -> bool:
-    """True when the vault's markdown no longer matches the index, a file was
+def _session_index_stale(space: Path, index: dict | None) -> bool:
+    """True when the space's markdown no longer matches the index, a file was
     added, removed, or changed since the last rebuild. Compares path + mtime, so
     it catches edits the user made in their editor, which set no marker. An
     index built before the per-file `mtime` field counts as stale once."""
     if not index:
         return True
     current: dict[str, int] = {}
-    for f in _walk_vault_markdown(vault):
+    for f in _walk_space_markdown(space):
         try:
-            current[f.relative_to(vault).as_posix()] = int(f.stat().st_mtime)
+            current[f.relative_to(space).as_posix()] = int(f.stat().st_mtime)
         except (OSError, ValueError):
             continue
     indexed: dict[str, int] = {}
@@ -13115,12 +15810,12 @@ def _session_index_stale(vault: Path, index: dict | None) -> bool:
     return current != indexed
 
 
-def _session_refresh_index(vault: Path, *, detached: bool = True) -> None:
-    """Rebuild the vault index and patterns. At session start this is handed to a detached
+def _session_refresh_index(space: Path, *, detached: bool = True) -> None:
+    """Rebuild the space index and patterns. At session start this is handed to a detached
     process and the hook does not wait for it.
 
     It used to run inline, on a docstring that claimed sub-second on thousands of files. Measured
-    in a vault in daily use: median 248 ms, worst case 8,452 ms, against the host's
+    in a space in daily use: median 248 ms, worst case 8,452 ms, against the host's
     10-second SessionStart timeout. A hook that times out delivers nothing at all, so the greet
     would have opened blind, which is worse than the truncation this same day was spent fixing.
     Nothing in the greet needs the index, so waiting for it buys nothing and risks everything.
@@ -13133,7 +15828,7 @@ def _session_refresh_index(vault: Path, *, detached: bool = True) -> None:
         try:
             subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "index", "rebuild",
-                 str(vault), "--quiet"],
+                 str(space), "--quiet"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                 start_new_session=True)
         except Exception:
@@ -13141,8 +15836,8 @@ def _session_refresh_index(vault: Path, *, detached: bool = True) -> None:
         return
     try:
         with contextlib.redirect_stdout(io.StringIO()):
-            cmd_reindex(argparse.Namespace(vault=str(vault), scope=None, quiet=True))
-            cmd_patterns(argparse.Namespace(vault=str(vault), min_count=2))
+            cmd_reindex(argparse.Namespace(space=str(space), scope=None, quiet=True))
+            cmd_patterns(argparse.Namespace(space=str(space), min_count=2))
     except Exception:
         pass
 
@@ -13153,7 +15848,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     marker, index entries) and prints a compact briefing
     that Claude Code injects into the session context as a system-reminder."""
     # Read the payload once, up front. stdin can only be read once, and two things want it now: the
-    # vault fallback below and the model name at the end. `SessionStart` is the only event that
+    # space fallback below and the model name at the end. `SessionStart` is the only event that
     # carries `model` at all, and the docs say it is not guaranteed to be there, so everything that
     # reads it treats it as optional.
     payload = _hook_read_payload()
@@ -13162,21 +15857,21 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # work, and repeating it means a second import run over the same files every time somebody
     # steps out of the terminal and back in.
     fortsetzung = str(payload.get("source") or "").lower() in ("resume", "compact")
-    vault = _session_find_vault_root()
-    if vault is None:
+    space = _session_find_space_root()
+    if space is None:
         import os
         env_dir = os.environ.get("CLAUDE_PROJECT_DIR")
         if env_dir:
             candidate = Path(env_dir)
             if (candidate / SYSTEM_DIR / "user.md").exists():
-                vault = candidate
-    if vault is None:
+                space = candidate
+    if space is None:
         cwd_hint = payload.get("cwd") or payload.get("project_dir")
         if cwd_hint and (Path(cwd_hint) / SYSTEM_DIR / "user.md").exists():
-            vault = Path(cwd_hint)
-    if vault is None:
-        # No initialised vault found by the user.md marker. Detect an
-        # uninitialised Zanmai vault (system tree present, user.md absent) and
+            space = Path(cwd_hint)
+    if space is None:
+        # No initialised space found by the user.md marker. Detect an
+        # uninitialised Zanmai space (system tree present, user.md absent) and
         # drive setup with a hard directive, so a fresh session cannot slide into
         # a generic greeting instead of running setup.
         import os
@@ -13188,18 +15883,19 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
                 continue
             if is_zb and fresh:
                 print(
-                    "Zanmai: this vault is not set up yet, there is no user profile. "
+                    "Zanmai: this space is not set up yet, there is no user profile. "
                     "Before any greeting or answer, read zanmai/system/skills/setup/SKILL.md "
+                    "as a file, there is no slash command for it, "
                     "and run its workflow now. Do not respond generically."
                 )
                 return 0
         return 0
 
-    user_md = vault / SYSTEM_DIR / "user.md"
+    user_md = space / SYSTEM_DIR / "user.md"
     try:
         user_text = user_md.read_text(encoding="utf-8")
     except OSError:
-        print("Zanmai session-start: zanmai/user.md unreadable. Run `setup` skill if vault is fresh.")
+        print("Zanmai session-start: zanmai/user.md unreadable. Run `setup` skill if space is fresh.")
         return 0
 
     # Prune the transient workspace so it never becomes a data graveyard, but
@@ -13214,7 +15910,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # work stood is how a run loses what it cannot write down twice.
     import shutil
     import time
-    work_dir = vault / SCRATCH_DIR
+    work_dir = space / SCRATCH_DIR
     if work_dir.is_dir():
         cutoff = time.time() - 7 * 86400
         for child in work_dir.iterdir():
@@ -13241,11 +15937,11 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     language = fm.get("language", "auto")
     auto_snapshots = fm.get("auto_snapshots", "true").lower() == "true"
     # No end-of-session marker means the user has never closed a session here, so this is the first
-    # time they are in the vault after setup. It is the one moment where an offer to explain the
+    # time they are in the space after setup. It is the one moment where an offer to explain the
     # place is welcome rather than noise.
-    first_session = not (vault / MEMORY_DIR / ".last-session-end").exists()
+    first_session = not (space / MEMORY_DIR / ".last-session-end").exists()
 
-    marker = _session_read_marker(vault)
+    marker = _session_read_marker(space)
     marker_iso = marker.astimezone(timezone.utc).isoformat(timespec="minutes")
 
     lines: list[str] = []
@@ -13254,38 +15950,48 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # Every line below writes `zanmai.py <subcommand>`, and so do the skills and the expert
     # contracts, 188 times against 38 that spell the path out. The resolution was written down only
     # inside the expert contracts, under a heading a run reads when it is already that expert. So a
-    # session start would say `zanmai.py records index`, the run typed exactly that at the vault
-    # root, and there is no zanmai.py at the vault root. Two runs on the same day spent their first
+    # session start would say `zanmai.py archive index`, the run typed exactly that at the space
+    # root, and there is no zanmai.py at the space root. Two runs on the same day spent their first
     # commands looking for the file. It costs one line to say it where every run passes.
     lines.append(f"- `zanmai.py <subcommand>` here and in every skill is shorthand for "
                  f"`{fm.get('python_cmd') or 'python3'} {SYSTEM_DIR}/system/scripts/zanmai.py "
-                 f"<subcommand>`, run from the vault root. There is no zanmai.py at the root.")
+                 f"<subcommand>`, run from the space root. There is no zanmai.py at the root.")
 
     # New distribution files can arrive without the host-side refresh, for
     # example when the user pulls the repository by hand. The refresh is
     # mechanical, so run it instead of reporting drift.
     #
     # The wiring itself is checked every session, not only when the version moved,
-    # and that is what rescues a vault whose marker already claims the current
+    # and that is what rescues a space whose marker already claims the current
     # version while the host config is incomplete. Any release before this one wrote
-    # that marker on hope: for those vaults the versions agree, so a check that
+    # that marker on hope: for those spaces the versions agree, so a check that
     # triggers on disagreement never looks again. This one looks regardless.
-    shipped_version = _distribution_version(vault)
-    host_marker = vault / RUNTIME_DIR / "host-config-version"
+    # Both ignore lists, rewritten from the current folder names. Silent and cheap: two small files,
+    # no comparison, nothing to report. It runs here because this is the one place that runs in
+    # every space on every session, and because what it writes decides two things nobody would
+    # notice going wrong: whether the user's material stays out of a commit, and whether a search
+    # of their own notes can see them at all.
+    try:
+        _write_ignore_rules(space)
+    except OSError:
+        pass                                  # a read-only space still greets
+
+    shipped_version = _distribution_version(space)
+    host_marker = space / RUNTIME_DIR / "host-config-version"
     known_version = host_marker.read_text(encoding="utf-8").strip() if host_marker.exists() else ""
     version_moved = bool(shipped_version) and shipped_version != known_version
-    problems = _verify_host_config(vault)
+    problems = _verify_host_config(space)
     if version_moved or problems:
-        _refresh_host_config(vault, quiet=True)
-        remaining = _verify_host_config(vault)
+        _refresh_host_config(space, quiet=True)
+        remaining = _verify_host_config(space)
         if remaining:
-            lines.append("- This vault's host config is incomplete and a refresh did not fix it: "
+            lines.append("- This space's host config is incomplete and a refresh did not fix it: "
                          + "; ".join(remaining)
                          + ". Say so plainly and offer to run `setup validate` for the detail. The "
                            "recorded version is left alone, so this is looked at again next session.")
         else:
             if shipped_version:
-                _record_host_config_version(vault, shipped_version)
+                _record_host_config_version(space, shipped_version)
             if problems and not version_moved:
                 lines.append(f"- Part of Zanmai was on disk but not wired up ({len(problems)} item(s)), "
                              "and has now been wired. Mention it once, in one sentence, and carry on.")
@@ -13293,13 +15999,45 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
                 lines.append(f"- Zanmai moved from {known_version} to {shipped_version}. Host config refreshed; "
                              "mention the new version once and point at the changelog if the user asks what changed.")
 
+    # A session ends when somebody shuts the window, and that leaves no handover: the close is a
+    # command someone has to type. A machine that was switched off at the wall says so on the way
+    # back up and offers to check itself, and this is the same moment. The host wrote the whole
+    # conversation down while it happened, so what was lost is not lost, it just has to be read.
+    # Nothing is done here except saying it: writing the handover needs judgement about what it all
+    # meant, and this hook has no model.
+    if not first_session:
+        offen = _records(space, seit=_last_session_end(space))
+        if offen:
+            wann = datetime.fromtimestamp(offen[-1].stat().st_mtime).strftime("%d.%m. %H:%M")
+            lines.append(
+                f"- **{len(offen)} session(s) were never closed**, the newest on {wann}. Say so in "
+                f"one sentence and offer to write the handover for them now, out of "
+                f"`zanmai.py session digest`, which reads what actually happened from the host's "
+                f"own record of those conversations. Then say that closing a session is "
+                f"`/zanmai-session-close` and takes a moment. Write nothing before the user "
+                f"says yes.")
+
+    # A later version added questions to setup that this space never saw. The gap is read here
+    # rather than left to a number written into a skill file, because a number in prose drifts
+    # away from the one the code ships and then the catch-up either never fires or fires forever.
+    # Once answered, `setup catch-up` stamps the field and this line is gone for good.
+    if not fortsetzung and _setup_schema_version(space) < CURRENT_SETUP_SCHEMA_VERSION:
+        lines.append(
+            f"- This space was set up before the current setup dialogue existed "
+            f"(setup_schema_version {_setup_schema_version(space)}, current {CURRENT_SETUP_SCHEMA_VERSION}). "
+            f"Read `{SYSTEM_DIR}/system/skills/setup/SKILL.md` as a file (no slash command exists "
+            f"for it), section 'Catching up an older space', "
+            "and run only the blocks it names as missing, before the ordinary greet. Ask once; the "
+            "answers are recorded with `setup catch-up` and this never comes back."
+        )
+
     # Recordings waiting are named, not transcribed. A hook that takes a minute is a
     # session that starts in a minute, and the reading of them is a background job.
-    waiting = _pending_recordings(vault) if not fortsetzung else []
+    waiting = _pending_recordings(space) if not fortsetzung else []
     if waiting:
         total = sum(_audio_duration(f) or 0.0 for f in waiting)
         lines.append(
-            f"- {len(waiting)} voice note(s) waiting in {IMPORT_DIR}/"
+            f"- {len(waiting)} voice note(s) waiting in {INBOX_DIR}/"
             + (f", {_spoken_length(total)} in total" if total else "")
             + ". **Dispatch the `import` skill in the background in this same turn**, before the "
               "greet goes out; a background dispatch does not hold it up and the greet is written "
@@ -13315,13 +16053,13 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # Work the user has not answered yet. Named in one line, because this is the one
     # class of open item the next session cannot work out for itself.
     try:
-        rows, _headers = _work_read(vault)
+        rows, _headers = _work_read(space)
     except Exception:
         rows = []
     # A session that ran with nobody in the chat is only useful if the next one says so.
-    unattended = _unattended_log_to_report(vault)
+    unattended = _unattended_log_to_report(space)
     if unattended:
-        lines.append(f"- The last session ran without the user: `{unattended.relative_to(vault)}`. "
+        lines.append(f"- The last session ran without the user: `{unattended.relative_to(space)}`. "
                      "Open the greeting with one line from that log and the work objects, what was "
                      "handled and what it left open, then carry on as usual.")
 
@@ -13335,9 +16073,9 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # Named once a day, not once per hook run. This hook fires again on every resume and
     # every compaction, and an offer repeated three times in an afternoon reads as nagging
     # about something the user already declined.
-    newer = _quiet_update_probe(vault)
-    if newer and _update_offer_due(vault):
-        lines.append(f"- Version {newer} is available (this vault runs {shipped_version}). Offer the update once, "
+    newer = _quiet_update_probe(space)
+    if newer and _update_offer_due(space):
+        lines.append(f"- Version {newer} is available (this space runs {shipped_version}). Offer the update once, "
                      "in one plain line, at a moment that does not interrupt the user's task, and drop it for this "
                      "session if declined. On a yes, dispatch Pepper's update workflow.")
     if owner_contact:
@@ -13345,31 +16083,57 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     lines.append(f"- Language preference: {language}.")
     lines.append(f"- Last session ended: {marker_iso}.")
     lines.append(f"- auto_snapshots: {str(auto_snapshots).lower()}. A snapshot is taken before something that could lose the user's own work, never because a session began or a version changed. When false, skip every automatic snapshot, the user has their own backup approach.")
-    for note in _sweep_retention(vault):
+    for note in _sweep_retention(space):
         lines.append(f"- Housekeeping: {note}")
 
-    stray = _unexpected_root_entries(vault)
+    stray = _unexpected_root_entries(space)
     if stray:
         lines.append(
-            f"- {len(stray)} entr(y/ies) at the vault root do not belong to the folder architecture: "
+            f"- {len(stray)} entr(y/ies) at the space root do not belong to the folder architecture: "
             f"{', '.join(stray[:5])}"
             + (" …" if len(stray) > 5 else "")
             + ". This did not come from a Zanmai write. Name it once, in one line, and offer to move "
-              "its contents into the right theme."
+              "its contents into the right bundle."
         )
 
-    lines.append(f"- The journal lives under `{JOURNAL_DIR}/`, one bundle per period, four kinds (daily, weekly, monthly, yearly). It is always there; there is no switch and nothing to configure.")
-    lines.append("- Journal operations go through `zanmai.py journal` and the `journal` skill. The AI never writes into an entry on its own initiative, only on direct user instruction. The one exception is the period rollup, which appends and never overwrites.")
+    # The weekly shape-and-memory report: what `zanmai.py housekeeping` finds beyond the
+    # retention sweep, plus a critical read of general.md, surfaced together without the user
+    # having to ask for either or run anything by hand. Report only, nothing here is moved.
+    # general.md writes without asking first now; this replaces that dialogue. The write-time
+    # gate only ever catches the narrow, syntactic version of a bad entry (a date, an instance
+    # name); telling a lasting principle from a single case dressed up as one is reading, so it
+    # goes to the same dispatch as the shape report rather than a second, separate one.
+    if _housekeeping_due(space):
+        duenn = _bundles_without_material(space)
+        form = _area_shape(space)
+        if duenn or form:
+            lines.append("- Housekeeping (weekly): the space's shape, not just its keeping "
+                         "times. The list below is raw, not a finding: connect what belongs "
+                         "together by matter, not by name (a bundle in workbench/ and bundles in "
+                         "life/ can be the same shape with no word in common), say what you see, "
+                         "do not move anything without a yes.")
+            for b in duenn[:5]:
+                lines.append(f"  - {b} holds nothing but its own page, a single item given a folder.")
+            if len(duenn) > 5:
+                lines.append(f"  - {len(duenn) - 5} more of the same.")
+            for zeile in form[:10]:
+                lines.append(f"  - {zeile}")
+        if (space / MEMORY_DIR / "general.md").is_file():
+            lines.append("- Same weekly moment: dispatch Pepper with `run_in_background: true` "
+                         "to read every rule in general.md against its own purpose (a lasting "
+                         "principle, not a single case: no person's name, no one trip, no one "
+                         "running instance, no note about a new command's own behaviour). Do not "
+                         "wait on it; report what she finds, in the user's writing language, "
+                         "whenever she returns. Nothing is removed without a yes.")
 
-    faellig = _journal_rollups_due(vault, datetime.now())
-    if faellig:
-        lines.append("- A rollup is due. Write the summary in the user's own words from the entries below, then `zanmai.py journal rollup`. It refuses a second one for the same period, so it cannot double up:")
-        lines.extend(f"  {zeile}" for zeile in faellig)
+    lines.append(f"- The journal lives under `{JOURNAL_DIR}/`, one entry per day, named by its date and filed under its year. It is always there; there is no switch and nothing to configure. A summary over a week or a month is a question asked of those files, not a file of its own.")
+    lines.append("- Journal operations go through `zanmai.py journal` and the `journal` skill. The AI never writes into an entry on its own initiative, only on direct user instruction.")
 
     # Not on a resume. The reading was dispatched when the session started; doing it again because
     # the user stepped out of the terminal and back in runs the same files through the same expert
     # a second time, at the same cost, for the same answer.
-    wartend = _import_pending(vault) if not fortsetzung else []
+    wartend = _import_pending(space) if not fortsetzung else []
+
     if wartend:
         arten: dict[str, int] = {}
         for f in wartend:
@@ -13384,17 +16148,21 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
         # the user to repeat themselves.
         treffer = {}
         for f in wartend:
-            regel = _route_for_file(vault, f)
+            regel = _route_for_file(space, f)
             if regel:
                 treffer[regel.get("name", "?")] = _rule_phrase(regel)
         geregelt = [treffer[k] for k in sorted(treffer)]
+        # There used to be a note here of which files had been handed over before, because a file
+        # could stay in the inbox and would then be worked again at the next session start. Nothing
+        # stays any more, so a file lying here has not been dealt with, whatever happened earlier,
+        # and a list of what was already seen would now be the thing that stops it being finished.
         lines.append(
-            f"- {len(wartend)} file(s) waiting in `{IMPORT_DIR}/` ({pretty}): {namen}. "
+            f"- {len(wartend)} file(s) waiting in `{INBOX_DIR}/` ({pretty}): {namen}. "
             + (f"The routing table already answers part of it: {'; '.join(geregelt)}. Follow it "
                f"rather than asking again. " if geregelt else "")
-            + f"**Read it by machine first**: `zanmai.py records index --scope {IMPORT_DIR}` pulls "
-              f"the text out of every file for free, then `zanmai.py records survey --scope "
-              f"{IMPORT_DIR}` gives one line each with dates, amounts, parties and the opening. "
+            + f"**Read it by machine first**: `zanmai.py archive index --scope {INBOX_DIR}` pulls "
+              f"the text out of every file for free, then `zanmai.py archive survey --scope "
+              f"{INBOX_DIR}` gives one line each with dates, amounts, parties and the opening. "
               f"Both take the same folder; without it the survey reports the whole archive. Work "
               f"from those lines and open a file only where one leaves the question open. Reading "
               f"them all with a model costs about sixteen times as much and answers the same "
@@ -13405,9 +16173,16 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             f"The reading runs in the background from this turn, not the next one. Report what "
             f"each was and where it belongs when the run returns. The question comes after the "
             f"reading, never instead of it, and only where the material itself leaves something "
-            f"open. Nothing is written into the vault before that answer. Anything the "
-            f"routing table sends to `{RECORDS_DIR}/` goes to Marcus rather than Hank, and it "
-            f"moves as a pile: `zanmai.py records file --source <folder> --area <section>` files "
+            f"open. Nothing is written into the space before that answer. **Every one of these "
+            f"leaves `{INBOX_DIR}/` in the same run, and nothing may be left lying there.** Where the "
+            f"file itself still carries something the result does not, a scan or a recording, it goes "
+            f"to live beside what was made from it; where it does not, a note that asked for a task, "
+            f"it goes to the trash. Where a rule of the user's does not answer that yet, it is worth "
+            f"one question, once, and the answer goes into the rule with `routing set <name> "
+            f"<destination> --keep with-result|discard`. A rule naming who does the work is followed "
+            f"on that too. Anything the "
+            f"routing table sends to `{ARCHIVE_DIR}/` goes to Marcus rather than Hank, and it "
+            f"moves as a pile: `zanmai.py archive file --source <folder> --into <bundle>` files "
             f"the lot in one call, keeps the folders the user already sorted it into and reads "
             f"what it filed. **Do not move documents one at a time.** Deciding each one before "
             f"anything moves is how a pile of thirty sits untouched while every file is thought "
@@ -13417,7 +16192,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             f"that down with `zanmai.py routing set <name> <destination> --when-text <a word in "
             f"it>`, so the next one of its sort does not have to be asked about again. To give a "
             f"filed document a name that says what it is, or to put it in a section underneath, "
-            f"use `zanmai.py records rename` and `zanmai.py records move`; a hand-rolled `mv` "
+            f"use `zanmai.py archive rename` and `zanmai.py archive move`; a hand-rolled `mv` "
             f"moves the file and leaves the index pointing at where it used to be.")
         # The handover, written out rather than left to be composed. `dispatch-guard` checks for
         # the user's-words block and refuses without it, and at a session start there is no
@@ -13428,18 +16203,18 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
         # happened the first time this ran.
         lines.append(
             f"  The prompt for that dispatch starts with these two blocks, verbatim:\n"
-            f"  `What the user said:` They put {len(wartend)} file(s) into `{IMPORT_DIR}/`: "
+            f"  `What the user said:` They put {len(wartend)} file(s) into `{INBOX_DIR}/`: "
             f"{namen}. Dropping material there is the instruction to take it in; nothing was said "
             f"in the conversation about it.\n"
             f"  `What I concluded:` This is the reading pass from `import-bundle/SKILL.md`, not a "
             f"filing run. Open every file, work out what each one is, write nothing into the "
-            f"vault, ask nothing, and return per file what it is and where it would belong, plus "
+            f"space, ask nothing, and return per file what it is and where it would belong, plus "
             f"what is still open. Check a tool with `tools check <id>` before needing it and "
             f"report the gap rather than fetching it.")
 
-    # Material for the records area, before anybody is sent to file it. Put as a statement with two
+    # Material for the archive, before anybody is sent to file it. Put as a statement with two
     # open questions hanging off it, never as a menu to pick from. A menu asks the user to work
-    # through options where there is nothing to choose: the area is called records, and the sorts of
+    # through options where there is nothing to choose: the area is called archive, and the sorts of
     # document that go in it are visible in their own material. What is worth asking is only what
     # the machine cannot see, namely whether something is missing from that picture and whether the
     # terms suit. Both answers are usually one word, and that is the point. The country is not
@@ -13450,39 +16225,39 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # to ask a question is a rule that cannot hold.
     if wartend and not fortsetzung:
         arten_da = {_import_route(f)[0] for f in wartend}
-        will_records = any((_route_for_file(vault, f).get("to") or "").startswith(RECORDS_DIR)
+        will_records = any((_route_for_file(space, f).get("to") or "").startswith(ARCHIVE_DIR)
                            for f in wartend)
-        eingerichtet = bool(_retention(vault))
-        if not eingerichtet and (will_records or not _routing(vault)):
+        eingerichtet = bool(_retention(space))
+        if not eingerichtet and (will_records or not _routing(space)):
             gesehen = ", ".join(sorted(arten_da)[:8]) or "whatever the reading turns up"
             lines.append(
-                f"- **The records area is not set up, so nothing gets filed there yet.** Settle it "
+                f"- **The archive is not set up, so nothing gets filed there yet.** Settle it "
                 f"in this turn, in the user's language, as plain sentences and not as a menu of "
                 f"options to choose from. Write it for somebody who has never used this before, "
-                f"in this order: what you found lying in `import/` and what sort it is "
+                f"in this order: what you found lying in `inbox/` and what sort it is "
                 f"({gesehen}); that this sort is kept rather than filed away, which is a different "
                 f"job with a different specialist, Marcus, who looks after documents that have to "
-                f"be produced again years later; that the area for it is called `{RECORDS_DIR}`; "
+                f"be produced again years later; that the area for it is called `{ARCHIVE_DIR}`; "
                 f"what you would therefore take as belonging in it; and how long you would keep "
                 f"each sort. Print that last part with `zanmai.py retention show` and put it in as "
                 f"it stands, the terms are deliberately on the long side, so fine is the normal "
                 f"answer. Then two questions and wait: is anything missing from that or anything "
                 f"too much, and do those terms suit. Close by offering that you can say more about "
-                f"how the area works, from `zanmai/system/docs/records.md`, if they want it. Do "
+                f"how the archive works, from `zanmai/system/docs/archive.md`, if they want it. Do "
                 f"not offer a choice of names, do not ask which country they are in, do not build "
                 f"a list to tick. On the answers: `zanmai.py retention adopt`, then `zanmai.py "
-                f"routing set <name> {RECORDS_DIR} --when-text <a word in it>` per sort that "
+                f"routing set <name> {ARCHIVE_DIR} --when-text <a word in it>` per sort that "
                 f"stands. Only then is anything "
                 f"dispatched to Marcus. He runs in the background and cannot ask, so a run sent "
                 f"out before this either guesses or stops, and both are worse than a question "
                 f"here.")
 
-    # The desk, once, as a sentence. `doing/` is the one folder that empties, so what sits there
+    # The desk, once, as a sentence. `workbench/` is the one folder that empties, so what sits there
     # untouched is either finished and not filed, or waiting on something nobody wrote down. In a
-    # working vault this fills up faster than anyone notices: fifteen pieces, nine of them still
+    # working space this fills up faster than anyone notices: fifteen pieces, nine of them still
     # for more than a fortnight. It is a reminder and not a demand, so it says the count, names a
     # few, and offers the one move that makes a piece go quiet on purpose.
-    liegend = _desk_idle(vault)
+    liegend = _desk_idle(space)
     if liegend:
         namen = ", ".join(e["label"] for e in liegend[:3])
         rest = f" and {len(liegend) - 3} more" if len(liegend) > 3 else ""
@@ -13491,7 +16266,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             f"longest first: {namen}{rest}. Say this in one sentence after the list, not as items, "
             f"and only where it is worth a word: nothing here has to move. Where the user says one "
             f"is waiting on something, record it with `zanmai.py file status --path "
-            f"<doing/<slug>/<slug>.md> --set waiting` and a `due:` for when it comes back, and it "
+            f"<workbench/<slug>/<slug>.md> --set waiting` and a `due:` for when it comes back, and it "
             f"stays quiet until then. Where one is simply finished, `--set done` and it stops "
             f"being asked about."
         )
@@ -13499,37 +16274,34 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     if first_session:
         lines.append("- **First session after setup.** Before anything else, ask the user in their writing language whether they would like a short tour: what the folders are for, and what they can actually do with Zanmai. One question, two sentences at most, and a no is a fine answer. On a yes, answer from `zanmai/system/docs/index.md` and the pages it points at, shaped for this user, never a page pasted back at them.")
 
-    index = _session_load_index(vault)
-    stale_marker = vault / MEMORY_DIR / ".index-stale"
-    if stale_marker.exists() or _session_index_stale(vault, index):
+    index = _session_load_index(space)
+    stale_marker = space / MEMORY_DIR / ".index-stale"
+    if stale_marker.exists() or _session_index_stale(space, index):
         # Handed off, not waited for: the greet reads none of this, and the rebuild's worst case
         # sits within one second of the host's timeout for the whole hook. The session works from
         # the index as it stands; the refreshed one is there for the first query that needs it.
-        _session_refresh_index(vault)
+        _session_refresh_index(space)
     if index is None:
-        lines.append("- Pattern index not built yet. Run `zanmai.py index rebuild` plus `zanmai.py index patterns` before theme queries.")
+        lines.append("- Pattern index not built yet. Run `zanmai.py index rebuild` plus `zanmai.py index patterns` before bundle queries.")
     else:
-        notes = _session_collect_recent_journal(index, vault)
-        window_desc = f"last {_SESSION_DAILY_WINDOW_DAYS} days Daily, last {_SESSION_WEEKLY_WINDOW_DAYS // 7} weeks Weekly, last {_SESSION_MONTHLY_WINDOW_DAYS // 30} months Monthly"
+        notes = _session_collect_recent_journal(index, space)
+        window_desc = f"last {_SESSION_DAILY_WINDOW_DAYS} days"
         if not notes:
-            lines.append(f"- No Daily, Weekly or Monthly notes in the recent window ({window_desc}). The greet still runs the same walk over what is open, from `zanmai/memory/briefing.md` and the work objects; with fewer sources it simply finds fewer items, and it names the ones it finds.")
+            lines.append(f"- No journal entries in the recent window ({window_desc}). The greet still runs the same walk over what is open, from `zanmai/memory/briefing.md` and the work objects; with fewer sources it simply finds fewer items, and it names the ones it finds.")
         else:
-            daily = [n for n in notes if n["path"].startswith(f"{DAILY_DIR}/")]
-            weekly = [n for n in notes if n["path"].startswith(f"{WEEKLY_DIR}/")]
-            monthly = [n for n in notes if n["path"].startswith(f"{MONTHLY_DIR}/")]
-            lines.append(f"- Recent window ({window_desc}): {len(daily)} Daily, {len(weekly)} Weekly, {len(monthly)} Monthly note(s).")
+            lines.append(f"- Recent window ({window_desc}): {len(notes)} journal entr{'y' if len(notes) == 1 else 'ies'}.")
             for n in notes[-5:]:
                 lines.append(f"  * {n['path']}")
-            candidates = _session_journal_link_candidates(notes, vault)
+            candidates = _session_journal_link_candidates(notes, space)
             if candidates:
                 pretty = ", ".join(f"[[{c['slug']}]] ({c['count']}x)" for c in candidates)
                 lines.append(
                     f"- Journal link candidates (recent notes name these existing entities unlinked, ranked by recurrence): {pretty}. "
                     f"Offer to add the wikilinks, propose, do not auto-link. The more a name recurs across recent notes, the stronger the signal it belongs connected. This is how capture becomes connected over time."
                 )
-            counts = _session_aggregate_tokens(notes, vault)
-            bundles = _session_existing_bundle_slugs(vault)
-            suggestions = _session_suggest_themes(counts, bundles, top_n=3)
+            counts = _session_aggregate_tokens(notes, space)
+            bundles = _session_existing_bundle_slugs(space)
+            suggestions = _session_suggest_bundles(counts, bundles, top_n=3)
             if suggestions:
                 pretty_pairs = ", ".join(
                     f"{_human_label_for_slug(slug)} ({count}/{len(notes)})"
@@ -13550,17 +16322,17 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
                     "not commit to a deliverable."
                 )
 
-    stale = vault / MEMORY_DIR / ".index-stale"
+    stale = space / MEMORY_DIR / ".index-stale"
     if stale.exists():
-        lines.append("- `zanmai/memory/.index-stale` marker is set. Refresh `zanmai.py index rebuild` + `zanmai.py index patterns` before any theme query.")
+        lines.append("- `zanmai/memory/.index-stale` marker is set. Refresh `zanmai.py index rebuild` + `zanmai.py index patterns` before any bundle query.")
 
     # The briefing is named, never pasted. Embedding it put the payload over the host's
     # hook-output limit, and everything past that limit is replaced by a 2 KB preview the
-    # model cannot tell is incomplete. Measured on 79 real starts in a live vault: every
+    # model cannot tell is incomplete. Measured on 79 real starts in a live space: every
     # single one exceeded the limit, the greet list and the greet shape sat past it, and
     # the greet was composed from the briefing's first two kilobytes instead. A path plus
     # one read is cheaper than a greet built on a fragment.
-    briefing_path = vault / MEMORY_DIR / "briefing.md"
+    briefing_path = space / MEMORY_DIR / "briefing.md"
     if briefing_path.exists():
         try:
             briefing_size = briefing_path.stat().st_size
@@ -13583,7 +16355,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # old as the last close-session, and "today" computed against a stale build is simply wrong.
     if not first_session:
         try:
-            greet_lines = _greet_block(vault)
+            greet_lines = _greet_block(space)
         except Exception as fehler:  # a broken greet list must not cost the session its start
             greet_lines = [f"- Greet list unavailable ({fehler.__class__.__name__}). "
                            f"Compose the greet from the briefing above and say so in one line."]
@@ -13609,11 +16381,14 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             f"sentences. The list above is context, not something to read out. Where the thread is "
             f"genuinely gone, say so in one line and ask, rather than opening with a greeting."
         )
-    elif (vault / greeting_rel).exists():
+    elif (space / greeting_rel).exists():
         lines.append(
-            f"- **Read `{greeting_rel}` and follow it before the first user-facing sentence.** It "
-            f"carries the greet shape, the mandatory reads and what a greet must never contain. "
-            f"Address the user as **{preferred}** where it applies."
+            f"- **Open the file `{greeting_rel}` and follow it before the first user-facing "
+            f"sentence.** Open it as a file: this is not a registered skill and there is no slash "
+            f"command for it. Every registered one is named `zanmai-<something>`, which is exactly "
+            f"why `zanmai-greeting` gets guessed; that call fails and costs the first turn of the "
+            f"session. The file carries the greet shape, the mandatory reads and what a greet must "
+            f"never contain. Address the user as **{preferred}** where it applies."
         )
     else:
         lines.append(
@@ -13656,7 +16431,7 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     # path, and a preview is worse than nothing: it carries enough to compose a plausible reply
     # from and no sign that the rest was dropped. Measured, every
     # one of 79 recorded starts was over, so the greet had never once seen its own instructions.
-    # Kept well under the limit rather than at it: what this hook prints grows with the vault.
+    # Kept well under the limit rather than at it: what this hook prints grows with the space.
     if len(ausgabe) > _HOOK_OUTPUT_BUDGET:
         kopf = [l for l in lines if l.startswith("Zanmai session briefing")]
         rest = [l for l in lines if l not in kopf]
@@ -13696,10 +16471,10 @@ def cmd_hook_index_consistency(args: argparse.Namespace) -> int:
     located = _hook_relative_under_prefix(file_path, _HOOK_INDEX_PREFIXES)
     if located is None:
         return 0
-    # Mark the pattern index stale. The vault root is whatever sits above the bundle root, and the
+    # Mark the pattern index stale. The space root is whatever sits above the bundle root, and the
     # first match is the one that gives it: a path may well repeat a folder name further down
     # (`knowledge/knowledge-management/`), and the later occurrence would put the marker inside the
-    # bundle instead of in the vault.
+    # bundle instead of in the space.
     norm = file_path.replace("\\", "/")
     found = [i for i in (norm.find(f"/{r}/") for r in BUNDLE_FOLDERS) if i != -1]
     if found:
@@ -13709,7 +16484,7 @@ def cmd_hook_index_consistency(args: argparse.Namespace) -> int:
             pass
     rel, _ = located
     parts = rel.split("/")
-    # `<kind>/<slug>/<file>`: three segments now that the kind folder is a vault root.
+    # `<kind>/<slug>/<file>`: three segments now that the kind folder is a space root.
     if len(parts) < 3:
         return 0
     # `parts` is `<kind>/<slug>/.../<file>`: for a file sitting directly in the bundle root that is
@@ -13954,8 +16729,8 @@ def _sign_c2pa(target: Path, cert: str, key: str, tsa: str,
 
 
 def _signer_dir() -> Path:
-    """Where the self-managed C2PA signing identity lives: outside the vault, in
-    the user's config dir, never committed, never in the vault (LD6)."""
+    """Where the self-managed C2PA signing identity lives: outside the space, in
+    the user's config dir, never committed, never in the space (LD6)."""
     if os.name == "nt":
         base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
     else:
@@ -13968,7 +16743,7 @@ def _signer_paths() -> tuple[Path, Path]:
     return d / "cert.pem", d / "key.pem"
 
 
-def _establish_signer(vault: Path | None) -> tuple[Path | None, Path | None, str]:
+def _establish_signer(space: Path | None) -> tuple[Path | None, Path | None, str]:
     """Create the self-managed signing identity if none exists, then return its
     paths. P-256, PKCS#8 key, cert with keyUsage=digitalSignature,
     EKU=emailProtection, CA:FALSE, and SubjectKeyIdentifier + AuthorityKeyIdentifier
@@ -13978,15 +16753,15 @@ def _establish_signer(vault: Path | None) -> tuple[Path | None, Path | None, str
     cert_p, key_p = _signer_paths()
     if cert_p.is_file() and key_p.is_file():
         return cert_p, key_p, "present"
-    if vault is not None:
-        _activate_runtime_venv_site(vault)
+    if space is not None:
+        _activate_runtime_venv_site(space)
     try:
         from cryptography import x509  # noqa: F401
     except ImportError:
-        if vault is None:
-            return None, None, "cryptography not available and no vault to provision it"
+        if space is None:
+            return None, None, "cryptography not available and no space to provision it"
         import subprocess
-        py, _ = _ensure_runtime_venv(vault)
+        py, _ = _ensure_runtime_venv(space)
         if not py:
             return None, None, "could not build the runtime venv to provision cryptography"
         cmd = (["uv", "pip", "install", "--python", str(py), "cryptography"] if shutil.which("uv")
@@ -13997,7 +16772,7 @@ def _establish_signer(vault: Path | None) -> tuple[Path | None, Path | None, str
                 return None, None, f"cryptography install failed: {(r.stderr or r.stdout).strip()[:160]}"
         except Exception as e:
             return None, None, f"cryptography install error: {type(e).__name__}: {e}"
-        _activate_runtime_venv_site(vault)
+        _activate_runtime_venv_site(space)
     try:
         from cryptography import x509
         from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
@@ -14041,8 +16816,8 @@ def _establish_signer(vault: Path | None) -> tuple[Path | None, Path | None, str
 def cmd_media_signer_ensure(args: argparse.Namespace) -> int:
     """Establish (or confirm) the self-managed signing identity. Wong's provisioning
     of the C2PA signer, run once; `media mark --sign` also calls it on demand."""
-    vault = _find_vault_root(Path(args.vault)) if args.vault else _find_vault_root(Path.cwd())
-    cert_p, key_p, state = _establish_signer(vault)
+    space = _find_space_root(Path(args.space)) if args.space else _find_space_root(Path.cwd())
+    cert_p, key_p, state = _establish_signer(space)
     ok = cert_p is not None
     print(json.dumps({"state": state, "cert": str(cert_p) if cert_p else None,
                       "key": str(key_p) if key_p else None,
@@ -14063,9 +16838,9 @@ def cmd_media_mark(args: argparse.Namespace) -> int:
     out = Path(args.out) if args.out else src
     status: dict = {"source": str(src), "out": str(out)}
 
-    vault = _find_vault_root(out) or _find_vault_root(src) or _find_vault_root(Path.cwd())
-    if vault:
-        _activate_runtime_venv_site(vault)
+    space = _find_space_root(out) or _find_space_root(src) or _find_space_root(Path.cwd())
+    if space:
+        _activate_runtime_venv_site(space)
 
     present, issuer = _c2pa_manifest_state(src)
     status["c2pa_source"] = "present" if present else ("absent" if present is False else "unknown (c2pa lib missing)")
@@ -14082,7 +16857,7 @@ def cmd_media_mark(args: argparse.Namespace) -> int:
         parent_copy = src.with_name(src.stem + ".preedit" + src.suffix)
         shutil.copy2(src, parent_copy)
     if args.eu_icon:
-        icons_dir = (vault / SYSTEM_MATERIAL_DIR / "icons" / "eu-ai") if vault else Path(".")
+        icons_dir = (space / SYSTEM_MATERIAL_DIR / "icons" / "eu-ai") if space else Path(".")
         try:
             info = _composite_eu_icon(src, out, args.eu_icon, icons_dir)
             status["visible_label"] = info
@@ -14116,7 +16891,7 @@ def cmd_media_mark(args: argparse.Namespace) -> int:
     if not (cert and key):
         cp, kp = _signer_paths()
         if not (cp.is_file() and kp.is_file()) and (args.sign or (reencoded and present is True)):
-            ecp, ekp, _ = _establish_signer(vault)
+            ecp, ekp, _ = _establish_signer(space)
             if ecp and ekp:
                 cp, kp = ecp, ekp
         if cp.is_file() and kp.is_file():
@@ -14205,7 +16980,7 @@ _MAC_TERMINAL_CANDIDATES = [
 
 
 def _detect_terminals(osname: str) -> list[dict]:
-    """Terminal apps this machine can start a vault session in.
+    """Terminal apps this machine can start a space session in.
 
     macOS always offers Terminal (system app) plus whatever else this scan
     finds under /Applications, so the caller can turn the list into a choice.
@@ -14245,7 +17020,7 @@ _MACOS_LAUNCHER_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def _launcher_create_macos(vault: Path, name: str, terminal_id: str, icon_png: Path, claude_bin: str) -> int:
+def _launcher_create_macos(space: Path, name: str, terminal_id: str, icon_png: Path, claude_bin: str) -> int:
     for tool in ("sips", "iconutil"):
         if not shutil.which(tool):
             print(f"error: {tool} not found, cannot build a macOS icon", file=sys.stderr)
@@ -14284,10 +17059,10 @@ def _launcher_create_macos(vault: Path, name: str, terminal_id: str, icon_png: P
         (app_dir / "Contents" / "Info.plist").write_text(
             _MACOS_LAUNCHER_PLIST.format(name=name, bundle_id=bundle_id), encoding="utf-8")
 
-        vault_escaped = str(vault).replace("'", "'\\''")
+        space_escaped = str(space).replace("'", "'\\''")
         if terminal_id == "terminal":
             start_cmd = resources_dir / "start.command"
-            start_cmd.write_text(f"#!/bin/bash\ncd '{vault_escaped}'\nexec '{claude_bin}'\n", encoding="utf-8")
+            start_cmd.write_text(f"#!/bin/bash\ncd '{space_escaped}'\nexec '{claude_bin}'\n", encoding="utf-8")
             start_cmd.chmod(0o755)
             launch_body = (
                 "#!/bin/bash\n"
@@ -14296,7 +17071,7 @@ def _launcher_create_macos(vault: Path, name: str, terminal_id: str, icon_png: P
             )
         else:
             app_name = next((n for tid, n in _MAC_TERMINAL_CANDIDATES if tid == terminal_id), terminal_id)
-            inner = f"cd '{vault_escaped}' && exec '{claude_bin}'"
+            inner = f"cd '{space_escaped}' && exec '{claude_bin}'"
             inner_escaped = inner.replace('"', '\\"')
             launch_body = f"#!/bin/bash\nopen -na '{app_name}' --args -e /bin/zsh -c \"{inner_escaped}\"\n"
         (macos_dir / "launch").write_text(launch_body, encoding="utf-8")
@@ -14307,7 +17082,7 @@ def _launcher_create_macos(vault: Path, name: str, terminal_id: str, icon_png: P
     return 0
 
 
-def _launcher_create_windows(vault: Path, name: str, terminal_id: str, icon_ico: Path, claude_bin: str) -> int:
+def _launcher_create_windows(space: Path, name: str, terminal_id: str, icon_ico: Path, claude_bin: str) -> int:
     """Designed against documented PowerShell/WScript.Shell behaviour, never run on
     real Windows hardware, same status as the rest of this project's Windows path.
     """
@@ -14315,10 +17090,10 @@ def _launcher_create_windows(vault: Path, name: str, terminal_id: str, icon_ico:
     lnk_path = desktop / f"{name}.lnk"
     if terminal_id == "wt":
         target = "wt.exe"
-        arguments = f'-d "{vault}" {claude_bin}'
+        arguments = f'-d "{space}" {claude_bin}'
     else:
         target = "cmd.exe"
-        arguments = f'/k "cd /d ""{vault}"" && {claude_bin}"'
+        arguments = f'/k "cd /d ""{space}"" && {claude_bin}"'
 
     ps_script = (
         "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');"
@@ -14328,7 +17103,7 @@ def _launcher_create_windows(vault: Path, name: str, terminal_id: str, icon_ico:
         "$s.WorkingDirectory = '{cwd}';"
         "$s.Save()"
     ).format(lnk=str(lnk_path), target=target, args=arguments.replace("'", "''"),
-             icon=str(icon_ico), cwd=str(vault))
+             icon=str(icon_ico), cwd=str(space))
 
     result = subprocess.run(["powershell", "-NoProfile", "-Command", ps_script],
                              capture_output=True, text=True)
@@ -14346,13 +17121,13 @@ def cmd_launcher_detect_terminals(args: argparse.Namespace) -> int:
 
 
 def cmd_launcher_create(args: argparse.Namespace) -> int:
-    """Build a double-clickable starter for this vault: an .app on macOS, a .lnk
+    """Build a double-clickable starter for this space: an .app on macOS, a .lnk
     on Windows. Deliberately its own command, independent of `setup init`, so it
     can be asked for anytime in a session, not only once during first install.
     """
-    vault = Path(args.vault_root).resolve()
-    if not (vault / SYSTEM_MATERIAL_DIR / "manifest.yaml").exists():
-        print(f"error: no Zanmai system folder at {vault}", file=sys.stderr)
+    space = Path(args.space_root).resolve()
+    if not (space / SYSTEM_MATERIAL_DIR / "manifest.yaml").exists():
+        print(f"error: no Zanmai system folder at {space}", file=sys.stderr)
         return 1
     name = args.name.strip()
     if not name:
@@ -14363,27 +17138,27 @@ def cmd_launcher_create(args: argparse.Namespace) -> int:
     claude_bin = shutil.which("claude") or "claude"
 
     if osname == "macos":
-        icon_png = vault / SYSTEM_MATERIAL_DIR / "icons" / "app-icon.png"
+        icon_png = space / SYSTEM_MATERIAL_DIR / "icons" / "app-icon.png"
         if not icon_png.exists():
             print(f"error: missing shipped icon at {icon_png}", file=sys.stderr)
             return 1
-        return _launcher_create_macos(vault, name, args.terminal, icon_png, claude_bin)
+        return _launcher_create_macos(space, name, args.terminal, icon_png, claude_bin)
     if osname == "windows":
-        icon_ico = vault / SYSTEM_MATERIAL_DIR / "icons" / "app-icon.ico"
+        icon_ico = space / SYSTEM_MATERIAL_DIR / "icons" / "app-icon.ico"
         if not icon_ico.exists():
             print(f"error: missing shipped icon at {icon_ico}", file=sys.stderr)
             return 1
-        return _launcher_create_windows(vault, name, args.terminal, icon_ico, claude_bin)
+        return _launcher_create_windows(space, name, args.terminal, icon_ico, claude_bin)
     print("error: no launcher mechanic for this platform yet", file=sys.stderr)
     return 1
 
 
-def _runtime_venv_dir(vault: Path) -> Path:
-    return vault / RUNTIME_DIR / "venv"
+def _runtime_venv_dir(space: Path) -> Path:
+    return space / RUNTIME_DIR / "venv"
 
 
-def _runtime_venv_python(vault: Path) -> Path | None:
-    d = _runtime_venv_dir(vault)
+def _runtime_venv_python(space: Path) -> Path | None:
+    d = _runtime_venv_dir(space)
     for rel in ("bin/python", "Scripts/python.exe"):
         p = d / rel
         if p.is_file():
@@ -14391,9 +17166,9 @@ def _runtime_venv_python(vault: Path) -> Path | None:
     return None
 
 
-def _user_python_cmd(vault: Path) -> str:
+def _user_python_cmd(space: Path) -> str:
     """The Python invocation recorded at setup (user.md python_cmd); default python3."""
-    um = vault / SYSTEM_DIR / "user.md"
+    um = space / SYSTEM_DIR / "user.md"
     if um.is_file():
         for line in um.read_text(encoding="utf-8", errors="ignore").splitlines():
             m = re.match(r'\s*python_cmd:\s*"?([^"\n]+)"?', line)
@@ -14420,9 +17195,9 @@ def _detect_binary(invoke: str, version_flag: str | None) -> dict:
     return out
 
 
-def _detect_lib(vault: Path, module: str) -> dict:
+def _detect_lib(space: Path, module: str) -> dict:
     import subprocess
-    py = _runtime_venv_python(vault)
+    py = _runtime_venv_python(space)
     if py is None:
         return {"present": False, "note": "runtime venv not built"}
     code = f"import importlib.util as u;print('YES' if u.find_spec({module!r}) else 'NO')"
@@ -14479,11 +17254,11 @@ def _detect_renderer(osname: str) -> dict:
     return {"present": False}
 
 
-def _detect_tool(vault: Path, tid: str, spec: dict, osname: str) -> dict:
+def _detect_tool(space: Path, tid: str, spec: dict, osname: str) -> dict:
     det = spec.get("detect", {})
     method = det.get("method")
     if method == "import":
-        return _detect_lib(vault, det.get("import", tid))
+        return _detect_lib(space, det.get("import", tid))
     if method == "renderer":
         return _detect_renderer(osname)
     if method == "env":
@@ -14492,11 +17267,11 @@ def _detect_tool(vault: Path, tid: str, spec: dict, osname: str) -> dict:
     if method in ("which", "runtime"):
         osspec = (spec.get("os") or {}).get(osname) or {}
         name = osspec.get("invoke") or tid
-        # A binary this vault fetched itself lives in the runtime tree and is not
+        # A binary this space fetched itself lives in the runtime tree and is not
         # on PATH, so PATH alone would report it missing right after it was
-        # installed, and every job would fetch it again. The vault's own copy is
+        # installed, and every job would fetch it again. The space's own copy is
         # looked at first, then the host's.
-        own = vault / ((spec.get("provision") or {}).get("into") or f"{RUNTIME_DIR}/bin") / name
+        own = space / ((spec.get("provision") or {}).get("into") or f"{RUNTIME_DIR}/bin") / name
         if own.is_file():
             found = _detect_binary(str(own), det.get("version_flag"))
             if found.get("present"):
@@ -14504,13 +17279,13 @@ def _detect_tool(vault: Path, tid: str, spec: dict, osname: str) -> dict:
         return _detect_binary(name, det.get("version_flag"))
     if method == "file-glob":
         # A model file is neither a binary on PATH nor an importable library: it is a
-        # large file the vault fetched into its own machine-local runtime tree. Without
+        # large file the space fetched into its own machine-local runtime tree. Without
         # this branch the entry fell through to "no detector", which reads as unknown
         # rather than missing, and a preflight cannot gate on unknown.
-        hits = sorted(vault.glob(det.get("glob", "")))
+        hits = sorted(space.glob(det.get("glob", "")))
         if hits:
             size = hits[0].stat().st_size / (1024 * 1024)
-            return {"present": True, "path": str(hits[0].relative_to(vault)),
+            return {"present": True, "path": str(hits[0].relative_to(space)),
                     "note": f"{size:.0f} MB"}
         return {"present": False, "note": f"no file matching {det.get('glob', '')}"}
     if spec.get("kind") == "mcp":
@@ -14519,21 +17294,21 @@ def _detect_tool(vault: Path, tid: str, spec: dict, osname: str) -> dict:
 
 
 def cmd_tools_doctor(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     tools = _load_register().get("tools", {})
     osname = _current_os()
-    print(f"Zanmai tool doctor, os={osname}, vault={vault}")
-    print(f"runtime venv python: {_runtime_venv_python(vault) or '(not built)'}\n")
+    print(f"Zanmai tool doctor, os={osname}, space={space}")
+    print(f"runtime venv python: {_runtime_venv_python(space) or '(not built)'}\n")
     order = {"prerequisite": 0, "on-demand": 1, "recommended": 2, "host-configured": 3}
-    cache = _load_tool_cache(vault)
+    cache = _load_tool_cache(space)
     for tid, spec in sorted(tools.items(), key=lambda kv: (order.get(kv[1].get("tier"), 9), kv[0])):
-        res = _detect_tool_cached(vault, tid, spec, osname, cache, refresh=getattr(args, "refresh", False))
+        res = _detect_tool_cached(space, tid, spec, osname, cache, refresh=getattr(args, "refresh", False))
         p = res.get("present")
         mark = "ok" if p is True else ("--" if p is False else "??")
         detail = res.get("version") or res.get("note") or res.get("path") or ""
         need = ",".join(spec.get("needed_by", []))
         print(f"  [{mark}] {tid:14} {spec.get('tier',''):14} {detail:40} «{need}»")
-    _save_tool_cache(vault, cache)
+    _save_tool_cache(space, cache)
     return 0
 
 
@@ -14579,7 +17354,7 @@ def cmd_tools_list(args: argparse.Namespace) -> int:
     which ones they were: the setup skill named their purpose and withheld their names, so
     the question had no answer. A number nobody sees is not transparency.
     """
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     tools = _load_register().get("tools", {})
     osname = _current_os()
     if getattr(args, "markdown", False):
@@ -14589,7 +17364,7 @@ def cmd_tools_list(args: argparse.Namespace) -> int:
              ("on-demand", "Fetched the first time a job needs it."),
              ("recommended", "Makes things easier, never required."),
              ("host-configured", "Set up at the host, nothing to install here.")]
-    cache = _load_tool_cache(vault)
+    cache = _load_tool_cache(space)
     total = 0
     for tier, what in tiers:
         rows = sorted((t, sp) for t, sp in tools.items() if sp.get("tier") == tier)
@@ -14597,7 +17372,7 @@ def cmd_tools_list(args: argparse.Namespace) -> int:
             continue
         print(f"\n{tier} ({len(rows)}) - {what}")
         for tid, spec in rows:
-            present = _detect_tool_cached(vault, tid, spec, osname, cache).get("present")
+            present = _detect_tool_cached(space, tid, spec, osname, cache).get("present")
             mark = "have" if present is True else ("--" if present is False else "??")
             size = _size_text(spec)
             if present is not True and spec.get("size_mb"):
@@ -14613,39 +17388,39 @@ def cmd_tools_list(args: argparse.Namespace) -> int:
         print(f"\nStill missing, added up: about {total} MB. Libraries share dependencies, "
               f"so the real total is lower.")
     print("\nSizes measured on macOS; see zanmai/system/docs/tools.md for the same list in prose.")
-    _save_tool_cache(vault, cache)
+    _save_tool_cache(space, cache)
     return 0
 
 
 def cmd_tools_check(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     spec = (_load_register().get("tools") or {}).get(args.id)
     if not spec:
         print(json.dumps({"error": f"unknown tool id: {args.id}"}))
         return 1
-    res = _detect_tool(vault, args.id, spec, _current_os())
+    res = _detect_tool(space, args.id, spec, _current_os())
     print(json.dumps({"id": args.id, "tier": spec.get("tier"), **res}, ensure_ascii=False, indent=2))
     return 0
 
 
-def _ensure_runtime_venv(vault: Path) -> tuple[Path | None, str]:
+def _ensure_runtime_venv(space: Path) -> tuple[Path | None, str]:
     import subprocess
-    py = _runtime_venv_python(vault)
+    py = _runtime_venv_python(space)
     if py:
         return py, "present"
-    d = _runtime_venv_dir(vault)
+    d = _runtime_venv_dir(space)
     d.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["uv", "venv", str(d)] if shutil.which("uv") else _user_python_cmd(vault).split() + ["-m", "venv", str(d)]
+    cmd = ["uv", "venv", str(d)] if shutil.which("uv") else _user_python_cmd(space).split() + ["-m", "venv", str(d)]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
         if r.returncode != 0:
             return None, f"venv create failed: {(r.stderr or r.stdout).strip()[:160]}"
     except Exception as e:
         return None, f"venv create error: {type(e).__name__}: {e}"
-    return _runtime_venv_python(vault), "created"
+    return _runtime_venv_python(space), "created"
 
 
-def _fetch_plain_file(vault: Path, tool_id: str, spec: dict, prov: dict) -> dict:
+def _fetch_plain_file(space: Path, tool_id: str, spec: dict, prov: dict) -> dict:
     """Fetch one large plain file, a model, and prove it works by using it.
 
     Separate from the pinned-binary path because that one unpacks an archive and then
@@ -14659,8 +17434,8 @@ def _fetch_plain_file(vault: Path, tool_id: str, spec: dict, prov: dict) -> dict
     import urllib.request
 
     url = prov["url"]
-    target = vault / prov["target"]
-    _vault_mkdir(vault, target.parent, parents=True, exist_ok=True)
+    target = space / prov["target"]
+    _space_mkdir(space, target.parent, parents=True, exist_ok=True)
     tmp = target.with_name(f".{target.name}-download")
     # An interrupted fetch used to throw away what it had. On a 1.6 GB model over a home line that
     # is minutes, and it happened: 962 MB were on disk and the next attempt started at zero. The
@@ -14693,13 +17468,13 @@ def _fetch_plain_file(vault: Path, tool_id: str, spec: dict, prov: dict) -> dict
 
     canary = prov.get("canary_cmd")
     if canary:
-        ffmpeg = _tool_path(vault, "ffmpeg")
-        whisper = _tool_path(vault, canary) or shutil.which(canary)
+        ffmpeg = _tool_path(space, "ffmpeg")
+        whisper = _tool_path(space, canary) or shutil.which(canary)
         if not (ffmpeg and whisper):
-            return {"state": "installed", "path": str(target.relative_to(vault)),
+            return {"state": "installed", "path": str(target.relative_to(space)),
                     "size_mb": round(size_mb),
                     "detail": "downloaded, not proven: the tools to try it are not on this machine"}
-        work = vault / SCRATCH_DIR / "voice"
+        work = space / SCRATCH_DIR / "voice"
         work.mkdir(parents=True, exist_ok=True)
         probe = work / "canary.wav"
         try:
@@ -14708,16 +17483,16 @@ def _fetch_plain_file(vault: Path, tool_id: str, spec: dict, prov: dict) -> dict
             subprocess.run([whisper, "-m", str(target), "-f", str(probe), "--no-prints"],
                            check=True, capture_output=True, timeout=300)
         except Exception as exc:  # noqa: BLE001
-            return {"state": "WARNING", "path": str(target.relative_to(vault)),
+            return {"state": "WARNING", "path": str(target.relative_to(space)),
                     "detail": f"downloaded but it does not load: {type(exc).__name__}"}
         finally:
             probe.unlink(missing_ok=True)
-        return {"state": "installed", "path": str(target.relative_to(vault)),
+        return {"state": "installed", "path": str(target.relative_to(space)),
                 "size_mb": round(size_mb), "detail": "proven by transcribing a canary"}
-    return {"state": "installed", "path": str(target.relative_to(vault)), "size_mb": round(size_mb)}
+    return {"state": "installed", "path": str(target.relative_to(space)), "size_mb": round(size_mb)}
 
 
-def _fetch_pinned_binary(vault: Path, tool_id: str, spec: dict, os_spec: dict, prov: dict) -> dict:
+def _fetch_pinned_binary(space: Path, tool_id: str, spec: dict, os_spec: dict, prov: dict) -> dict:
     """Fetch one self-contained binary at the pinned version, unpack it into the
     machine-local runtime tree, and prove it works before calling it installed.
 
@@ -14741,8 +17516,8 @@ def _fetch_pinned_binary(vault: Path, tool_id: str, spec: dict, os_spec: dict, p
     )
     asset = os_spec["asset"].format(arch=arch, version=version)
     url = prov["release"].format(version=version, asset=asset)
-    target_dir = vault / prov.get("into", f"{RUNTIME_DIR}/bin")
-    _vault_mkdir(vault, target_dir, parents=True, exist_ok=True)
+    target_dir = space / prov.get("into", f"{RUNTIME_DIR}/bin")
+    _space_mkdir(space, target_dir, parents=True, exist_ok=True)
     binary_name = os_spec.get("invoke", tool_id)
 
     tmp = target_dir / f".{tool_id}-download"
@@ -14788,11 +17563,11 @@ def _fetch_pinned_binary(vault: Path, tool_id: str, spec: dict, os_spec: dict, p
 
     canary = prov.get("canary")
     if canary:
-        source = vault / canary
+        source = space / canary
         if not source.is_file():
             return {"state": "WARNING", "path": str(installed),
                     "detail": f"canary missing at {canary}, so the install is unproven"}
-        out_pdf = vault / RUNTIME_DIR / f"{tool_id}-canary.pdf"
+        out_pdf = space / RUNTIME_DIR / f"{tool_id}-canary.pdf"
         try:
             run = subprocess.run([str(installed), "compile", str(source), str(out_pdf)],
                                  capture_output=True, text=True, timeout=180)
@@ -14808,7 +17583,7 @@ def _fetch_pinned_binary(vault: Path, tool_id: str, spec: dict, os_spec: dict, p
 
 
 def cmd_tools_ensure_all(args: argparse.Namespace) -> int:
-    """Everything this vault could need, in one pass, offered at setup instead of drop by drop.
+    """Everything this space could need, in one pass, offered at setup instead of drop by drop.
 
     Without `--yes` it only reports, and that report is the question the user answers. Nothing that
     costs money, needs an account or wants a decision is included: those are listed as theirs to
@@ -14817,7 +17592,7 @@ def cmd_tools_ensure_all(args: argparse.Namespace) -> int:
     """
     import io
     import contextlib
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     tools = (_load_register().get("tools") or {})
     osname = _current_os()
 
@@ -14826,7 +17601,7 @@ def cmd_tools_ensure_all(args: argparse.Namespace) -> int:
         if spec.get("kind") == "mcp":
             extern.append(tid)
             continue
-        if _detect_tool(vault, tid, spec, osname).get("present") is True:
+        if _detect_tool(space, tid, spec, osname).get("present") is True:
             da.append(tid)
             continue
         method = (spec.get("provision") or {}).get("method")
@@ -14872,7 +17647,7 @@ def cmd_tools_ensure_all(args: argparse.Namespace) -> int:
         with contextlib.redirect_stdout(buf):
             # `--yes` is already the gate on this command: the user answered the report above
             # before this loop runs, so the consent is carried through rather than asked twice.
-            rc = cmd_tools_ensure(argparse.Namespace(vault=str(vault), id=tid, yes=True))
+            rc = cmd_tools_ensure(argparse.Namespace(space=str(space), id=tid, yes=True))
         try:
             ergebnis = json.loads(buf.getvalue())
         except json.JSONDecodeError:
@@ -14887,13 +17662,13 @@ def cmd_tools_ensure_all(args: argparse.Namespace) -> int:
 
 def cmd_tools_ensure(args: argparse.Namespace) -> int:
     import subprocess
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     spec = (_load_register().get("tools") or {}).get(args.id)
     if not spec:
         print(json.dumps({"error": f"unknown tool id: {args.id}"}))
         return 1
     osname = _current_os()
-    if _detect_tool(vault, args.id, spec, osname).get("present") is True:
+    if _detect_tool(space, args.id, spec, osname).get("present") is True:
         print(json.dumps({"id": args.id, "state": "already-present"}, ensure_ascii=False))
         return 0
     tier = spec.get("tier")
@@ -14923,7 +17698,7 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
         }, ensure_ascii=False, indent=2))
         return 0
     if method == "venv-pip":
-        py, note = _ensure_runtime_venv(vault)
+        py, note = _ensure_runtime_venv(space)
         if not py:
             print(json.dumps({"id": args.id, "state": "WARNING", "detail": note}))
             return 1
@@ -14938,7 +17713,7 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
         if r.returncode != 0:
             print(json.dumps({"id": args.id, "state": "WARNING", "detail": (r.stderr or r.stdout).strip()[:200]}))
             return 1
-        ok = _detect_lib(vault, (spec.get("detect") or {}).get("import", args.id)).get("present")
+        ok = _detect_lib(space, (spec.get("detect") or {}).get("import", args.id)).get("present")
         print(json.dumps({"id": args.id, "state": "installed" if ok else "WARNING",
                           "pip": pkg, "runtime": str(py), "venv": note}, ensure_ascii=False, indent=2))
         return 0 if ok else 1
@@ -14948,7 +17723,7 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
                               "detail": "no url and target for this file, so nothing is fetched on a guess"},
                              ensure_ascii=False, indent=2))
             return 0
-        result = _fetch_plain_file(vault, args.id, spec, prov)
+        result = _fetch_plain_file(space, args.id, spec, prov)
         print(json.dumps({"id": args.id, **result}, ensure_ascii=False, indent=2))
         return 0 if result.get("state") == "installed" else 1
     if method == "binary-fetch":
@@ -14959,12 +17734,12 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
                               "detail": "no pinned release for this platform, so nothing is fetched on a guess",
                               "hint": hint.get("text"), "note": prov.get("note")}, ensure_ascii=False, indent=2))
             return 0
-        result = _fetch_pinned_binary(vault, args.id, spec, os_spec, prov)
+        result = _fetch_pinned_binary(space, args.id, spec, os_spec, prov)
         print(json.dumps({"id": args.id, **result}, ensure_ascii=False, indent=2))
         return 0 if result.get("state") == "installed" else 1
     if method == "node-package":
-        # Installed into the vault's own runtime tree, never globally: a global install needs
-        # rights this script must not assume, and it would leak one vault's pinned version into
+        # Installed into the space's own runtime tree, never globally: a global install needs
+        # rights this script must not assume, and it would leak one space's pinned version into
         # every other project on the machine. Detection already looks in the runtime tree first
         # (`provision.into`), so the copy is found right after it lands.
         npm = shutil.which("npm")
@@ -14975,7 +17750,7 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
                               "guide": "zanmai/system/docs/install/node.md"},
                              ensure_ascii=False, indent=2))
             return 0
-        wurzel = vault / (prov.get("root") or f"{RUNTIME_DIR}/node")
+        wurzel = space / (prov.get("root") or f"{RUNTIME_DIR}/node")
         wurzel.mkdir(parents=True, exist_ok=True)
         pin = prov.get("version_pin")
         paket = prov.get("package") or args.id
@@ -14991,9 +17766,9 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
             print(json.dumps({"id": args.id, "state": "WARNING",
                               "detail": (r.stderr or r.stdout).strip()[:300]}, ensure_ascii=False))
             return 1
-        ok = _detect_tool(vault, args.id, spec, osname)
+        ok = _detect_tool(space, args.id, spec, osname)
         print(json.dumps({"id": args.id, "state": "installed" if ok.get("present") else "WARNING",
-                          "package": spez, "root": str(wurzel.relative_to(vault)),
+                          "package": spez, "root": str(wurzel.relative_to(space)),
                           "version": ok.get("version"), "path": ok.get("path")},
                          ensure_ascii=False, indent=2))
         return 0 if ok.get("present") else 1
@@ -15017,21 +17792,21 @@ def cmd_tools_ensure(args: argparse.Namespace) -> int:
 
 # ---- tool cache (machine-local, update-immune) + preflight ------------------
 
-def _tool_cache_path(vault: Path) -> Path:
+def _tool_cache_path(space: Path) -> Path:
     """Detection results live here, in the writable runtime tree that updates
     never touch. The register stays static and presence-free; this is the second,
     dynamic database of what was found on THIS machine, so a preflight is a quick
     look, not a full rescan each time."""
-    return vault / RUNTIME_DIR / "tool-cache.json"
+    return space / RUNTIME_DIR / "tool-cache.json"
 
 
-# Facts a run establishes about the ground it stands on: a typeface is installed, a theme file
+# Facts a run establishes about the ground it stands on: a typeface is installed, a bundle file
 # sits at this path, a helper answers on this port. Each one costs a minute to establish and gives
 # the same answer every time, so a run that establishes it again has spent that minute for nothing.
 # Measured on one piece of work: fifteen runs in a row re-checked the same typeface.
 #
 # What makes this more than a cache is the scope, and the scope is the whole point. "Montserrat is
-# installed" is true of a machine, "poppler is here" of an installation, "the theme is at this
+# installed" is true of a machine, "poppler is here" of an installation, "the bundle is at this
 # path" of one bundle. Without saying which, a run on another machine reads a stranger's finding
 # and believes it. So a fact carries what it is about, and a fact about a machine is checked
 # against the machine before it is handed back.
@@ -15039,10 +17814,10 @@ FACTS_FILE = "facts.json"
 FACT_SCOPES = ("machine", "install", "bundle")
 
 
-def _facts_path(vault: Path) -> Path:
+def _facts_path(space: Path) -> Path:
     # Under runtime, which is machine-local and never travels in a backup. A findings file that
     # syncs to a second computer is worse than none: it is confidently wrong there.
-    return vault / RUNTIME_DIR / FACTS_FILE
+    return space / RUNTIME_DIR / FACTS_FILE
 
 
 def _machine_signature() -> str:
@@ -15051,15 +17826,15 @@ def _machine_signature() -> str:
     return f"{platform.node()}|{platform.system()}|{platform.machine()}"
 
 
-def _facts_load(vault: Path) -> dict:
+def _facts_load(space: Path) -> dict:
     try:
-        return json.loads(_facts_path(vault).read_text(encoding="utf-8"))
+        return json.loads(_facts_path(space).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
 
 
-def _facts_save(vault: Path, facts: dict) -> None:
-    ziel = _facts_path(vault)
+def _facts_save(space: Path, facts: dict) -> None:
+    ziel = _facts_path(space)
     ziel.parent.mkdir(parents=True, exist_ok=True)
     ziel.write_text(json.dumps(facts, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -15073,8 +17848,8 @@ def _fact_valid_here(eintrag: dict) -> tuple[bool, str]:
 
 def cmd_fact_set(args: argparse.Namespace) -> int:
     """Write down something established, with what it is about and when."""
-    vault = _work_vault(args)
-    facts = _facts_load(vault)
+    space = _work_space(args)
+    facts = _facts_load(space)
     schluessel = args.key.strip()
     facts[schluessel] = {
         "value": args.value,
@@ -15084,7 +17859,7 @@ def cmd_fact_set(args: argparse.Namespace) -> int:
         "machine": _machine_signature(),
         "by": args.agent or "",
     }
-    _facts_save(vault, facts)
+    _facts_save(space, facts)
     print(f"ok: {schluessel} = {args.value} (about this {args.scope}"
           + (f", {args.about}" if args.about else "") + f", {_today()})")
     return 0
@@ -15092,8 +17867,8 @@ def cmd_fact_set(args: argparse.Namespace) -> int:
 
 def cmd_fact_get(args: argparse.Namespace) -> int:
     """Read one back, or say plainly that it has to be established."""
-    vault = _work_vault(args)
-    eintrag = _facts_load(vault).get(args.key.strip())
+    space = _work_space(args)
+    eintrag = _facts_load(space).get(args.key.strip())
     if not eintrag:
         print(f"unknown: {args.key} has not been established here. Find out, then "
               f"`fact set {args.key} <value>`.")
@@ -15110,8 +17885,8 @@ def cmd_fact_get(args: argparse.Namespace) -> int:
 
 
 def cmd_fact_list(args: argparse.Namespace) -> int:
-    vault = _work_vault(args)
-    facts = _facts_load(vault)
+    space = _work_space(args)
+    facts = _facts_load(space)
     if not facts:
         print("nothing established yet")
         return 0
@@ -15125,19 +17900,19 @@ def cmd_fact_list(args: argparse.Namespace) -> int:
 
 
 def cmd_fact_forget(args: argparse.Namespace) -> int:
-    vault = _work_vault(args)
-    facts = _facts_load(vault)
+    space = _work_space(args)
+    facts = _facts_load(space)
     if args.key.strip() not in facts:
         print(f"unknown: {args.key}", file=sys.stderr)
         return 1
     facts.pop(args.key.strip())
-    _facts_save(vault, facts)
+    _facts_save(space, facts)
     print(f"ok: {args.key} forgotten; the next run establishes it again")
     return 0
 
 
-def _load_tool_cache(vault: Path) -> dict:
-    p = _tool_cache_path(vault)
+def _load_tool_cache(space: Path) -> dict:
+    p = _tool_cache_path(space)
     if p.is_file():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
@@ -15146,8 +17921,8 @@ def _load_tool_cache(vault: Path) -> dict:
     return {}
 
 
-def _save_tool_cache(vault: Path, cache: dict) -> None:
-    p = _tool_cache_path(vault)
+def _save_tool_cache(space: Path, cache: dict) -> None:
+    p = _tool_cache_path(space)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -15155,7 +17930,7 @@ def _save_tool_cache(vault: Path, cache: dict) -> None:
         pass
 
 
-def _detect_tool_cached(vault: Path, tid: str, spec: dict, osname: str,
+def _detect_tool_cached(space: Path, tid: str, spec: dict, osname: str,
                         cache: dict, refresh: bool = False) -> dict:
     """Detection with the machine-local cache. A cached present-hit is validated
     cheaply before it is trusted (binary path still exists / venv python
@@ -15163,16 +17938,16 @@ def _detect_tool_cached(vault: Path, tid: str, spec: dict, osname: str,
     a change gets picked up without paying a full scan every time."""
     method = (spec.get("detect") or {}).get("method")
     if refresh or method not in ("which", "runtime", "import"):
-        return _detect_tool(vault, tid, spec, osname)
+        return _detect_tool(space, tid, spec, osname)
     entry = (cache.get("tools") or {}).get(tid)
     if entry and entry.get("os") == osname and entry.get("present") is True:
         if method in ("which", "runtime") and entry.get("path") and os.path.exists(entry["path"]):
             return {**entry, "cached": True}
         if method == "import":
-            vp = _runtime_venv_python(vault)
+            vp = _runtime_venv_python(space)
             if vp and str(vp) == entry.get("runtime"):
                 return {**entry, "cached": True}
-    res = _detect_tool(vault, tid, spec, osname)
+    res = _detect_tool(space, tid, spec, osname)
     cache.setdefault("tools", {})[tid] = {**res, "os": osname,
                                           "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
     return res
@@ -15201,19 +17976,19 @@ def cmd_tools_preflight(args: argparse.Namespace) -> int:
     so Steve can auto-provision a small library, ask for a heavy one, or stop with
     a clear message. No expert discovers a missing tool mid-run: a subagent cannot
     ask the user (operating-principles section 10)."""
-    vault = Path(args.vault).resolve()
+    space = Path(args.space).resolve()
     reg = _load_register()
     tools = reg.get("tools") or {}
     osname = _current_os()
     ids = _required_tool_ids(reg, args.expert, args.capability)
-    cache = _load_tool_cache(vault)
+    cache = _load_tool_cache(space)
     present, auto_provision, needs_user, notes = [], [], [], []
     for tid in ids:
         spec = tools.get(tid)
         if not spec:
             needs_user.append({"id": tid, "why": "unknown tool id (register gap)", "how": None, "tier": "unknown"})
             continue
-        res = _detect_tool_cached(vault, tid, spec, osname, cache, refresh=args.refresh)
+        res = _detect_tool_cached(space, tid, spec, osname, cache, refresh=args.refresh)
         why = spec.get("purpose")
         hint = ((spec.get("os") or {}).get(osname) or {}).get("install_hint") or {}
         if res.get("present") is True:
@@ -15235,7 +18010,7 @@ def cmd_tools_preflight(args: argparse.Namespace) -> int:
             if spec.get("kind") == "mcp" and not item["how"]:
                 item["how"] = "configure the MCP at the host, then it is usable (LD6)"
             needs_user.append(item)
-    _save_tool_cache(vault, cache)
+    _save_tool_cache(space, cache)
     ready = not needs_user and not auto_provision
     print(json.dumps({"expert": args.expert, "capability": args.capability, "os": osname,
                       "ready": ready, "present": present, "auto_provision": auto_provision,
@@ -15244,7 +18019,7 @@ def cmd_tools_preflight(args: argparse.Namespace) -> int:
     return 0
 
 
-def _find_vault_root(start: Path) -> Path | None:
+def _find_space_root(start: Path) -> Path | None:
     p = start.resolve()
     for cand in [p] + list(p.parents):
         if (cand / SYSTEM_DIR).is_dir():
@@ -15252,12 +18027,12 @@ def _find_vault_root(start: Path) -> Path | None:
     return None
 
 
-def _activate_runtime_venv_site(vault: Path) -> None:
+def _activate_runtime_venv_site(space: Path) -> None:
     """Make libraries provisioned into the runtime venv importable in-process, so
     a media command run under the recorded python can use what `tools ensure`
-    installed. Same-Python assumption: the runtime venv is built with the vault's
+    installed. Same-Python assumption: the runtime venv is built with the space's
     python_cmd, so its compiled extensions match this interpreter's ABI."""
-    py = _runtime_venv_python(vault)
+    py = _runtime_venv_python(space)
     if not py:
         return
     import glob
@@ -15281,17 +18056,24 @@ def _run_hook_and_record(args: argparse.Namespace) -> int:
     import contextlib
     import io
 
-    puffer = io.StringIO()
+    puffer, mit = io.StringIO(), io.StringIO()
     try:
-        with contextlib.redirect_stderr(puffer):
+        with contextlib.redirect_stderr(puffer), contextlib.redirect_stdout(mit):
             rc = args.func(args)
     finally:
-        text = puffer.getvalue()
+        text, ausgabe = puffer.getvalue(), mit.getvalue()
         if text:
             sys.stderr.write(text)
+        if ausgabe:
+            sys.stdout.write(ausgabe)
     if rc == 2:
         name = getattr(args, "hook_cmd", None) or getattr(args, "subcmd", None) or "hook"
         _guard_refused(_LAST_PAYLOAD, str(name), text or f"exit 2 from {name}")
+    # A guard that asks is deliberately not written down. The question stood on the user's screen
+    # and they answered it, so repeating it in tomorrow's briefing tells them nothing they have not
+    # seen, while pushing real entries out of a list that stops at 25. What a refusal is written
+    # down for is the opposite case: nobody saw it. Whatever else is wanted afterwards sits in the
+    # host's own record of the conversation, which `session digest` reads.
     return rc
 
 
@@ -15316,39 +18098,39 @@ def main(argv: list[str]) -> int:
     pmsig = sub_media.add_parser("signer", help="Manage the self-managed C2PA signing identity.")
     sub_media_signer = pmsig.add_subparsers(dest="signeraction", required=True)
     pmse = sub_media_signer.add_parser("ensure", help="Create the signer if none exists (Wong's provisioning), then report its paths. media mark also calls this on demand.")
-    pmse.add_argument("vault", nargs="?", default=".")
+    pmse.add_argument("space", nargs="?", default=".")
     pmse.set_defaults(func=cmd_media_signer_ensure)
 
     # tools -----
     p_tools = sub.add_parser("tools", help="External-tool register: detect and provision what dist needs, per OS.")
     sub_tools = p_tools.add_subparsers(dest="subcmd", required=True)
     pt_doc = sub_tools.add_parser("doctor", help="Detect every registered tool on this machine.")
-    pt_doc.add_argument("vault", nargs="?", default=".")
+    pt_doc.add_argument("space", nargs="?", default=".")
     pt_doc.add_argument("--refresh", action="store_true", help="Ignore the cache and re-detect everything.")
     pt_doc.set_defaults(func=cmd_tools_doctor)
     pt_pf = sub_tools.add_parser("preflight", help="Check an expert's prerequisites before dispatch (deterministic, cache-backed). Steve runs this first.")
     pt_pf.add_argument("expert")
     pt_pf.add_argument("--capability", default=None, help="Gate only this path's required tools (e.g. --capability html for a Carol flyer).")
     pt_pf.add_argument("--refresh", action="store_true", help="Ignore the cache and re-detect.")
-    pt_pf.add_argument("vault", nargs="?", default=".")
+    pt_pf.add_argument("space", nargs="?", default=".")
     pt_pf.set_defaults(func=cmd_tools_preflight)
     pt_chk = sub_tools.add_parser("check", help="Detect one tool by id.")
     pt_chk.add_argument("id")
-    pt_chk.add_argument("vault", nargs="?", default=".")
+    pt_chk.add_argument("space", nargs="?", default=".")
     pt_chk.set_defaults(func=cmd_tools_check)
     pt_lst = sub_tools.add_parser("list", help="Every outside program Zanmai can use: what it is for, how big it is, who installs it.")
-    pt_lst.add_argument("vault", nargs="?", default=".")
+    pt_lst.add_argument("space", nargs="?", default=".")
     pt_lst.add_argument("--markdown", action="store_true", help="The register as a table, the form the documentation page carries.")
     pt_lst.set_defaults(func=cmd_tools_list)
     pt_ens = sub_tools.add_parser("ensure", help="Provision an on-demand tool at first use. Reports what it would cost; fetches only with --yes.")
     pt_ens.add_argument("id")
-    pt_ens.add_argument("vault", nargs="?", default=".")
+    pt_ens.add_argument("space", nargs="?", default=".")
     pt_ens.add_argument("--yes", action="store_true",
                         help="The user agreed to this download or install. Without it nothing is fetched.")
     pt_ens.set_defaults(func=cmd_tools_ensure)
 
-    pt_all = sub_tools.add_parser("ensure-all", help="What this vault still needs, in one pass. Reports without --yes; that report is the question the user answers.")
-    pt_all.add_argument("vault", nargs="?", default=".")
+    pt_all = sub_tools.add_parser("ensure-all", help="What this space still needs, in one pass. Reports without --yes; that report is the question the user answers.")
+    pt_all.add_argument("space", nargs="?", default=".")
     pt_all.add_argument("--yes", action="store_true", help="Fetch everything Zanmai can fetch itself. What needs the user, or money, or an account stays theirs.")
     pt_all.add_argument("--only", default="", help="Comma-separated ids to fetch instead of the whole group, so the answer can be some rather than all.")
     pt_all.set_defaults(func=cmd_tools_ensure_all)
@@ -15358,7 +18140,7 @@ def main(argv: list[str]) -> int:
     sub_setup = p_setup.add_subparsers(dest="subcmd", required=True)
 
     ps_init = sub_setup.add_parser("init", help="First-time install.")
-    ps_init.add_argument("vault_root", nargs="?", default=".")
+    ps_init.add_argument("space_root", nargs="?", default=".")
     ps_init.add_argument("--first-name", required=True, dest="first_name")
     ps_init.add_argument("--last-name", required=True, dest="last_name")
     ps_init.add_argument("--language", default="auto")
@@ -15367,35 +18149,73 @@ def main(argv: list[str]) -> int:
                          help="A nickname or short form distinct from first-name. Empty means same as first-name.")
     ps_init.add_argument("--python-cmd", default="python3", dest="python_cmd",
                          help="The Python invocation that works on this machine.")
+    ps_init.add_argument("--purpose", choices=PURPOSE_CHOICES,
+                         help="What the space is mainly for: private, professional, one named "
+                              "project, all (a mix), or unclear.")
+    ps_init.add_argument("--purpose-detail", dest="purpose_detail", default="",
+                         help="The project's name when --purpose is 'project', or the user's own "
+                              "words when it is 'unclear'.")
+    ps_init.add_argument("--bundles", default="",
+                         help="Comma-separated names of broad, ongoing life areas to create as "
+                              "empty bundles under life/, e.g. 'Health,Finances,Family'.")
+    ps_init.add_argument("--goals", default="",
+                         help="Comma-separated personal goals without a fixed end, each becomes "
+                              "its own empty bundle under life/.")
+    ps_init.add_argument("--projects", default="",
+                         help="Comma-separated named projects WITH an end, each becomes its own "
+                              "empty bundle under workbench/.")
     # (deterministic, matching the session-start recheck), so these are not relied on.
     ps_init.set_defaults(func=cmd_setup_init)
 
-    ps_validate = sub_setup.add_parser("validate", help="Check the vault is initialised and structurally sound.")
-    ps_validate.add_argument("vault_root", nargs="?", default=".")
+    ps_catchup = sub_setup.add_parser("catch-up", help="Ask and record what a later setup version added, for a space that predates it. Called by the greeting skill's gate, not by hand.")
+    ps_catchup.add_argument("space_root", nargs="?", default=".")
+    ps_catchup.add_argument("--purpose", choices=PURPOSE_CHOICES)
+    ps_catchup.add_argument("--purpose-detail", dest="purpose_detail", default="")
+    ps_catchup.add_argument("--bundles", default="")
+    ps_catchup.add_argument("--goals", default="")
+    ps_catchup.add_argument("--projects", default="")
+    ps_catchup.add_argument("--declined", action="store_true",
+                            help="The block was put to the user and they said not now. Needed to "
+                                 "record that outcome, because an empty call is refused: the stamp "
+                                 "ends the asking and may not be set before an answer exists.")
+    ps_catchup.set_defaults(func=cmd_setup_catchup)
+
+    ps_validate = sub_setup.add_parser("validate", help="Check the space is initialised and structurally sound.")
+    ps_validate.add_argument("space_root", nargs="?", default=".")
     ps_validate.set_defaults(func=cmd_setup_validate)
 
     ps_update = sub_setup.add_parser("update", help="Refresh host-side config after the distribution files changed (agent and skill symlinks, .claude/settings.json). Pepper's update workflow runs this after upgrade.")
-    ps_update.add_argument("vault_root", nargs="?", default=".")
+    ps_update.add_argument("space_root", nargs="?", default=".")
     ps_update.set_defaults(func=cmd_setup_update)
 
-    ps_upgrade = sub_setup.add_parser("upgrade", help="Fetch the newest published version over HTTPS and replace the distribution files. Works the same whether the vault was cloned or unpacked from an archive. Never touches user-immune paths; Pepper snapshots first.")
-    ps_upgrade.add_argument("vault_root", nargs="?", default=".")
+    ps_upgrade = sub_setup.add_parser("upgrade", help="Fetch the newest published version over HTTPS and replace the distribution files. Works the same whether the space was cloned or unpacked from an archive. Never touches user-immune paths; Pepper snapshots first.")
+    ps_upgrade.add_argument("space_root", nargs="?", default=".")
     ps_upgrade.add_argument("--check", action="store_true", help="Only report whether a newer version exists.")
     ps_upgrade.add_argument("--to", metavar="VERSION",
                             help="Go to this published version instead of the newest, backwards "
                                  "included. A snapshot is taken first. Use when a release has to be "
-                                 "undone: nothing else in Zanmai moves a vault back.")
+                                 "undone: nothing else in Zanmai moves a space back.")
     ps_upgrade.add_argument("--channel", metavar="NAME",
-                             help="Switch which branch this vault tracks (e.g. 'beta') and remember "
+                             help="Switch which branch this space tracks (e.g. 'beta') and remember "
                                   "the choice in zanmai/user.md. 'release' switches back to the "
                                   "manifest's default branch. Omit to use whatever is already set.")
     ps_upgrade.add_argument("--changelog", action="store_true",
                              help="With --check, also print the remote CHANGELOG.md, unapplied.")
+    ps_upgrade.add_argument("--force", action="store_true",
+                             help="Apply the files again even when the version says there is "
+                                  "nothing to do. For a release re-cut under the same number, and "
+                                  "for a space whose last update did not finish. Snapshots first "
+                                  "like any other update.")
+    ps_upgrade.add_argument("--from", dest="from_source", metavar="PATH|URL",
+                             help="Update from this folder, archive or URL instead of from the "
+                                  "published release. For a version that is not published yet and "
+                                  "for a fix that has to reach a space before a release exists. "
+                                  "Always snapshots first; the version is read from the source.")
     ps_upgrade.set_defaults(func=cmd_setup_upgrade)
 
     ps_post = sub_setup.add_parser("post-upgrade", help="The tail of an upgrade, run by the new script on itself: host refresh, verification, version marker. Called by 'setup upgrade', not by hand.")
-    ps_post.add_argument("vault_root", nargs="?", default=".")
-    ps_post.add_argument("--from", dest="from_version", default="", help="Version the vault was on before.")
+    ps_post.add_argument("space_root", nargs="?", default=".")
+    ps_post.add_argument("--from", dest="from_version", default="", help="Version the space was on before.")
     ps_post.add_argument("--to", dest="to_version", default="", help="Version that was just installed. Defaults to the shipped one.")
     ps_post.add_argument("--origin", default="", help="Where the new version came from, for the success message.")
     ps_post.add_argument("--replaced", type=int, help="Number of files replaced, for the success message.")
@@ -15403,93 +18223,110 @@ def main(argv: list[str]) -> int:
     ps_post.set_defaults(func=cmd_setup_post_upgrade)
 
     # snapshot -----
-    p_snap = sub.add_parser("snapshot", help="Vault and dist snapshots.")
+    p_snap = sub.add_parser("snapshot", help="Space and dist snapshots.")
     sub_snap = p_snap.add_subparsers(dest="subcmd", required=True)
 
-    ps_create = sub_snap.add_parser("create", help="Take a snapshot: commit the whole vault into the history. Respects auto_snapshots in user.md.")
-    ps_create.add_argument("vault", nargs="?", default=".")
+    ps_create = sub_snap.add_parser("create", help="Take a snapshot: commit the whole space into the history. Respects auto_snapshots in user.md.")
+    ps_create.add_argument("space", nargs="?", default=".")
     ps_create.add_argument("--reason", required=True, help="Short slug naming why the snapshot is taken; it becomes the snapshot's message.")
     ps_create.set_defaults(func=cmd_snapshot_create)
 
     ps_enable = sub_snap.add_parser("enable", help="Turn auto_snapshots ON in zanmai/user.md.")
-    ps_enable.add_argument("vault", nargs="?", default=".")
+    ps_enable.add_argument("space", nargs="?", default=".")
     ps_enable.set_defaults(func=cmd_snapshot_enable)
 
     ps_disable = sub_snap.add_parser("disable", help="Turn auto_snapshots OFF in zanmai/user.md. No automatic snapshots until re-enabled.")
-    ps_disable.add_argument("vault", nargs="?", default=".")
+    ps_disable.add_argument("space", nargs="?", default=".")
     ps_disable.set_defaults(func=cmd_snapshot_disable)
 
     ps_list = sub_snap.add_parser("list", help="The snapshots, newest first, and what they occupy together.")
-    ps_list.add_argument("vault", nargs="?", default=".")
+    ps_list.add_argument("space", nargs="?", default=".")
     ps_list.set_defaults(func=cmd_snapshot_list)
 
     ps_show = sub_snap.add_parser("show", help="What one snapshot changed, or one file as it was in it.")
-    ps_show.add_argument("vault", nargs="?", default=".")
+    ps_show.add_argument("space", nargs="?", default=".")
     ps_show.add_argument("--snapshot", required=True, help="The short name from `snapshot list`.")
-    ps_show.add_argument("--path", default=None, help="A vault-relative path. Without it, the change list.")
+    ps_show.add_argument("--path", default=None, help="A space-relative path. Without it, the change list.")
     ps_show.set_defaults(func=cmd_snapshot_show)
 
     ps_restore = sub_snap.add_parser("restore", help="Put one file back the way it was in a snapshot. The current version goes to the trash first.")
-    ps_restore.add_argument("vault", nargs="?", default=".")
+    ps_restore.add_argument("space", nargs="?", default=".")
     ps_restore.add_argument("--snapshot", required=True, help="The short name from `snapshot list`.")
-    ps_restore.add_argument("--path", required=True, help="The vault-relative path to put back.")
+    ps_restore.add_argument("--path", help="The space-relative path to put back.")
+    ps_restore.add_argument("--all", action="store_true",
+                             help="Put the whole space back as it was in that snapshot. Takes a "
+                                  "snapshot of the current state first, and anything that did not "
+                                  "exist then goes to the trash rather than being removed.")
     ps_restore.set_defaults(func=cmd_snapshot_restore)
 
     ps_compact = sub_snap.add_parser("compact", help="Let git pack the history down. Loses nothing.")
-    ps_compact.add_argument("vault", nargs="?", default=".")
+    ps_compact.add_argument("space", nargs="?", default=".")
     ps_compact.set_defaults(func=cmd_snapshot_compact)
 
     # bundle -----
 
 
     # import -----
-    p_import = sub.add_parser("import", help=f"The drop area {IMPORT_DIR}/: what is waiting and which way each file goes.")
+    p_import = sub.add_parser("import", help=f"The drop area {INBOX_DIR}/: what is waiting and which way each file goes.")
     sub_import = p_import.add_subparsers(dest="subcmd", required=True)
     pi_scan = sub_import.add_parser("scan", help="What is waiting, oldest first, with the route per file.")
-    pi_scan.add_argument("vault", nargs="?", default=".")
+    pi_scan.add_argument("space", nargs="?", default=".")
     pi_scan.add_argument("--verbose", action="store_true", help="Say what happens to each file, not just what it is.")
     pi_scan.set_defaults(func=cmd_import_scan)
 
+
+    p_docs = sub.add_parser("docs", help="The documentation's own directory.")
+    sub_docs = p_docs.add_subparsers(dest="subcmd", required=True)
+    pd_index = sub_docs.add_parser("index", help="Rebuild the 'read this when' directory in "
+                                                "docs/index.md from the pages themselves.")
+    pd_index.add_argument("space", nargs="?", default=".")
+    pd_index.set_defaults(func=cmd_docs_index)
+
+    p_welcome = sub.add_parser("welcome", help="The list the session opened with, rebuilt as the "
+                                               "space stands now. For when the greet has scrolled "
+                                               "away and the user asks to see it again.")
+    p_welcome.add_argument("space", nargs="?", default=".")
+    p_welcome.set_defaults(func=cmd_welcome)
 
     # housekeeping -----
     p_gaps = sub.add_parser("gaps", help="what the experts wrote into builder-gaps.md recently. "
                                         "Read after a dispatch returns; it is their only channel "
                                         "while they run.")
-    p_gaps.add_argument("vault", nargs="?", default=".")
+    p_gaps.add_argument("space", nargs="?", default=".")
     p_gaps.add_argument("--hours", type=int, default=24)
     p_gaps.set_defaults(func=cmd_gaps)
 
     p_house = sub.add_parser("housekeeping", help=f"Clear what is past its keeping time: the trash after {TRASH_RETENTION_DAYS} days, the scratch area and the snapshots after {SCRATCH_RETENTION_DAYS}. Runs itself at session start.")
-    p_house.add_argument("vault", nargs="?", default=".")
+    p_house.add_argument("space", nargs="?", default=".")
     p_house.set_defaults(func=cmd_housekeeping)
 
     p_video = sub.add_parser("video", help="The mechanic under a cut: probe, transcribe with word timings, check a cut sheet, cut, pull frames.")
     sub_video = p_video.add_subparsers(dest="video_cmd", required=True)
 
     pvi_probe = sub_video.add_parser("probe", help="What a file actually is: length, size, exact frame rate, whether it carries chapters.")
-    pvi_probe.add_argument("vault", nargs="?", default=".")
+    pvi_probe.add_argument("space", nargs="?", default=".")
     pvi_probe.add_argument("--file", required=True)
     pvi_probe.set_defaults(func=cmd_video_probe)
 
     pvi_tr = sub_video.add_parser("transcribe", help="One source to words with start and end times. Runs once per source; re-running reads the saved result.")
-    pvi_tr.add_argument("vault", nargs="?", default=".")
+    pvi_tr.add_argument("space", nargs="?", default=".")
     pvi_tr.add_argument("--file", required=True)
     pvi_tr.add_argument("--slug", required=True, help="The job this belongs to.")
     pvi_tr.add_argument("--language", default="auto")
-    pvi_tr.add_argument("--lexicon", help="Names from the vault, to bias the recogniser.")
+    pvi_tr.add_argument("--lexicon", help="Names from the space, to bias the recogniser.")
     pvi_tr.add_argument("--dtw-preset", dest="dtw_preset", help="Override the alignment preset; derived from the model by default.")
     pvi_tr.add_argument("--force", action="store_true", help="Transcribe again even though a result exists.")
     pvi_tr.set_defaults(func=cmd_video_transcribe)
 
     pvi_cs = sub_video.add_parser("cutsheet", help="Check a cut sheet before anything renders, and say what it would produce.")
-    pvi_cs.add_argument("vault", nargs="?", default=".")
+    pvi_cs.add_argument("space", nargs="?", default=".")
     pvi_cs.add_argument("--file", required=True)
     pvi_cs.add_argument("--words", help="The transcript, to check that no word is cut through.")
     pvi_cs.add_argument("--text", action="store_true", help="Print the spoken line of every segment, so the cut can be read.")
     pvi_cs.set_defaults(func=cmd_video_cutsheet)
 
     pvi_pr = sub_video.add_parser("propose", help="A first cut sheet from the word timings: speech kept, long silence dropped. Measurement only.")
-    pvi_pr.add_argument("vault", nargs="?", default=".")
+    pvi_pr.add_argument("space", nargs="?", default=".")
     pvi_pr.add_argument("--words", required=True, help="The transcript written by `video transcribe`.")
     pvi_pr.add_argument("--out", required=True)
     pvi_pr.add_argument("--source", help="Override the source path recorded in the transcript.")
@@ -15503,7 +18340,7 @@ def main(argv: list[str]) -> int:
     pvi_pr.set_defaults(func=cmd_video_propose)
 
     pvi_cut = sub_video.add_parser("cut", help="Assemble the kept passages into one file.")
-    pvi_cut.add_argument("vault", nargs="?", default=".")
+    pvi_cut.add_argument("space", nargs="?", default=".")
     pvi_cut.add_argument("--file", required=True, help="The cut sheet.")
     pvi_cut.add_argument("--out", required=True)
     pvi_cut.add_argument("--crf", type=int, default=19)
@@ -15514,7 +18351,7 @@ def main(argv: list[str]) -> int:
     pvi_cut.set_defaults(func=cmd_video_cut)
 
     pvi_co = sub_video.add_parser("correct", help="Fix spellings in a transcript before building from it. Without --replace it reports what looks unknown.")
-    pvi_co.add_argument("vault", nargs="?", default=".")
+    pvi_co.add_argument("space", nargs="?", default=".")
     pvi_co.add_argument("--words", required=True)
     pvi_co.add_argument("--replace", action="append", help="heard=correct, single whole words only. Repeatable.")
     pvi_co.add_argument("--list", help="A file of heard=correct lines, one per line, that grows with the brand.")
@@ -15523,7 +18360,7 @@ def main(argv: list[str]) -> int:
     pvi_co.set_defaults(func=cmd_video_correct)
 
     pvi_cap = sub_video.add_parser("caption", help="Captions from the transcript: a subtitle file, and optionally burned into a copy.")
-    pvi_cap.add_argument("vault", nargs="?", default=".")
+    pvi_cap.add_argument("space", nargs="?", default=".")
     pvi_cap.add_argument("--words", required=True)
     pvi_cap.add_argument("--out", required=True, help="Where the subtitle file goes.")
     pvi_cap.add_argument("--cutsheet", help="Remap the times onto the cut before writing.")
@@ -15543,7 +18380,7 @@ def main(argv: list[str]) -> int:
     pvi_cap.set_defaults(func=cmd_video_caption)
 
     pvi_rf = sub_video.add_parser("reframe", help="Put the picture into another aspect ratio, by cropping or by fitting it whole.")
-    pvi_rf.add_argument("vault", nargs="?", default=".")
+    pvi_rf.add_argument("space", nargs="?", default=".")
     pvi_rf.add_argument("--file", required=True)
     pvi_rf.add_argument("--out", required=True)
     pvi_rf.add_argument("--format", required=True, help="wide, upright, square or classic.")
@@ -15554,7 +18391,7 @@ def main(argv: list[str]) -> int:
     pvi_rf.set_defaults(func=cmd_video_reframe)
 
     pvi_mx = sub_video.add_parser("mix", help="The audio passes: denoise, a music bed, levelling. The picture is copied, never re-encoded.")
-    pvi_mx.add_argument("vault", nargs="?", default=".")
+    pvi_mx.add_argument("space", nargs="?", default=".")
     pvi_mx.add_argument("--file", required=True)
     pvi_mx.add_argument("--out", required=True)
     pvi_mx.add_argument("--music", help="A licensed track. Never downloaded, always supplied.")
@@ -15565,7 +18402,7 @@ def main(argv: list[str]) -> int:
     pvi_mx.set_defaults(func=cmd_video_mix)
 
     pvi_ex = sub_video.add_parser("export", help="One file per purpose. The master is never overwritten.")
-    pvi_ex.add_argument("vault", nargs="?", default=".")
+    pvi_ex.add_argument("space", nargs="?", default=".")
     pvi_ex.add_argument("--file", required=True)
     pvi_ex.add_argument("--name", required=True, help="What the piece is called, without a suffix.")
     pvi_ex.add_argument("--profile", default="master,web", help="Comma-separated: master, web, platform.")
@@ -15574,7 +18411,7 @@ def main(argv: list[str]) -> int:
     pvi_ex.set_defaults(func=cmd_video_export)
 
     pvi_tx = sub_video.add_parser("text", help="Write the transcript out for editing, or read an edited one back as a cut.")
-    pvi_tx.add_argument("vault", nargs="?", default=".")
+    pvi_tx.add_argument("space", nargs="?", default=".")
     pvi_tx.add_argument("--words", required=True)
     pvi_tx.add_argument("--write", help="Write the transcript here, in paragraphs, for editing.")
     pvi_tx.add_argument("--read", help="Read the edited text back.")
@@ -15586,7 +18423,7 @@ def main(argv: list[str]) -> int:
     pvi_tx.set_defaults(func=cmd_video_text)
 
     pvi_sy = sub_video.add_parser("sync", help="The offset between two recordings of the same conversation, measured in their sound.")
-    pvi_sy.add_argument("vault", nargs="?", default=".")
+    pvi_sy.add_argument("space", nargs="?", default=".")
     pvi_sy.add_argument("--a", required=True)
     pvi_sy.add_argument("--b", required=True)
     pvi_sy.add_argument("--slug", default="sync")
@@ -15596,7 +18433,7 @@ def main(argv: list[str]) -> int:
     pvi_sy.set_defaults(func=cmd_video_sync)
 
     pvi_br = sub_video.add_parser("brand", help="An opening, a closing and a logo held throughout, from the brand.")
-    pvi_br.add_argument("vault", nargs="?", default=".")
+    pvi_br.add_argument("space", nargs="?", default=".")
     pvi_br.add_argument("--file", required=True)
     pvi_br.add_argument("--out", required=True)
     pvi_br.add_argument("--intro")
@@ -15611,7 +18448,7 @@ def main(argv: list[str]) -> int:
     pvi_br.set_defaults(func=cmd_video_brand)
 
     pvi_chap = sub_video.add_parser("chapters", help="Chapter marks from the transcript, to paste under a video.")
-    pvi_chap.add_argument("vault", nargs="?", default=".")
+    pvi_chap.add_argument("space", nargs="?", default=".")
     pvi_chap.add_argument("--words", required=True)
     pvi_chap.add_argument("--out")
     pvi_chap.add_argument("--count", type=int, default=8)
@@ -15620,7 +18457,7 @@ def main(argv: list[str]) -> int:
     pvi_chap.set_defaults(func=cmd_video_chapters)
 
     pvi_th = sub_video.add_parser("thumbnail", help="Candidates for a thumbnail: the sharpest, best-lit frames.")
-    pvi_th.add_argument("vault", nargs="?", default=".")
+    pvi_th.add_argument("space", nargs="?", default=".")
     pvi_th.add_argument("--file", required=True)
     pvi_th.add_argument("--out")
     pvi_th.add_argument("--slug", default="thumbs")
@@ -15629,7 +18466,7 @@ def main(argv: list[str]) -> int:
     pvi_th.set_defaults(func=cmd_video_thumbnail)
 
     pvi_tl = sub_video.add_parser("timeline", help="One picture of the whole piece: filmstrip, loudness, words. The cheap way to look.")
-    pvi_tl.add_argument("vault", nargs="?", default=".")
+    pvi_tl.add_argument("space", nargs="?", default=".")
     pvi_tl.add_argument("--file", required=True)
     pvi_tl.add_argument("--words", help="Transcript, to write the words along the strip.")
     pvi_tl.add_argument("--columns", type=int, default=12)
@@ -15638,7 +18475,7 @@ def main(argv: list[str]) -> int:
     pvi_tl.set_defaults(func=cmd_video_timeline)
 
     pvi_bf = sub_video.add_parser("brief", help="Everything needed to judge footage, in one call: facts, loudness, transcript, a few frames. Cheap on purpose.")
-    pvi_bf.add_argument("vault", nargs="?", default=".")
+    pvi_bf.add_argument("space", nargs="?", default=".")
     pvi_bf.add_argument("--file", required=True)
     pvi_bf.add_argument("--slug", default="brief", help="Where the transcript is kept, so later steps reuse it.")
     pvi_bf.add_argument("--language", default="auto")
@@ -15648,7 +18485,7 @@ def main(argv: list[str]) -> int:
     pvi_bf.set_defaults(func=cmd_video_brief)
 
     pvi_ck = sub_video.add_parser("check", help="The measurable half of a review: duplicated frames, brightness steps at the joins, actual length.")
-    pvi_ck.add_argument("vault", nargs="?", default=".")
+    pvi_ck.add_argument("space", nargs="?", default=".")
     pvi_ck.add_argument("--file", required=True)
     pvi_ck.add_argument("--seams", help="Comma-separated seconds where a graphic was composited in. A plain cut is not a seam in this sense.")
     pvi_ck.add_argument("--composited", action="store_true", help="The file came out of a composite. Only then are duplicated frames a fault rather than a still screen.")
@@ -15658,7 +18495,7 @@ def main(argv: list[str]) -> int:
     pvi_ck.set_defaults(func=cmd_video_check)
 
     pvi_fr = sub_video.add_parser("frames", help="Pull frames so they can be looked at.")
-    pvi_fr.add_argument("vault", nargs="?", default=".")
+    pvi_fr.add_argument("space", nargs="?", default=".")
     pvi_fr.add_argument("--file", required=True)
     pvi_fr.add_argument("--slug", default="review")
     pvi_fr.add_argument("--at", help="Comma-separated seconds. Without it, an even sample.")
@@ -15666,34 +18503,34 @@ def main(argv: list[str]) -> int:
     pvi_fr.add_argument("--out")
     pvi_fr.set_defaults(func=cmd_video_frames)
 
-    p_voice = sub.add_parser("voice", help="Voice notes waiting in the import folder: what waits, the vault's names, transcription, filing.")
+    p_voice = sub.add_parser("voice", help="Voice notes waiting in the import folder: what waits, the space's names, transcription, filing.")
     sub_voice = p_voice.add_subparsers(dest="voice_cmd", required=True)
 
     pv_scan = sub_voice.add_parser("scan", help="What is waiting to be transcribed, oldest first.")
-    pv_scan.add_argument("vault", nargs="?", default=".")
+    pv_scan.add_argument("space", nargs="?", default=".")
     pv_scan.set_defaults(func=cmd_voice_scan)
 
-    pv_lex = sub_voice.add_parser("lexicon", help="The vault's own names, to bias the recogniser before it starts.")
-    pv_lex.add_argument("vault", nargs="?", default=".")
+    pv_lex = sub_voice.add_parser("lexicon", help="The space's own names, to bias the recogniser before it starts.")
+    pv_lex.add_argument("space", nargs="?", default=".")
     pv_lex.add_argument("--out", help="Also write the list here.")
     pv_lex.add_argument("--budget", type=int, default=LEXICON_BUDGET_CHARS)
     pv_lex.set_defaults(func=cmd_voice_lexicon)
 
-    pv_tr = sub_voice.add_parser("transcribe", help="One recording to text, locally, biased by the vault's names.")
-    pv_tr.add_argument("vault", nargs="?", default=".")
+    pv_tr = sub_voice.add_parser("transcribe", help="One recording to text, locally, biased by the space's names.")
+    pv_tr.add_argument("space", nargs="?", default=".")
     pv_tr.add_argument("--file", required=True)
     pv_tr.add_argument("--lexicon", help="File written by `voice lexicon --out`.")
     pv_tr.add_argument("--language", default="auto")
     pv_tr.set_defaults(func=cmd_voice_transcribe)
 
     pv_ar = sub_voice.add_parser("archive", help="Move a processed recording into the day it was spoken on, keeping it.")
-    pv_ar.add_argument("vault", nargs="?", default=".")
+    pv_ar.add_argument("space", nargs="?", default=".")
     pv_ar.add_argument("--file", required=True)
     pv_ar.add_argument("--agent")
     pv_ar.set_defaults(func=cmd_voice_archive)
 
     pv_ja = sub_voice.add_parser("journal-append", help="Append text to the daily note of the day the recording was made, not the day it is read.")
-    pv_ja.add_argument("vault", nargs="?", default=".")
+    pv_ja.add_argument("space", nargs="?", default=".")
     pv_ja.add_argument("--file", required=True)
     pv_ja.add_argument("--text", required=True)
     pv_ja.set_defaults(func=cmd_voice_journal_append)
@@ -15702,9 +18539,9 @@ def main(argv: list[str]) -> int:
     sub_fact = p_fact.add_subparsers(dest="fact_cmd", required=True)
 
     pfa_set = sub_fact.add_parser("set", help="Write down something established, with what it is about.")
-    pfa_set.add_argument("key", help="Short name, e.g. `font.montserrat` or `theme.path`.")
+    pfa_set.add_argument("key", help="Short name, e.g. `font.montserrat` or `bundle.path`.")
     pfa_set.add_argument("value")
-    pfa_set.add_argument("--vault", default=None)
+    pfa_set.add_argument("--space", default=None)
     pfa_set.add_argument("--scope", choices=list(FACT_SCOPES), default="machine",
                          help="What it is true of. A machine fact is refused on another machine.")
     pfa_set.add_argument("--about", default="", help="Which install or bundle, where that is what it hangs on.")
@@ -15713,62 +18550,62 @@ def main(argv: list[str]) -> int:
 
     pfa_get = sub_fact.add_parser("get", help="Read one back. Exit 1 where it is unknown or does not hold here.")
     pfa_get.add_argument("key")
-    pfa_get.add_argument("--vault", default=None)
+    pfa_get.add_argument("--space", default=None)
     pfa_get.set_defaults(func=cmd_fact_get)
 
     pfa_list = sub_fact.add_parser("list", help="Everything established, and whether it still holds here.")
-    pfa_list.add_argument("--vault", default=None)
+    pfa_list.add_argument("--space", default=None)
     pfa_list.set_defaults(func=cmd_fact_list)
 
     pfa_forget = sub_fact.add_parser("forget", help="Drop one, so the next run establishes it again.")
     pfa_forget.add_argument("key")
-    pfa_forget.add_argument("--vault", default=None)
+    pfa_forget.add_argument("--space", default=None)
     pfa_forget.set_defaults(func=cmd_fact_forget)
 
     p_survey = sub.add_parser("survey", help="What a pile of files is, established by machine: dates, amounts, parties, opening. Read this before reading the files.")
     p_survey.add_argument("path", help="A file or a folder.")
-    p_survey.add_argument("--vault", default=None)
+    p_survey.add_argument("--space", default=None)
     p_survey.add_argument("--json", action="store_true", help="As JSON, for a run to read.")
     p_survey.add_argument("--opening", type=int, default=400, help="How much of the opening to carry.")
     p_survey.add_argument("--limit", type=int, default=500, help="How many files at most.")
     p_survey.set_defaults(func=cmd_survey)
 
-    p_records = sub.add_parser("records", help="The searchable copy of what is kept: build it, search it.")
-    sub_records = p_records.add_subparsers(dest="records_cmd", required=True)
+    p_records = sub.add_parser("archive", help="What is kept and its searchable copy: file it, build the index, search it.")
+    sub_records = p_records.add_subparsers(dest="archive_cmd", required=True)
 
     prc_who = sub_records.add_parser("who", help="One counterparty, however many ways it is written.")
     prc_who.add_argument("name")
-    prc_who.add_argument("--vault", default=None)
+    prc_who.add_argument("--space", default=None)
     prc_who.add_argument("--new", action="store_true", help="This is a counterparty not seen before.")
     prc_who.add_argument("--same-as", dest="same_as", help="This spelling is that counterparty.")
     prc_who.add_argument("--note", help="What distinguishes it, where two are close.")
     prc_who.add_argument("--agent", default="")
-    prc_who.set_defaults(func=lambda a: (cmd_records_who_set(a) if (a.new or a.same_as)
-                                         else cmd_records_who(a)))
+    prc_who.set_defaults(func=lambda a: (cmd_archive_who_set(a) if (a.new or a.same_as)
+                                         else cmd_archive_who(a)))
 
     prc_matter = sub_records.add_parser("matter", help="A matter: the thing documents belong to.")
     sub_matter = prc_matter.add_subparsers(dest="matter_cmd", required=True)
 
     pm_new = sub_matter.add_parser("new", help="Open a matter, before the first document is filed against it.")
     pm_new.add_argument("title", help="What it is called, in the user's words.")
-    pm_new.add_argument("--vault", default=None)
+    pm_new.add_argument("--space", default=None)
     pm_new.add_argument("--slug", help="Default: derived from the title, lowercased ASCII with spaces and punctuation turned into single dashes.")
-    pm_new.add_argument("--area", help="A section inside records/, e.g. `insurance`, or `health/x-rays` for one inside another. The matter lands at records/<area>/<slug>/<slug>.md.")
+    pm_new.add_argument("--into", dest="into", help=f"The bundle inside {ARCHIVE_DIR}/ this belongs in, e.g. `insurance`, or `health/x-rays` for one inside another. The matter lands at {ARCHIVE_DIR}/<into>/<slug>/<slug>.md.")
     pm_new.add_argument("--doc-type", dest="doc_type", help="What kind of matter: policy, employment, vehicle, case.")
     pm_new.add_argument("--lifecycle", default="active", choices=list(RECORD_LIFECYCLE))
-    pm_new.add_argument("--retention", choices=list(RECORD_RETENTION))
+    pm_new.add_argument("--retention", help="A category from this space's keeping terms (`retention show`).")
     pm_new.add_argument("--until", help="YYYY-MM-DD, where the term resolves to a day.")
     pm_new.add_argument("--with", dest="with_whom", help="The counterparty, as a contact slug.")
     pm_new.add_argument("--about", help="A sentence on what this matter is.")
     pm_new.add_argument("--force", action="store_true", help="Open a second matter with this slug.")
     pm_new.add_argument("--agent", default="")
-    pm_new.set_defaults(func=cmd_records_matter_new)
+    pm_new.set_defaults(func=cmd_archive_matter_new)
 
     pm_add = sub_matter.add_parser("add", help="Hang a document on its matter, both directions at once.")
     pm_add.add_argument("matter")
     pm_add.add_argument("what", nargs="?", default="",
                         help="What this document did, in one line. Leave it out when pointing at a document with --path or --folder: the line is then filled from what was read out of it.")
-    pm_add.add_argument("--vault", default=None)
+    pm_add.add_argument("--space", default=None)
     pm_add.add_argument("--path", default="", help="A document to hang on the matter. Its date, amount and counterparty come from the index.")
     pm_add.add_argument("--folder", default="", help="Every document in this folder, the same way.")
     pm_add.add_argument("--via", default="part-of", choices=list(RECORD_RELATIONS))
@@ -15777,64 +18614,64 @@ def main(argv: list[str]) -> int:
     pm_add.add_argument("--with", dest="with_whom", help="Who it was with.")
     pm_add.add_argument("--document", help="A note of its own, where one exists; its fields are set too.")
     pm_add.add_argument("--agent", default="")
-    pm_add.set_defaults(func=cmd_records_matter_add)
+    pm_add.set_defaults(func=cmd_archive_matter_add)
 
     pm_show = sub_matter.add_parser("show", help="One matter, whole.")
     pm_show.add_argument("matter")
-    pm_show.add_argument("--vault", default=None)
-    pm_show.set_defaults(func=cmd_records_matter_show)
+    pm_show.add_argument("--space", default=None)
+    pm_show.set_defaults(func=cmd_archive_matter_show)
 
-    prc_file = sub_records.add_parser("file", help="Move a pile of documents into or within the records area, and read them where they land.")
-    prc_file.add_argument("--vault", default=None)
-    prc_file.add_argument("--source", required=True, help="File or folder inside the vault, e.g. import/Abonnements to bring a pile in, or records/vertraege/telekom to move one that is already there.")
-    prc_file.add_argument("--area", default="", help="Section under records/, e.g. vertraege. Omitted puts them at the top.")
+    prc_file = sub_records.add_parser("file", help="Move a pile of documents into or within the archive, and read them where they land.")
+    prc_file.add_argument("--space", default=None)
+    prc_file.add_argument("--source", required=True, help=f"File or folder inside the space, e.g. {INBOX_DIR}/Abonnements to bring a pile in, or {ARCHIVE_DIR}/vertraege/telekom to move one that is already there.")
+    prc_file.add_argument("--into", dest="into", default="", help=f"The bundle under {ARCHIVE_DIR}/ they belong in, e.g. vertraege. Omitted puts them at the top.")
     prc_file.add_argument("--dry-run", dest="dry_run", action="store_true", help="Show what would move, move nothing.")
     prc_file.add_argument("--agent", default="")
-    prc_file.set_defaults(func=cmd_records_file)
+    prc_file.set_defaults(func=cmd_archive_intake)
 
     prc_rename = sub_records.add_parser("rename", help="Give a kept document or a section a name that says what it is. The index follows.")
-    prc_rename.add_argument("--vault", default=None)
-    prc_rename.add_argument("--path", required=True, help=f"The document or folder, e.g. {RECORDS_DIR}/health/scan-0007.pdf.")
+    prc_rename.add_argument("--space", default=None)
+    prc_rename.add_argument("--path", required=True, help=f"The document or folder, e.g. {ARCHIVE_DIR}/health/scan-0007.pdf.")
     prc_rename.add_argument("--to", required=True, help="The new name, as it should read. The extension is kept when none is given.")
     prc_rename.add_argument("--agent", default="")
-    prc_rename.set_defaults(func=cmd_records_rename)
+    prc_rename.set_defaults(func=cmd_archive_rename)
 
-    prc_move = sub_records.add_parser("move", help="Put a kept document or a whole section somewhere else inside the records area. The index follows.")
-    prc_move.add_argument("--vault", default=None)
+    prc_move = sub_records.add_parser("move", help="Put a kept document or a whole section somewhere else inside the archive. The index follows.")
+    prc_move.add_argument("--space", default=None)
     prc_move.add_argument("--path", required=True, help="The document or folder to move.")
-    prc_move.add_argument("--to", required=True, help=f"The folder it goes into, e.g. {RECORDS_DIR}/health/x-rays. Created when it does not exist.")
+    prc_move.add_argument("--to", required=True, help=f"The folder it goes into, e.g. {ARCHIVE_DIR}/health/x-rays. Created when it does not exist.")
     prc_move.add_argument("--agent", default="")
-    prc_move.set_defaults(func=cmd_records_move)
+    prc_move.set_defaults(func=cmd_archive_move)
 
     prc_index = sub_records.add_parser("index", help="Read what is kept, once each. A second run touches only what changed.")
-    prc_index.add_argument("--vault", default=None)
-    prc_index.add_argument("--scope", help=f"A folder to read instead of {RECORDS_DIR}/.")
+    prc_index.add_argument("--space", default=None)
+    prc_index.add_argument("--scope", help=f"A folder to read instead of {ARCHIVE_DIR}/.")
     prc_index.add_argument("--rebuild", action="store_true", help="Read everything again, changed or not.")
-    prc_index.set_defaults(func=cmd_records_index)
+    prc_index.set_defaults(func=cmd_archive_index)
 
     prc_survey = sub_records.add_parser("survey", help="One line per indexed document: dates, amounts, parties, opening. Made by machine, for something else to decide on.")
-    prc_survey.add_argument("--vault", default=None)
-    prc_survey.add_argument("--scope", help=f"Only what lies under this folder, the same one `records index --scope` was given. Omitted surveys everything indexed, which on a real archive is thousands of lines.")
+    prc_survey.add_argument("--space", default=None)
+    prc_survey.add_argument("--scope", help=f"Only what lies under this folder, the same one `archive index --scope` was given. Omitted surveys everything indexed, which on a real archive is thousands of lines.")
     prc_survey.add_argument("--json", action="store_true", help="As JSON, for a run to read.")
     prc_survey.add_argument("--opening", type=int, default=400, help="How much of the opening to carry.")
-    prc_survey.set_defaults(func=cmd_records_survey)
+    prc_survey.set_defaults(func=cmd_archive_survey)
 
     prc_search = sub_records.add_parser("search", help="Find a word in what is kept.")
     prc_search.add_argument("query")
-    prc_search.add_argument("--vault", default=None)
+    prc_search.add_argument("--space", default=None)
     prc_search.add_argument("--limit", type=int, default=15)
-    prc_search.set_defaults(func=cmd_records_search)
+    prc_search.set_defaults(func=cmd_archive_search)
 
     p_retention = sub.add_parser("retention", help="How long kept documents stay: what applies here, and what was suggested.")
     sub_retention = p_retention.add_subparsers(dest="retention_cmd", required=True)
 
     prn_show = sub_retention.add_parser("show", help="What is in force, or what would be proposed.")
-    prn_show.add_argument("--vault", default=None)
+    prn_show.add_argument("--space", default=None)
     prn_show.add_argument("--verbose", action="store_true", help="Say where each figure comes from.")
     prn_show.set_defaults(func=cmd_retention_show)
 
-    prn_adopt = sub_retention.add_parser("adopt", help="Take the suggestions into this vault as the terms that apply.")
-    prn_adopt.add_argument("--vault", default=None)
+    prn_adopt = sub_retention.add_parser("adopt", help="Take the suggestions into this space as the terms that apply.")
+    prn_adopt.add_argument("--space", default=None)
     prn_adopt.add_argument("--force", action="store_true", help="Replace terms already in force.")
     prn_adopt.add_argument("--agent", default="")
     prn_adopt.set_defaults(func=cmd_retention_adopt)
@@ -15843,13 +18680,13 @@ def main(argv: list[str]) -> int:
     sub_routing = p_routing.add_subparsers(dest="routing_cmd", required=True)
 
     prt_show = sub_routing.add_parser("show", help="Print the rules, and say where they are silent.")
-    prt_show.add_argument("--vault", default=None)
+    prt_show.add_argument("--space", default=None)
     prt_show.set_defaults(func=cmd_routing_show)
 
     prt_set = sub_routing.add_parser("set", help="Write one rule about a sort of material.")
     prt_set.add_argument("name", help="What this sort of thing is, in the user's words, e.g. `nightly backup report`.")
     prt_set.add_argument("to", help="Where it goes: a folder, a bundle slug, or `ask`.")
-    prt_set.add_argument("--vault", default=None)
+    prt_set.add_argument("--space", default=None)
     prt_set.add_argument("--when-text", dest="when_text", nargs="+", metavar="WORD",
                          help="Words that appear in the content. All of them have to be there.")
     prt_set.add_argument("--when-name", dest="when_name", metavar="PATTERN",
@@ -15859,6 +18696,14 @@ def main(argv: list[str]) -> int:
     prt_set.add_argument("--do", dest="do", help="What to do with it, in the user's own words.")
     prt_set.add_argument("--ask", type=lambda v: v.lower() in ("1", "true", "yes", "ja"),
                          help="Whether to ask before acting on it. Omit to leave unchanged.")
+    prt_set.add_argument("--keep", choices=("with-result", "discard"),
+                         help="What happens to the file itself once its content is in the space. "
+                              "`with-result` where the file still carries something the result does "
+                              "not, a scanned invoice or a recording: it lives beside what was made "
+                              "from it. `discard` where it does not, a voice note asking for a task: "
+                              "it goes to the trash. Nothing ever stays in the inbox.")
+    prt_set.add_argument("--by", help="Who does the work for this sort of material, by expert name. "
+                                      "Omit and the usual routing decides.")
     prt_set.add_argument("--agent", default="")
     prt_set.set_defaults(func=cmd_routing_set)
 
@@ -15867,13 +18712,13 @@ def main(argv: list[str]) -> int:
 
     # Every one of these takes its subject as a bare positional as well as a flag. The flag is
     # what the skills write; the bare form is what a person types, and until the bare
-    # form was silently eaten by an optional `vault` positional that nothing in the product ever
+    # form was silently eaten by an optional `space` positional that nothing in the product ever
     # passed: `work open "a title"` failed with "the following arguments are required: --title",
-    # naming the flag the user had not used instead of the argument they had. The vault is a flag
-    # now, and it is resolved to the vault root either way.
+    # naming the flag the user had not used instead of the argument they had. The space is a flag
+    # now, and it is resolved to the space root either way.
     pw_open = sub_work.add_parser("open", help="Open a work object and print its id.")
     pw_open.add_argument("title_pos", nargs="?", metavar="TITLE", help="The title. Same as --title.")
-    pw_open.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+    pw_open.add_argument("--space", default=None, help="Where the space is. Default: found from here.")
     pw_open.add_argument("--title")
     pw_open.add_argument("--owner", "--agent", dest="owner", help="Which specialist is on it.")
     pw_open.add_argument("--goal", help="What finished looks like.")
@@ -15882,13 +18727,13 @@ def main(argv: list[str]) -> int:
     pw_open.add_argument("--due", help="YYYY-MM-DD, only where the work has a real deadline.")
     pw_open.set_defaults(func=cmd_work_open)
 
-    # One subject, one vault flag, one agent flag, on every subcommand that takes an id. They used to
+    # One subject, one space flag, one agent flag, on every subcommand that takes an id. They used to
     # be written out per parser and drifted: `log` took `--agent`, `ask` did not, and a run that had
     # just used it on one spent a turn being refused on the other. Every refusal costs the whole
     # context again, so four wrong guesses in a row cost more than the work they were guessing at.
     def gemeinsam(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         parser.add_argument("id_pos", nargs="?", metavar="ID", help="The work object. Same as --id.")
-        parser.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+        parser.add_argument("--space", default=None, help="Where the space is. Default: found from here.")
         parser.add_argument("--id", help="Full id or its first characters.")
         parser.add_argument("--agent", help="Who is doing it. Recorded on the log line.")
         return parser
@@ -15917,7 +18762,7 @@ def main(argv: list[str]) -> int:
     pw_done.set_defaults(func=cmd_work_done)
 
     pw_list = sub_work.add_parser("list", help="What is open and what is waiting on the user.")
-    pw_list.add_argument("--vault", default=None, help="Where the vault is. Default: found from here.")
+    pw_list.add_argument("--space", default=None, help="Where the space is. Default: found from here.")
     pw_list.add_argument("--state", help="Filter: open, 'waiting on you', done.")
     pw_list.set_defaults(func=cmd_work_list)
 
@@ -15935,23 +18780,27 @@ def main(argv: list[str]) -> int:
     sub_brand = p_brand.add_subparsers(dest="brand_cmd", required=True)
 
     pb_check = sub_brand.add_parser("check", help="Exit 1 when no brand exists. Run before dispatching anyone who produces something the user looks at.")
-    pb_check.add_argument("vault", nargs="?", default=".")
+    pb_check.add_argument("space", nargs="?", default=".")
     pb_check.add_argument("--brand", help="Check one brand by name instead of all.")
     pb_check.add_argument("--limit", type=int, default=12, help="How many open fields to print per brand.")
     pb_check.set_defaults(func=cmd_brand_check)
 
     pb_list = sub_brand.add_parser("list", help="Every brand that exists, and where it lives.")
-    pb_list.add_argument("vault", nargs="?", default=".")
+    pb_list.add_argument("space", nargs="?", default=".")
     pb_list.set_defaults(func=cmd_brand_list)
 
     p_task = sub.add_parser("task", help="Task lines on the user's own lists: write one they asked for, tick one off, see what is due.")
     sub_task = p_task.add_subparsers(dest="task_cmd", required=True)
 
     pt_add = sub_task.add_parser("add", help="Write a task the user asked for. The only route to a task line; inside an ordinary write it stays refused.")
-    pt_add.add_argument("vault", nargs="?", default=".")
+    pt_add.add_argument("space", nargs="?", default=".")
     pt_add.add_argument("--text", required=True, help="The task in the user's own words.")
     pt_add.add_argument("--file", help="Which list it goes on. Default: today's journal entry.")
-    pt_add.add_argument("--due", help="YYYY-MM-DD, only where there is a real deadline.")
+    pt_add.add_argument("--due", help="YYYY-MM-DD, only where there is a real deadline. The task "
+                                       "goes into the journal day it is due, not into today.")
+    pt_add.add_argument("--every", choices=sorted(_TASK_EVERY),
+                        help="Repeat: when the task is ticked off it is written again at the next "
+                             "occurrence, in that day's journal entry. Needs --due to count from.")
     pt_add.add_argument("--see", help="Where the detail lives: a bundle or note slug, written into "
                                       "the line as a wikilink. This is how a task stays one line "
                                       "without losing what somebody needs to do it.")
@@ -15959,14 +18808,14 @@ def main(argv: list[str]) -> int:
     pt_add.set_defaults(func=cmd_task_add)
 
     pt_done = sub_task.add_parser("done", help="Tick a task off, matched on a fragment of its text.")
-    pt_done.add_argument("vault", nargs="?", default=".")
+    pt_done.add_argument("space", nargs="?", default=".")
     pt_done.add_argument("--text", required=True, help="Enough of the wording to hit exactly one.")
     pt_done.add_argument("--file", help="Restrict the search to one list.")
     pt_done.add_argument("--agent", help="Name for the activity-log line.")
     pt_done.set_defaults(func=cmd_task_done)
 
-    pt_list = sub_task.add_parser("list", help="Open tasks across the whole vault, wherever they sit.")
-    pt_list.add_argument("vault", nargs="?", default=".")
+    pt_list = sub_task.add_parser("list", help="Open tasks across the whole space, wherever they sit.")
+    pt_list.add_argument("space", nargs="?", default=".")
     pt_list.add_argument("--due-within", dest="due_within", type=int, help="Only dated ones falling due within N days, overdue included.")
     pt_list.add_argument("--limit", type=int, default=40)
     pt_list.set_defaults(func=cmd_task_list)
@@ -15975,7 +18824,7 @@ def main(argv: list[str]) -> int:
     sub_bundle = p_bundle.add_subparsers(dest="subcmd", required=True)
 
     pb_create = sub_bundle.add_parser("create", help="Create <kind>/<slug>/<slug>.md from template plus INDEX.md.")
-    pb_create.add_argument("vault", nargs="?", default=".")
+    pb_create.add_argument("space", nargs="?", default=".")
     pb_create.add_argument("--kind", required=True, choices=list(KIND_FIELDS.keys()))
     pb_create.add_argument("--slug", required=True)
     pb_create.add_argument("--title")
@@ -15985,10 +18834,8 @@ def main(argv: list[str]) -> int:
                            help="Where it came from, e.g. research:<slug> or import:<file>.")
     pb_create.add_argument("--goal")
     pb_create.add_argument("--status")
-    pb_create.add_argument("--cadence")
     pb_create.add_argument("--due")
     pb_create.add_argument("--topic")
-    pb_create.add_argument("--last_done")
     pb_create.add_argument("--tags", help="Comma-separated tags, e.g. 'sport,ernaehrung'. Without this the file carries whatever tags its own frontmatter had, which for a source without frontmatter is none.")
     pb_create.add_argument("--heading-files", dest="heading_files",
                            help="Heading for the members list in INDEX.md, in the user's language. Default English.")
@@ -15997,11 +18844,14 @@ def main(argv: list[str]) -> int:
     pb_create.add_argument("--truth-description", dest="truth_description",
                            help="The line describing the main file in INDEX.md, in the user's language. Default English. Without it a translated heading sits above an English sentence.")
     pb_create.add_argument("--truth", action="store_true",
-                           help="For a sub-bundle: write its truth file too, with a 'Part of [[parent]]' link. Without it a sub-bundle gets only its folder and INDEX.md, which is right for a plain grouping and wrong for a sub-theme.")
+                           help="For a sub-bundle: write its truth file too, with a 'Part of [[parent]]' link. Without it a sub-bundle gets only its folder and INDEX.md, which is right for a plain grouping and wrong for a sub-bundle.")
+    pb_create.add_argument("--narrow", action="store_true",
+                           help="Allow a slug of more than two words. A narrow name holds only the "
+                                "one file that named it, so this has to be said deliberately.")
     pb_create.set_defaults(func=cmd_create_bundle)
 
     pb_addfile = sub_bundle.add_parser("add-file", help="Copy a markdown file into a bundle (body verbatim, frontmatter migrated to schema).")
-    pb_addfile.add_argument("vault", nargs="?", default=".")
+    pb_addfile.add_argument("space", nargs="?", default=".")
     pb_addfile.add_argument("--source", required=True)
     pb_addfile.add_argument("--bundle-slug", required=True, dest="bundle_slug",
                             help="Bundle slug. May include '/' for sub-bundles.")
@@ -16022,22 +18872,20 @@ def main(argv: list[str]) -> int:
     pb_addfile.set_defaults(func=cmd_copy_into_bundle)
 
     pb_addtruth = sub_bundle.add_parser("add-truth", help="Write a truth file for an existing sub-bundle with a 'Part of [[parent]]' wikilink.")
-    pb_addtruth.add_argument("vault", nargs="?", default=".")
+    pb_addtruth.add_argument("space", nargs="?", default=".")
     pb_addtruth.add_argument("--bundle-slug", required=True, dest="bundle_slug",
                              help="Sub-bundle path (must contain '/').")
     pb_addtruth.add_argument("--kind", required=True, choices=list(KIND_FIELDS.keys()))
     pb_addtruth.add_argument("--title")
     pb_addtruth.add_argument("--goal")
     pb_addtruth.add_argument("--status")
-    pb_addtruth.add_argument("--cadence")
     pb_addtruth.add_argument("--due")
     pb_addtruth.add_argument("--topic")
-    pb_addtruth.add_argument("--last-done", dest="last_done")
     pb_addtruth.add_argument("--tags", help="Comma-separated tags, e.g. 'sport,ernaehrung'.")
     pb_addtruth.set_defaults(func=cmd_create_sub_bundle_truth)
 
-    pb_rename = sub_bundle.add_parser("rename", help="Atomically rename a slug: file rename, frontmatter slug, vault-wide wikilink rewrite, master INDEX refresh.")
-    pb_rename.add_argument("vault", nargs="?", default=".")
+    pb_rename = sub_bundle.add_parser("rename", help="Atomically rename a slug: file rename, frontmatter slug, space-wide wikilink rewrite, master INDEX refresh.")
+    pb_rename.add_argument("space", nargs="?", default=".")
     pb_rename.add_argument("--old", required=True)
     pb_rename.add_argument("--new", required=True)
     pb_rename.add_argument("--bundle-slug", dest="bundle_slug")
@@ -16045,7 +18893,7 @@ def main(argv: list[str]) -> int:
     pb_rename.set_defaults(func=cmd_rename_slug)
 
     pb_ientry = sub_bundle.add_parser("index-entry", help="Rewrite a member's one-line description in the bundle's INDEX.md.")
-    pb_ientry.add_argument("vault", nargs="?", default=".")
+    pb_ientry.add_argument("space", nargs="?", default=".")
     pb_ientry.add_argument("--bundle-slug", required=True, dest="bundle_slug")
     pb_ientry.add_argument("--bundle-kind", dest="bundle_kind", choices=list(KIND_FIELDS.keys()))
     pb_ientry.add_argument("--file", required=True, help="Member slug or filename.")
@@ -16053,23 +18901,23 @@ def main(argv: list[str]) -> int:
     pb_ientry.set_defaults(func=cmd_bundle_index_entry)
 
     pb_remove = sub_bundle.add_parser("remove-file", help="Discard a member: to trash/, out of INDEX.md, into the activity log, in one call.")
-    pb_remove.add_argument("vault", nargs="?", default=".")
+    pb_remove.add_argument("space", nargs="?", default=".")
     pb_remove.add_argument("--bundle-slug", required=True, dest="bundle_slug")
     pb_remove.add_argument("--bundle-kind", dest="bundle_kind", choices=list(KIND_FIELDS.keys()))
     pb_remove.add_argument("--file", required=True, help="Member slug or filename.")
     pb_remove.set_defaults(func=cmd_bundle_remove_file)
 
     pb_setbody = sub_bundle.add_parser("set-body", help="Replace the body of a file in a bundle. Frontmatter untouched.")
-    pb_setbody.add_argument("vault", nargs="?", default=".")
-    pb_setbody.add_argument("--file", required=True, help="Vault-relative path, or a basename unique in the vault.")
+    pb_setbody.add_argument("space", nargs="?", default=".")
+    pb_setbody.add_argument("--file", required=True, help="Space-relative path, or a basename unique in the space.")
     pb_setbody.add_argument("--body-file", dest="body_file", help="Read the new body from this file. Default: stdin.")
     pb_setbody.add_argument("--replace", action="store_true", help="Allow overwriting a body that already has content.")
     pb_setbody.add_argument("--agent", help="Name for the activity-log line.")
     pb_setbody.set_defaults(func=cmd_bundle_set_body)
 
     pb_editfile = sub_bundle.add_parser("edit-file", help="Correct frontmatter fields of an existing file in place. Body untouched.")
-    pb_editfile.add_argument("vault", nargs="?", default=".")
-    pb_editfile.add_argument("--file", required=True, help="Vault-relative path, or a basename unique in the vault.")
+    pb_editfile.add_argument("space", nargs="?", default=".")
+    pb_editfile.add_argument("--file", required=True, help="Space-relative path, or a basename unique in the space.")
     pb_editfile.add_argument("--set", action="append", default=[], help="key=value. A list is written as [a, b, c]. Repeatable.")
     pb_editfile.add_argument("--remove", action="append", default=[], help="Field to remove. Repeatable.")
     pb_editfile.add_argument("--agent", help="Name for the activity-log line.")
@@ -16080,7 +18928,7 @@ def main(argv: list[str]) -> int:
     sub_asset = p_asset.add_subparsers(dest="subcmd", required=True)
 
     pa_add = sub_asset.add_parser("add", help="Copy a non-markdown file into the bundle it belongs to.")
-    pa_add.add_argument("vault", nargs="?", default=".")
+    pa_add.add_argument("space", nargs="?", default=".")
     pa_add.add_argument("--source", required=True)
     pa_add.add_argument("--bundle-slug", required=True, dest="bundle_slug")
     pa_add.add_argument("--bundle-kind", dest="bundle_kind", choices=list(KIND_FIELDS.keys()))
@@ -16094,7 +18942,7 @@ def main(argv: list[str]) -> int:
     sub_contact = p_contact.add_subparsers(dest="subcmd", required=True)
 
     pc_create = sub_contact.add_parser("create", help="Create a contact file under contacts/<people|organisations>/<slug>.md.")
-    pc_create.add_argument("vault", nargs="?", default=".")
+    pc_create.add_argument("space", nargs="?", default=".")
     pc_create.add_argument("--kind", required=True, choices=("person", "organization"))
     pc_create.add_argument("--slug", required=True)
     pc_create.add_argument("--full-name", dest="full_name")
@@ -16109,7 +18957,7 @@ def main(argv: list[str]) -> int:
     pc_create.set_defaults(func=cmd_register_contact)
 
     pc_update = sub_contact.add_parser("update", help="Enrich an existing contact: set frontmatter fields, append body lines.")
-    pc_update.add_argument("vault", nargs="?", default=".")
+    pc_update.add_argument("space", nargs="?", default=".")
     pc_update.add_argument("--slug", required=True)
     pc_update.add_argument("--set", action="append", default=[], help="key=value. Repeatable.")
     pc_update.add_argument("--remove", action="append", default=[], help="Field to remove. Repeatable.")
@@ -16122,9 +18970,7 @@ def main(argv: list[str]) -> int:
     sub_journal = p_journal.add_subparsers(dest="subcmd", required=True)
 
     def _add_journal_args(p: argparse.ArgumentParser, *, with_date: bool = True) -> None:
-        p.add_argument("vault", nargs="?", default=".")
-        p.add_argument("--kind", required=True, choices=list(_JOURNAL_KINDS),
-                       dest="_kind", help="Which layer of the journal.")
+        p.add_argument("space", nargs="?", default=".")
         if with_date:
             p.add_argument("--date", default=None,
                            help="Target date YYYY-MM-DD. Defaults to today; the entry is the one covering that date.")
@@ -16133,9 +18979,6 @@ def main(argv: list[str]) -> int:
     _add_journal_args(pj_path)
     pj_path.set_defaults(func=cmd_journal_path)
 
-    pj_ensure = sub_journal.add_parser("ensure", help="Create the entry and its bundle if they are not there yet.")
-    _add_journal_args(pj_ensure)
-    pj_ensure.set_defaults(func=cmd_journal_ensure)
 
     pj_append = sub_journal.add_parser("append", help="Append text to the entry, verbatim, below what is already there.")
     _add_journal_args(pj_append)
@@ -16151,52 +18994,47 @@ def main(argv: list[str]) -> int:
     pj_list.add_argument("--limit", type=int, default=0, help="Show only the newest N. 0 shows all.")
     pj_list.set_defaults(func=cmd_journal_list)
 
-    pj_due = sub_journal.add_parser("rollup-due", help="Which rollups are due, and which entries each one reads. Writes nothing.")
-    pj_due.add_argument("vault", nargs="?", default=".")
-    pj_due.add_argument("--date", default=None, help="Pretend today is this date.")
-    pj_due.set_defaults(func=cmd_journal_rollup_due)
-
-    pj_rollup = sub_journal.add_parser("rollup", help="Write the rollup into the period entry. Refuses a second one for the same period.")
-    _add_journal_args(pj_rollup)
-    pj_rollup.add_argument("--text", required=True, help="The summary, in the user's own words where possible.")
-    pj_rollup.add_argument("--this-period", dest="this_period", action="store_true",
-                           help="Roll up the period the date falls in, instead of the one before it.")
-    pj_rollup.set_defaults(func=cmd_journal_rollup)
 
     # file -----
     def _add_drop_area_args(parser: argparse.ArgumentParser) -> None:
-        """The two ways a file may leave the drop area. Only checked for files that came from it."""
+        """How a file may leave the drop area. Only checked for files that came from it."""
         parser.add_argument("--filed-to", dest="filed_to",
-                            help=f"Where in the vault this file's content ended up. Required for "
-                                 f"anything coming out of {IMPORT_DIR}/.")
-        parser.add_argument("--user-said", dest="user_said",
-                            help="The user's own words saying it can go without being filed.")
+                            help=f"Where in the space this file's content ended up. Required for "
+                                 f"anything coming out of {INBOX_DIR}/.")
 
     p_file = sub.add_parser("file", help="File moves into system folders.")
     sub_file = p_file.add_subparsers(dest="subcmd", required=True)
 
     pf_trash = sub_file.add_parser("trash", help=f"Move a file to {TRASH_DIR}/, keeping its path. Undo with `file restore`.")
-    pf_trash.add_argument("vault", nargs="?", default=".")
+    pf_trash.add_argument("space", nargs="?", default=".")
     pf_trash.add_argument("--path", required=True)
     _add_drop_area_args(pf_trash)
     pf_trash.set_defaults(func=cmd_trash_file)
 
     pf_archive = sub_file.add_parser("archive", help=f"Move a file to {ARCHIVE_DIR}/, keeping its path. Undo with `file restore`.")
-    pf_archive.add_argument("vault", nargs="?", default=".")
+    pf_archive.add_argument("space", nargs="?", default=".")
     pf_archive.add_argument("--path", required=True)
     pf_archive.set_defaults(func=cmd_archive_file)
 
     pf_status = sub_file.add_parser("status", help="Read or set a file's `status:`, the field that says whether it still stands.")
-    pf_status.add_argument("vault", nargs="?", default=".")
+    pf_status.add_argument("space", nargs="?", default=".")
     pf_status.add_argument("--path", required=True)
     pf_status.add_argument("--set", dest="set", choices=list(STATUS_VALUES),
                            help="Omit to read the current value. " +
                                 "; ".join(f"{k}: {v}" for k, v in STATUS_LIFECYCLE.items()))
     pf_status.add_argument("--agent", default="")
+    pf_status.add_argument("--check", action="store_true",
+                           help="With --set: report what hangs off this file, in both directions "
+                                "and two levels deep, with each one's open task lines and a short "
+                                "excerpt. Writes nothing; a person judges what still matters.")
+    pf_status.add_argument("--reviewed", action="store_true",
+                           help="The list above has been put to the user and answered. Needed to "
+                                "set 'done' or 'cancelled' where something hangs off the file: "
+                                "without it that change is refused once and the list printed.")
     pf_status.set_defaults(func=cmd_file_status)
 
     pf_restore = sub_file.add_parser("restore", help=f"Put a file from {TRASH_DIR}/ or {ARCHIVE_DIR}/ back where it came from.")
-    pf_restore.add_argument("vault", nargs="?", default=".")
+    pf_restore.add_argument("space", nargs="?", default=".")
     pf_restore.add_argument("--path", required=True, help=f"The file as it lies now, e.g. {TRASH_DIR}/<its old path>.")
     pf_restore.set_defaults(func=cmd_restore_file)
 
@@ -16205,7 +19043,7 @@ def main(argv: list[str]) -> int:
     sub_plan = p_plan.add_subparsers(dest="subcmd", required=True)
 
     pp_clear = sub_plan.add_parser("clear-section", help="Remove the '## Plan' section from a bundle truth file after filing.")
-    pp_clear.add_argument("vault", nargs="?", default=".")
+    pp_clear.add_argument("space", nargs="?", default=".")
     pp_clear.add_argument("--bundle-slug", required=True, dest="bundle_slug")
     pp_clear.add_argument("--bundle-kind", dest="bundle_kind", choices=list(KIND_FIELDS.keys()))
     pp_clear.add_argument("--truth-file", dest="truth_file")
@@ -16216,7 +19054,7 @@ def main(argv: list[str]) -> int:
     sub_review = p_review.add_subparsers(dest="subcmd", required=True)
 
     pr_archive = sub_review.add_parser("archive", help="Move a read-once briefing off the desk into zanmai/logs/<YYYY>/<MM>/.")
-    pr_archive.add_argument("vault", nargs="?", default=".")
+    pr_archive.add_argument("space", nargs="?", default=".")
     pr_archive.add_argument("--item-path", required=True, dest="item_path")
     pr_archive.set_defaults(func=cmd_archive_review_item)
 
@@ -16225,70 +19063,94 @@ def main(argv: list[str]) -> int:
     sub_update = p_update.add_subparsers(dest="subcmd", required=True)
 
     pu_links = sub_update.add_parser("wikilinks", help="Rename [[old-slug]] to [[new-slug]] across markdown files.")
-    pu_links.add_argument("vault", nargs="?", default=".")
+    pu_links.add_argument("space", nargs="?", default=".")
     pu_links.add_argument("--old", required=True)
     pu_links.add_argument("--new", required=True)
-    pu_links.add_argument("--scope", help="Subfolder under the vault to sweep. Defaults to the whole vault. System paths are hard-excluded.")
+    pu_links.add_argument("--scope", help="Subfolder under the space to sweep. Defaults to the whole space. System paths are hard-excluded.")
+    pu_links.add_argument("--verbose", action="store_true",
+                          help="Also print every file that was touched. Off by default: the count "
+                               "is the answer, the paths are the bookkeeping.")
     pu_links.set_defaults(func=cmd_update_wikilinks)
 
     pu_embeds = sub_update.add_parser("embeds", help="Rewrite embed references in a bundle's markdown to point at the bundle's own files.")
-    pu_embeds.add_argument("vault", nargs="?", default=".")
+    pu_embeds.add_argument("space", nargs="?", default=".")
     pu_embeds.add_argument("--bundle-slug", required=True, dest="bundle_slug")
     pu_embeds.add_argument("--bundle-kind", dest="bundle_kind", choices=list(KIND_FIELDS.keys()))
     pu_embeds.add_argument("--clear-rename-map", dest="clear_rename_map", action="store_true",
                            help="Wipe the attachment rename map after this run.")
     pu_embeds.set_defaults(func=cmd_update_embeds)
 
-    pu_master = sub_update.add_parser("master-index", help="Regenerate the vault-root INDEX.md.")
-    pu_master.add_argument("vault", nargs="?", default=".")
+    pu_master = sub_update.add_parser("master-index", help="Regenerate the space-root INDEX.md.")
+    pu_master.add_argument("space", nargs="?", default=".")
     pu_master.set_defaults(func=cmd_update_master_index)
 
     # index -----
-    p_idx = sub.add_parser("index", help="Vault-index and pattern queries.")
+    p_idx = sub.add_parser("index", help="Space-index and pattern queries.")
     sub_idx = p_idx.add_subparsers(dest="subcmd", required=True)
 
-    pi_rebuild = sub_idx.add_parser("rebuild", help="Walk the vault, write zanmai/memory/vault-index.json (Schicht A).")
-    pi_rebuild.add_argument("vault", nargs="?", default=".")
+    pi_rebuild = sub_idx.add_parser("rebuild", help="Walk the space, write zanmai/memory/space-index.json (Schicht A).")
+    pi_rebuild.add_argument("space", nargs="?", default=".")
     pi_rebuild.add_argument("--scope", help="Subfolder to limit the walk.")
     pi_rebuild.add_argument("--quiet", action="store_true")
     pi_rebuild.set_defaults(func=cmd_reindex)
 
-    pi_patterns = sub_idx.add_parser("patterns", help="Aggregate themes/hubs/bundles into zanmai/memory/patterns.json (Schicht B).")
-    pi_patterns.add_argument("vault", nargs="?", default=".")
+    pi_patterns = sub_idx.add_parser("patterns", help="Aggregate hubs and bundles into zanmai/memory/patterns.json (Schicht B).")
+    pi_patterns.add_argument("space", nargs="?", default=".")
     pi_patterns.add_argument("--min-count", type=int, default=2, dest="min_count")
     pi_patterns.add_argument("--quiet", action="store_true")
     pi_patterns.set_defaults(func=cmd_patterns)
 
-    pi_find = sub_idx.add_parser("find", help="Query patterns.json for matching themes, bundles, hubs.")
-    pi_find.add_argument("vault", nargs="?", default=".")
+    pi_find = sub_idx.add_parser("find", help="Query patterns.json for matching bundles, bundles, hubs.")
+    pi_find.add_argument("space", nargs="?", default=".")
     pi_find.add_argument("--tokens", required=True, help="Comma-separated tokens.")
-    pi_find.set_defaults(func=cmd_find_theme)
+    pi_find.set_defaults(func=cmd_find_bundle)
 
     pi_inspect = sub_idx.add_parser("inspect", help="User-visible scan of an import scope. Lists folders, file counts per extension, folder-name tokens, embed references.")
-    pi_inspect.add_argument("vault", nargs="?", default=".")
+    pi_inspect.add_argument("space", nargs="?", default=".")
     pi_inspect.add_argument("--scope", required=True)
     pi_inspect.set_defaults(func=cmd_inspect_scope)
 
-    pi_search = sub_idx.add_parser("search", help="Search the vault's text and report how many files were searched.")
-    pi_search.add_argument("vault", nargs="?", default=".")
+    pi_search = sub_idx.add_parser("search", help="Search the space's text and report how many files were searched.")
+    pi_search.add_argument("space", nargs="?", default=".")
     pi_search.add_argument("--pattern", required=True, help="Regular expression.")
-    pi_search.add_argument("--root", action="append", help="Limit to these vault-relative roots. Repeatable.")
+    pi_search.add_argument("--root", "--scope", dest="root", action="append",
+                            help="Limit to these space-relative roots. Repeatable. "
+                                 "(`--scope` works too, same meaning as elsewhere in `index`/`archive`.)")
     pi_search.add_argument("--ext", action="append", help="Limit to these suffixes (with the dot). Repeatable.")
     pi_search.add_argument("--case-sensitive", dest="case_sensitive", action="store_true")
     pi_search.add_argument("--max-hits", dest="max_hits", type=int, default=200)
     pi_search.set_defaults(func=cmd_index_search)
 
     # memory -----
+    p_ses = sub.add_parser("session", help="The conversation record the host keeps: digest, close check.")
+    sub_ses = p_ses.add_subparsers(dest="subcmd", required=True)
+
+    ps_digest = sub_ses.add_parser(
+        "digest",
+        help="The essence of the conversations since the last clean close: what was said, what was "
+             "asked, where something failed. For a close written afterwards.")
+    ps_digest.add_argument("space", nargs="?", default=".")
+    ps_digest.add_argument("--since", default=None,
+                           help="UTC marker to start from. Default: the last clean close.")
+    ps_digest.add_argument("--limit", type=int, default=0,
+                           help="Only the newest N sessions.")
+    ps_digest.set_defaults(func=cmd_session_digest)
+
+    ps_check = sub_ses.add_parser(
+        "check", help="Was the last session closed properly? Runs at session start.")
+    ps_check.add_argument("space", nargs="?", default=".")
+    ps_check.set_defaults(func=cmd_session_check)
+
     p_mem = sub.add_parser("memory", help="Briefing and operation reports.")
     sub_mem = p_mem.add_subparsers(dest="subcmd", required=True)
 
     pm_briefing = sub_mem.add_parser("briefing", help="Atomic rebuild of zanmai/memory/briefing.md.")
-    pm_briefing.add_argument("vault", nargs="?", default=".")
+    pm_briefing.add_argument("space", nargs="?", default=".")
     pm_briefing.add_argument("--quiet", action="store_true")
     pm_briefing.set_defaults(func=cmd_briefing)
 
     pm_report = sub_mem.add_parser("report", help="Write an operation report to zanmai/logs/<YYYY>/<MM>/.")
-    pm_report.add_argument("vault", nargs="?", default=".")
+    pm_report.add_argument("space", nargs="?", default=".")
     pm_report.add_argument("--operation", required=True)
     pm_report.add_argument("--slug", required=True)
     pm_report.add_argument("--summary", default="")
@@ -16297,14 +19159,14 @@ def main(argv: list[str]) -> int:
     pm_report.set_defaults(func=cmd_write_report)
 
     pm_log = sub_mem.add_parser("log", help="Append one line to the activity log in the canonical format.")
-    pm_log.add_argument("vault", nargs="?", default=".")
+    pm_log.add_argument("space", nargs="?", default=".")
     pm_log.add_argument("--agent", required=True)
     pm_log.add_argument("--activity", required=True)
     pm_log.set_defaults(func=cmd_memory_log)
 
     pm_curate = sub_mem.add_parser("curate", help="Keep a rules file to its rules: struck entries and long reasoning move to an archive.")
-    pm_curate.add_argument("vault", nargs="?", default=".")
-    pm_curate.add_argument("--file", required=True, help="Vault-relative path of the memory file.")
+    pm_curate.add_argument("space", nargs="?", default=".")
+    pm_curate.add_argument("--file", required=True, help="Space-relative path of the memory file.")
     pm_curate.add_argument("--why-lines", type=int, default=4, dest="why_lines",
                            help="A reasoning block longer than this moves to the archive.")
     pm_curate.add_argument("--show", type=int, default=10)
@@ -16313,7 +19175,7 @@ def main(argv: list[str]) -> int:
     pm_curate.set_defaults(func=cmd_memory_curate)
 
     pm_rotate = sub_mem.add_parser("rotate", help="Move a chronological log's older months into an archive beside it.")
-    pm_rotate.add_argument("vault", nargs="?", default=".")
+    pm_rotate.add_argument("space", nargs="?", default=".")
     pm_rotate.add_argument("--file", default=ACTIVITY_LOG_FILE)
     pm_rotate.add_argument("--keep-months", type=int, default=2, dest="keep_months")
     pm_rotate.add_argument("--dry-run", action="store_true", dest="dry_run")
@@ -16323,15 +19185,15 @@ def main(argv: list[str]) -> int:
     p_conn = sub.add_parser("connection", help="External-source connections, run by Wong. Cross-platform.")
     sub_conn = p_conn.add_subparsers(dest="subcmd", required=True)
 
-    pco_scan = sub_conn.add_parser("scan", help="Discover connectable host sources for this vault (MCP servers, plugins, CLIs, macOS apps). Informational, registers nothing.")
-    pco_scan.add_argument("vault", nargs="?", default=".")
+    pco_scan = sub_conn.add_parser("scan", help="Discover connectable host sources for this space (MCP servers, plugins, CLIs, macOS apps). Informational, registers nothing.")
+    pco_scan.add_argument("space", nargs="?", default=".")
     pco_scan.set_defaults(func=cmd_connection_scan)
 
     # hook -----
     p_hook = sub.add_parser("hook", help="Claude Code hooks (PreToolUse, PostToolUse, SessionStart, Stop). Invoked by Claude Code via settings.json, not by users directly.")
     sub_hook = p_hook.add_subparsers(dest="subcmd", required=True)
 
-    ph_session = sub_hook.add_parser("session-start", help="SessionStart hook. Reads user.md and the vault state, prints the briefing on stdout.")
+    ph_session = sub_hook.add_parser("session-start", help="SessionStart hook. Reads user.md and the space state, prints the briefing on stdout.")
     ph_session.set_defaults(func=cmd_hook_session_start)
 
     ph_send = sub_hook.add_parser("session-end", help="SessionEnd hook. Rebuilds the briefing so the next session opens on today, not on the last time someone ran close-session.")
@@ -16349,7 +19211,7 @@ def main(argv: list[str]) -> int:
     ph_kind = sub_hook.add_parser("kind-required", help="PreToolUse Write|Edit. Refuses writes into a bundle root without valid kind frontmatter.")
     ph_kind.set_defaults(func=cmd_hook_kind_required)
 
-    ph_perm = sub_hook.add_parser("permission-guard", help="PreToolUse Write|Edit. Hard-blocks writes into the never-do bucket.")
+    ph_perm = sub_hook.add_parser("permission-guard", help="PreToolUse on any tool. Hard-blocks writes into the never-do bucket, and puts a write into a file that stays true after this session to the user before it happens.")
     ph_perm.set_defaults(func=cmd_hook_permission_guard)
 
     ph_idx = sub_hook.add_parser("index-consistency", help="PostToolUse Write|Edit. Warns when a bundle file is written without being referenced in the bundle INDEX.md.")
@@ -16364,25 +19226,25 @@ def main(argv: list[str]) -> int:
     ph_park = sub_hook.add_parser("park-guard", help="PreToolUse Bash. Refuses a wait loop inside a background run, which can only wait where nobody is looking.")
     ph_park.set_defaults(func=cmd_hook_park_guard)
 
-    ph_libcheck = sub_hook.add_parser("library-check-guard", help="PreToolUse Bash. Refuses to save a .pptx into a doing/<slug>/ bundle until `slide-library.py check` has run for that slug.")
+    ph_libcheck = sub_hook.add_parser("library-check-guard", help=f"PreToolUse Bash. Refuses to save a .pptx into a {WORKBENCH_DIR}/<slug>/ bundle until `slide-library.py check` has run for that slug.")
     ph_libcheck.set_defaults(func=cmd_hook_library_check_guard)
 
     # launcher -----
-    p_launcher = sub.add_parser("launcher", help="Double-clickable starter for this vault (an .app on macOS, a .lnk on Windows). Callable anytime, not only during setup.")
+    p_launcher = sub.add_parser("launcher", help="Double-clickable starter for this space (an .app on macOS, a .lnk on Windows). Callable anytime, not only during setup.")
     sub_launcher = p_launcher.add_subparsers(dest="subcmd", required=True)
 
-    pl_detect = sub_launcher.add_parser("detect-terminals", help="List id/name pairs of terminal apps this machine can start a vault session in, for the caller to offer as a choice.")
+    pl_detect = sub_launcher.add_parser("detect-terminals", help="List id/name pairs of terminal apps this machine can start a space session in, for the caller to offer as a choice.")
     pl_detect.set_defaults(func=cmd_launcher_detect_terminals)
 
     pl_create = sub_launcher.add_parser("create", help="Build the starter. macOS: an .app under /Applications. Windows: a .lnk on the Desktop (designed, unverified).")
-    pl_create.add_argument("vault_root", nargs="?", default=".")
+    pl_create.add_argument("space_root", nargs="?", default=".")
     pl_create.add_argument("--name", required=True, help="Display name for the starter.")
     pl_create.add_argument("--terminal", required=True, help="A terminal id from 'launcher detect-terminals'.")
     pl_create.set_defaults(func=cmd_launcher_create)
 
     # A hook this version does not have is not an error, it is a hook that has nothing to guard.
     # Checked before argparse, because argparse exits 2 on an unknown sub-command and the host reads
-    # exit 2 as "block this tool call". That is how a vault locked itself out completely: an update
+    # exit 2 as "block this tool call". That is how a space locked itself out completely: an update
     # left a settings.json naming `park-guard` beside a script that predated it, every Bash call was
     # refused including the one that would have finished the update, and the only way out was the
     # user typing a command themselves. Silence is the only safe answer here: a guard that is not

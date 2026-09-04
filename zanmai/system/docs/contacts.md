@@ -2,7 +2,9 @@
 
 # People and organisations
 
-How Zanmai keeps track of who is who, and why they are not filed like topics.
+**Read this when:** a person or an organisation has to be recorded, found or linked to something.
+
+Every person and every organisation gets one note, in `contacts/`. Everything else in the space links to that note instead of repeating the name. A person is not a subject: a trip is a subject, the people on it are people.
 
 ## One note per person, one per organisation
 
@@ -10,7 +12,7 @@ People live in `contacts/people`, organisations in `contacts/organisations`, one
 
 They sit apart from your themes because a person is not a subject. A trip is a subject, and the people on it are people. Everything else points at them with a link, which is what lets you ask who was involved in something and get an answer.
 
-A person and an organisation know about each other in both directions: the person's note names the organisation and links to it, the organisation's note lists its people. That is the one place Zanmai insists on links going both ways; everywhere else linking is optional.
+A person and an organisation are meant to know about each other in both directions: the person's note names the organisation and links to it, and the organisation's note has the place for its people. That is the one pair where both sides are worth keeping, because you look them up from either end; nothing enforces it, and a link that is missing is added when you notice.
 
 ## You are a contact too
 
@@ -36,7 +38,7 @@ Contact notes are also not the place for meeting notes, project notes or trip re
 
 ## Related
 
-- [How the vault is organised](folder-architecture.md), where contacts sit in the whole
+- [How the space is organised](folder-architecture.md), where contacts sit in the whole
 - [Importing and filing material](importing.md), how contacts appear during an import
 
 ---

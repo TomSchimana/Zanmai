@@ -2,7 +2,9 @@
 
 # Tools Zanmai uses
 
-What outside programs Zanmai relies on, and how they get onto your computer.
+**Read this when:** an external program is missing, or the question is what Zanmai installs.
+
+Zanmai needs Python to run at all. Everything else is fetched only when a job needs it, and nothing is installed without asking you.
 
 ## Two kinds
 
@@ -10,7 +12,7 @@ One thing has to be there before Zanmai can start: Python, since Zanmai runs on 
 
 Your notes are plain Markdown, so they open in any editor and you need nothing special to read or write them. The folder names, the journal and the trash are Zanmai's own, so they work the same whichever editor you use.
 
-Everything else, a feature needs only when you use it: small helper libraries for images, tools for video, and so on. Zanmai fetches those itself the first time, keeps them in its own corner of the vault so your system stays untouched, and asks first when something bigger is involved.
+Everything else, a feature needs only when you use it: small helper libraries for images, tools for video, and so on. Zanmai fetches those itself the first time, keeps them in its own corner of the space so your system stays untouched, and asks first when something bigger is involved.
 
 ## Good to know
 
@@ -19,7 +21,7 @@ Zanmai never assumes a tool is present. It checks, on your computer, what is rea
 ## Three kinds of dependency
 
 - **Prerequisites** you bring: Python, git, and Claude Code itself. Named plainly if missing, never installed silently.
-- **Fetched on demand** by Zanmai when a job needs it: small Python libraries for images and signing, media tools for video work. Python libraries go into Zanmai's own environment inside the vault, so your system Python stays untouched.
+- **Fetched on demand** by Zanmai when a job needs it: small Python libraries for images and signing, media tools for video work. Python libraries go into Zanmai's own environment inside the space, so your system Python stays untouched.
 - **Recommended, never required**: a package manager makes installing easier, but the on-demand path works without one.
 
 ## The whole list
@@ -55,7 +57,7 @@ less than its parts added up: the eight Python libraries come to 373 apart and 3
 | `python_pptx` | Reads and writes a native.pptx without opening PowerPoint: which layout a slide uses, whether its placeholders are filled, whether a run overrides the layout, which faces and colours are actually in the file | 25 MB | Zanmai fetches it |
 | `rawpy` | image-edit raw develop | 6 MB | Zanmai fetches it |
 | `scikit_image` | image-edit grade --match fallback | 148 MB | Zanmai fetches it |
-| `secret_store` | Hold connection secrets and the signer key outside the vault (LD6) | - | you, with one command |
+| `secret_store` | Hold connection secrets and the signer key outside the space (LD6) | - | you, with one command |
 | `typst` | Sets a document: real text flow across pages, a full-width block deferred to the next page while text keeps filling the current one, column balancing, hyphenation dictionaries, page numbers and bleed | 43 MB | Zanmai fetches it |
 | `whisper` | Turns speech into text on this machine, with no network and no key, which is what a spoken journal entry needs | - | Zanmai fetches it |
 | `whisper-model` | The weights whisper runs on | 1.5 GB | Zanmai fetches it |
@@ -73,6 +75,11 @@ This exists so a missing tool is not met for the first time in the middle of a j
 ## Before a job starts
 
 When a task needs one of those on-demand tools, Zanmai checks the prerequisites are in place before it begins, not halfway through. If something is missing it tells you what, why it is needed for this particular job, and the simplest way to get it. So a job never stalls partway for a tool it could have named at the start. To keep this quick, it remembers what it already found on your machine and only looks again when something changed.
+
+## Related
+
+- [Requirements and installation](install/index.md), the three things you bring yourself
+- [When something does not work](troubleshooting.md), when a job stops for a missing program
 
 ---
 

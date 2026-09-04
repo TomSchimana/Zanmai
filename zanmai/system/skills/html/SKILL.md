@@ -27,7 +27,7 @@ Render headless to PDF with a Chromium-based browser (any one, Chrome, Edge, Bra
 
 ## Where it runs, where it goes
 
-Compose and render under `zanmai/temp/<task>/` (transient scratch, one folder per task); move only the finished files to `doing/<slug>/`. The tools above are the host's, not bundled, if one is missing, that is a boundary to report, not to fake.
+Compose and render under `zanmai/temp/<task>/` (transient scratch, one folder per task); move only the finished files to `workbench/<slug>/`. The tools above are the host's, not bundled, if one is missing, that is a boundary to report, not to fake.
 
 ## Where HTML stops, recommend, do not improvise
 

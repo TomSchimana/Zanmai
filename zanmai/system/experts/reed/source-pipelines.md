@@ -94,7 +94,7 @@ Document the choice in the methodology section.
 
 Filename for embedded frames: `<video-slug>-frame-<MMmSSs>.jpg`. The timestamp is the only identifier, no lesson-number or section prefixes.
 
-Embed with bare wikilinks in the evidence section: `![[<video-slug>-frame-00m47s.jpg]]`. Wikilinks resolve by name across the vault, so the file's folder does not matter.
+Embed with bare wikilinks in the evidence section: `![[<video-slug>-frame-00m47s.jpg]]`. Wikilinks resolve by name across the space, so the file's folder does not matter.
 
 Citations: URL plus timestamp.
 
@@ -289,7 +289,7 @@ is a question to ask, not a workaround to build.
 
 ## Cleanup and source-material preservation
 
-After Step 4 (synthesise), run `rm -rf "$work_dir"` for every temp dir. The deliverable in the vault is the durable artefact. Downloaded videos and cloned repos are not.
+After Step 4 (synthesise), run `rm -rf "$work_dir"` for every temp dir. The deliverable in the space is the durable artefact. Downloaded videos and cloned repos are not.
 
 Preservation offer. Before deleting `$work_dir`, Reed evaluates whether intermediate material is worth preserving as an attachment alongside the deliverable. Candidates per source type.
 

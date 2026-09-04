@@ -1,12 +1,14 @@
 [← Zanmai Documentation](index.md)
 
-# Backup, and keeping the vault in a synced folder
+# Backup, and keeping the space in a synced folder
 
-Your vault is a folder. Putting it inside iCloud Drive, OneDrive, Dropbox, Nextcloud or Google Drive is the simplest backup there is, and it is a normal way to run Zanmai. Nothing here argues against it. Three things are worth setting up once.
+**Read this when:** the space sits in a synced folder, or a real backup is being set up.
+
+Your space is a folder. Putting it inside iCloud Drive, OneDrive, Dropbox, Nextcloud or Google Drive is the simplest backup there is, and it is a normal way to run Zanmai. Nothing here argues against it. Three things are worth setting up once.
 
 ## One: keep three things out of the copy
 
-Most of the vault should travel. Three parts should not.
+Most of the space should travel. Three parts should not.
 
 - **`runtime`**, inside the system folder. This is a Python environment Zanmai installs on demand, plus a record of which tools this particular computer has. Copied to a second machine it claims tools that are not installed there, and restored onto a different platform it is an environment built for the wrong one.
 - **`temp`**, also inside the system folder. Scratch space for a job in progress, cleared after seven days. It belongs to the machine doing the job.
@@ -19,7 +21,7 @@ How you exclude them depends on the service, and only two of the five let you do
 | Service | How |
 |---|---|
 | Dropbox | add the paths to a `.dropboxignore` file at the top of your Dropbox folder |
-| iCloud Drive | rename the folder so it ends in `.nosync`, or keep the vault outside iCloud |
+| iCloud Drive | rename the folder so it ends in `.nosync`, or keep the space outside iCloud |
 | OneDrive | Settings → Account → Choose folders, and untick them |
 | Nextcloud | Settings → General → Edit ignored files |
 | Google Drive | Preferences, and untick the folders |
@@ -36,14 +38,14 @@ A duplicate like that inside your notes is a real problem: Zanmai's first rule i
 
 A synced folder protects you from a dead disk. It does not protect you from a bad edit, because that syncs too, immediately.
 
-That is what snapshots are for: a picture taken before anything risky, sitting on the machine, restorable one file at a time. They are not the second copy, though. They live inside the vault and go when it goes, and they are cleared after seven days, so the copy you keep yourself is still the thing that survives a dead disk. [Snapshots and going back](snapshots.md) covers them.
+That is what snapshots are for: a picture taken before anything risky, sitting on the machine, restorable one file at a time. They are not the second copy, though. They live inside the space and go when it goes, and they are cleared after seven days, so the copy you keep yourself is still the thing that survives a dead disk. [Snapshots and going back](snapshots.md) covers them.
 
 ## And who can read it
 
-A synced folder is as private as the account behind it. In a company cloud, that usually includes whoever administers the tenant. Nothing in Zanmai leaves your machine on its own, but a folder you have deliberately put in a shared service is shared, and that includes your session logs and your contacts. Worth a moment's thought about which vault lives where. It is your decision, and Zanmai does not make it for you.
+A synced folder is as private as the account behind it. In a company cloud, that usually includes whoever administers the tenant. Nothing in Zanmai leaves your machine on its own, but a folder you have deliberately put in a shared service is shared, and that includes your session logs and your contacts. Worth a moment's thought about which space lives where. It is your decision, and Zanmai does not make it for you.
 
 ## Related
 
 - [Snapshots and going back](snapshots.md)
 - [Folder architecture](folder-architecture.md), what each folder is for
-- [Your editor](editors.md), reading the same vault on a phone
+- [Your editor](editors.md), reading the same space on a phone

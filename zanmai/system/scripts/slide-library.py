@@ -31,7 +31,7 @@ that would overflow, instead of producing a slide nobody looks at twice.
 `build` takes a plan naming a source slide per target slide plus the text per
 slot, clones the source and swaps the text. `show` prints the library so an agent
 can choose. `check` does the same and additionally records that the library was
-looked at for a given piece of work (`--task`, the `doing/<slug>/` bundle this
+looked at for a given piece of work (`--task`, the `workbench/<slug>/` bundle this
 deliverable belongs to): `library-check-guard` (PreToolUse Bash, see
 `zanmai.py hook`) refuses to save a `.pptx` under that bundle until this has run
 at least once, so composing from scratch is a choice made after looking, not
@@ -428,7 +428,7 @@ RENDER_HINT = ("install LibreOffice: macOS `brew install --cask libreoffice`, "
 
 
 def _stand_datei(deck: Path) -> Path | None:
-    """Where the note about a deck's last tool-written state lives, or nothing outside a vault."""
+    """Where the note about a deck's last tool-written state lives, or nothing outside a space."""
     for oben in [deck.resolve()] + list(deck.resolve().parents):
         if (oben / "zanmai" / "system").is_dir():
             ziel = oben / "zanmai" / "runtime" / "decks.json"
@@ -453,7 +453,7 @@ def guarded_save(deck_obj, ziel: Path) -> bool:
     if the file no longer matches that note, somebody edited it in between and this save would
     erase their work. It reports instead, and the caller decides.
 
-    A deck outside a vault has nowhere to keep the note, and is written as before.
+    A deck outside a space has nowhere to keep the note, and is written as before.
     """
     notiz = _stand_datei(ziel)
     vorher = None
@@ -1533,7 +1533,7 @@ def _resolve_source(source: Path, library: Path) -> Path | None:
     The index stores the path as it was given at harvest time, which is relative to the directory
     the harvest ran in. Called from anywhere else, that path points at nothing, and the message said
     the deck was "gone", sending someone to look for a file that was never deleted. Found 2026-08-26
-    on a real run from the vault root.
+    on a real run from the space root.
     """
     for kandidat in (source, library / source, library.parent / source,
                      library.resolve().parent.parent / source):
@@ -1618,10 +1618,10 @@ def show(library: Path, slide_id: int | None) -> int:
     return 0
 
 
-def check(library: Path, task: str, vault_root: Path,
+def check(library: Path, task: str, space_root: Path,
           shape: str | None = None, why: str | None = None) -> int:
     """Print the library, same as `show`, and record that it was looked at for `task`
-    (a `doing/<slug>/` bundle). `library-check-guard` reads this record back, so what it
+    (a `workbench/<slug>/` bundle). `library-check-guard` reads this record back, so what it
     proves is that a Compose build happened after a look at the library, not instead of
     one, and it does not judge whether Compose was the right call, only that the cheap
     tiers were on the table when it was made."""
@@ -1630,7 +1630,7 @@ def check(library: Path, task: str, vault_root: Path,
     # the guard proved the library had been seen while the cheapest route of all, a slide the user
     # already approved, was not on the list being shown. Measured: a run did the check
     # and then wrote its own build script, with two matching slides sitting unlisted.
-    marken = sorted((vault_root / "trusted" / "brands").glob("*/slides/INDEX.md"))
+    marken = sorted((space_root / "trusted" / "brands").glob("*/slides/INDEX.md"))
     if marken:
         print()
         for index_datei in marken:
@@ -1649,7 +1649,7 @@ def check(library: Path, task: str, vault_root: Path,
                 print(f"  {eintrag:<28} {zeile}")
             print(f"  -> slide-library.py extract {index_datei.parent}/<name>.pptx --slides 1 "
                   f"--out <new.pptx>, then fill")
-    marker_dir = vault_root / "zanmai" / "temp" / task
+    marker_dir = space_root / "zanmai" / "temp" / task
     marker_dir.mkdir(parents=True, exist_ok=True)
     index = json.loads((library / "index.json").read_text(encoding="utf-8"))
     marker_datei = marker_dir / "library-checked.json"
@@ -3199,9 +3199,9 @@ def main(argv: list[str]) -> int:
     pc = sub.add_parser("check", help="print the library and record that it was looked at for a task")
     pc.add_argument("library", type=Path)
     pc.add_argument("--task", required=True,
-                     help="the doing/<slug>/ bundle this deliverable belongs to")
-    pc.add_argument("--vault", type=Path, default=Path.cwd(),
-                     help="vault root the task's zanmai/temp/ lives under (default: cwd)")
+                     help="the workbench/<slug>/ bundle this deliverable belongs to")
+    pc.add_argument("--space", type=Path, default=Path.cwd(),
+                     help="space root the task's zanmai/temp/ lives under (default: cwd)")
     pc.add_argument("--shape", help="the pattern chosen for this piece, recorded for the bundle")
     pc.add_argument("--why", help="why this content has that shape")
 
@@ -3311,7 +3311,7 @@ def main(argv: list[str]) -> int:
     pk.add_argument("deck", type=Path)
     pk.add_argument("--slide", type=int, required=True)
     pk.add_argument("--brand-dir", dest="brand_dir", type=Path, required=True,
-                    help="the brand's folder, e.g. trusted/brands/<brand>")
+                    help="the brand's folder, e.g. zanmai/design/<brand>")
     pk.add_argument("--as", dest="slug", required=True, help="short name for this shape of content")
     pk.add_argument("--source", help="where it came from, for the note beside it")
 
@@ -3355,7 +3355,7 @@ def main(argv: list[str]) -> int:
     if args.command == "build":
         return build(args.plan, args.out, args.library, strict=not args.loose)
     if args.command == "check":
-        return check(args.library, args.task, args.vault, args.shape, args.why)
+        return check(args.library, args.task, args.space, args.shape, args.why)
     if args.command in ("nudge", "overlap-check", "align-check", "layout-check") and not args.deck.is_file():
         print(f"slide-library: no deck at {args.deck}", file=sys.stderr)
         return 2

@@ -21,7 +21,7 @@ A deck built slide by slide from scratch is the slow way and the drifting way at
 
 **A picture is never replaced by swapping its image source.** Every `p:pic` carries its own `a:srcRect`, a crop cut for its own artwork, and icons sharing a viewBox hold different amounts of whitespace inside it. The old crop on new artwork slides the icon out of its field, visible in a render and invisible to every check, because the box never changed. `slide-library.py swap-image <deck> --shape <name> --from <deck>:<slide>:<shape> --out <new>` brings the whole picture across, crop included, and sets only the placement. The source slide has to still be in the file: once dropped, its image parts are gone. Order is swap, then drop, then fill.
 
-**Harvest once.** `slide-library.py harvest <deck.pptx> --into trusted/brands/<brand>/slides/` reads a template or an approved deck and writes down, per slide, which master layout it uses, what its text slots are, and how much text each slot measurably holds (from the box and the type size in it, not from anyone's estimate). This runs when a brand's kit is first built and again whenever a deck is approved. The library is the user's own material, never a set of layouts we invented. A slide's rubrics are often laid out as a table rather than free text boxes; harvest reads a table's cells as slots too (`table1.r2c3`), not just text frames, so a template built entirely from tables still shows its real placeholders instead of reading as empty.
+**Harvest once.** `slide-library.py harvest <deck.pptx> --into zanmai/design/<brand>/slides/` reads a template or an approved deck and writes down, per slide, which master layout it uses, what its text slots are, and how much text each slot measurably holds (from the box and the type size in it, not from anyone's estimate). This runs when a brand's kit is first built and again whenever a deck is approved. The library is the user's own material, never a set of layouts we invented. A slide's rubrics are often laid out as a table rather than free text boxes; harvest reads a table's cells as slots too (`table1.r2c3`), not just text frames, so a template built entirely from tables still shows its real placeholders instead of reading as empty.
 
 **First decide what shape this content needs, then pick a route to it.** How many things are there
 and how do they stand to each other: one thing and what it brings, several of equal rank, a sequence,
@@ -32,11 +32,11 @@ bundle of twenty pieces then comes out as the same two patterns twenty times.
 
 **Then build in three tiers, in this order.**
 
-0. **Look in the brand's own library first**, `trusted/brands/<brand>/slides/`, and read its
+0. **Look in the brand's own library first**, `zanmai/design/<brand>/slides/`, and read its
    `INDEX.md`. Every slide there is one the user approved, so taking one and swapping its text is
    the cheapest route and the only one where the look cannot drift. Two commands, `extract` then
    `fill`, and nothing is redrawn. **What the user approves goes back in**:
-   `slide-library.py keep <deck> --slide N --brand-dir trusted/brands/<brand> --as <shape-name>`
+   `slide-library.py keep <deck> --slide N --brand-dir zanmai/design/<brand> --as <shape-name>`
    writes the slide plus a note of its fillable places. Approval is the trigger, never the build.
    **A kept slide answers one shape of content, it is not a default.** Where the content needs a
    different shape, the library is the wrong place to look, and the cost of the right route is not
@@ -117,7 +117,7 @@ user say yes before the build. Content that fits no pattern is the honest case f
 
 **The tier is chosen per slide, never once for the job.** A set of pages is not one decision repeated. Page one may be composed, page two cloned from page one, page three migrated out of the neutral library and recoloured, page four cloned again from page two. Picking one tier at the start and holding it for twenty pages is what makes a run expensive, and it is the failure this list exists to prevent. The question is asked again at every page: what is the cheapest route to this one.
 
-**This order is enforced, not just stated.** `slide-library.py check <library> --task <slug> --shape <pattern> --why "<one sentence>"` prints the library, lists the brand's approved slides, and records both the look and the shape decision for the `doing/<slug>/` bundle a deck belongs to. **Reusing a pattern already used in this bundle is reported, not refused**: fine where the content has the same shape, worth a second look where it does not. Several pieces of a product family legitimately look alike. Both directions have been seen: first a second piece silently took the first one's shape, then a rule against repeating sent a run looking for a different pattern for every piece whether or not it carried the content; `library-check-guard` (`zanmai.py hook`, PreToolUse Bash) refuses to save a `.pptx` into that bundle until the record exists. In practice: this exact order was skipped twice in one afternoon, straight to Compose, before anyone checked, which is where that run's whole cost went. Running the check is cheap even when Compose turns out to be the right call; the guard only proves the library was looked at, it never picks the tier.
+**This order is enforced, not just stated.** `slide-library.py check <library> --task <slug> --shape <pattern> --why "<one sentence>"` prints the library, lists the brand's approved slides, and records both the look and the shape decision for the `workbench/<slug>/` bundle a deck belongs to. **Reusing a pattern already used in this bundle is reported, not refused**: fine where the content has the same shape, worth a second look where it does not. Several pieces of a product family legitimately look alike. Both directions have been seen: first a second piece silently took the first one's shape, then a rule against repeating sent a run looking for a different pattern for every piece whether or not it carried the content; `library-check-guard` (`zanmai.py hook`, PreToolUse Bash) refuses to save a `.pptx` into that bundle until the record exists. In practice: this exact order was skipped twice in one afternoon, straight to Compose, before anyone checked, which is where that run's whole cost went. Running the check is cheap even when Compose turns out to be the right call; the guard only proves the library was looked at, it never picks the tier.
 
 Cloning is a deep copy of every shape element into a new slide on the same layout, so fills, connectors, pills and geometry come along exactly. In practice: 22 shapes stay 22, with the colour rotation intact.
 
@@ -135,7 +135,7 @@ When tier three is the honest answer, **derive from a copy of a real deck that a
 
 Building a fresh, empty presentation and copying the CI (theme XML, measured positions) into it by hand is a fallback for when no real deck exists at all, not a shortcut when one does. It only *looks* equivalent: positions are re-measured and typed in rather than inherited, so a coordinate can be close but wrong (a placeholder and the fixed logo element next to it are easy to swap), and nothing catches that a value was read from the wrong shape. In practice: this technique's own excuse, "the original file's unused media stay attached, bloating the copy," does not hold either. `python-pptx` only serialises parts the surviving tree still references; removing unused slides and layouts drops their exclusive media on save (measured: 486 parts down to 33, 10.4 MB down to 36 kB). There is no real cost trade-off left in favour of the transplant path.
 
-**A look at the piece is headless, and the fonts go with the call.** `slide-library.py render --into <dir> --font-dir <folder>` writes pictures without opening anything on screen. `--font-dir` is repeatable and takes the folder the brand's own typefaces live in; it is needed more often than it looks, because a face installed for the user alone is invisible to a headless renderer on macOS and gets silently swapped for a serif. Do not drive PowerPoint or any other application by remote control to get a picture: that throws a window open on the screen of whoever is working there, once per file (operating-principles 12).
+**A look at the piece is headless, and the fonts go with the call.** `slide-library.py render --into <dir> --font-dir <folder>` writes pictures without opening anything on screen. `--font-dir` is repeatable and takes the folder the brand's own typefaces live in; it is needed more often than it looks, because a face installed for the user alone is invisible to a headless renderer on macOS and gets silently swapped for a serif. Do not drive PowerPoint or any other application by remote control to get a picture: that throws a window open on the screen of whoever is working there, once per file (operating-principles, principle:parking).
 
 **Establish a standing fact once, then read it.** Which typefaces the machine has, where LibreOffice sits, whether a helper is installed, where a brand's theme file lives: each takes a minute and answers the same on every run. `zanmai.py fact get <key>` first; on a miss, find out and `fact set <key> <value> --scope machine|install|bundle --about <what>`. The scope is what makes this safe: a machine fact is refused on a different machine rather than believed there. Fifteen runs on one piece of work re-checked the same typeface before this existed.
 
@@ -146,7 +146,7 @@ Building a fresh, empty presentation and copying the CI (theme XML, measured pos
 ## Rules
 
 - The master is never modified. Never clone a finished slide (it corrupts the file); one layout per look, add from it, fill. Derived layouts with a `1_` prefix are the copy-and-modify artifact.
-- A new slide is never built in an empty `Presentation()` **while a real deck carrying the brand is available**. Derive from a copy of that deck, see Create. Where there is no brand deck at all (a neutral wireframe, a first template for a vault that has none), the empty presentation is the correct start, and this rule does not apply. Stated because it was read as absolute once and cost a question that had an obvious answer.
+- A new slide is never built in an empty `Presentation()` **while a real deck carrying the brand is available**. Derive from a copy of that deck, see Create. Where there is no brand deck at all (a neutral wireframe, a first template for a space that has none), the empty presentation is the correct start, and this rule does not apply. Stated because it was read as absolute once and cost a question that had an obvious answer.
 - **Repositioning an inherited placeholder sets all four of `left`, `top`, `width`, `height`, plus `text_frame.vertical_anchor`, together, never just the values that seem to need changing.** In practice: setting only `left` and `width` on a placeholder still inheriting its position from the layout left `top`/`height` implicit, and python-pptx wrote an `xfrm` with `off y="0" ext cy="0"`, and the title rendered pinned to the slide's top edge. There is no partial-override state that is safe to leave implicit.
 - **A gap between two elements is closed by measuring, the same way a spacing constant is:** step the variable dimension (usually the type size of what sits above the gap) in small increments (0.5pt worked on a real deck) until the box's measured extent fills the space, rather than picking a plausible-looking value.
 - Diagrams are native chart objects with data, never an image. Real photos are images. No imported SVG or EMF for vector content.
@@ -184,7 +184,7 @@ flag; anyone exporting by hand has to.
 
 If LibreOffice is not on the machine, `render` says so and names the one command that installs
 it, per platform. That is a prerequisite to report, never a reason to deliver unseen
-(operating-principles section 10).
+(operating-principles, principle:tool-presence).
 
 `qlmanage` on macOS remains as a second opinion for a single slide, and its limits are
 unchanged: first slide only, it puts itself in the dock while it runs, so it is asked for once
@@ -231,7 +231,7 @@ When several files genuinely share the same master, layouts and theme (built fro
 
 ## Toolchain
 
-Native and headless, no app in the loop: `python-pptx` for reading and for writing placeholders, layouts, tables and charts, and ooxml unpack/edit/pack where it does not reach. The real CI fonts come from the brand assets. Output goes to `doing/`.
+Native and headless, no app in the loop: `python-pptx` for reading and for writing placeholders, layouts, tables and charts, and ooxml unpack/edit/pack where it does not reach. The real CI fonts come from the brand assets. Output goes to `workbench/`.
 
 ## Learn
 

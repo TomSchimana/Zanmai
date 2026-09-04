@@ -2,16 +2,19 @@
 
 # What Zanmai remembers
 
-Why you do not have to explain yourself twice, and what is kept where.
+**Read this when:** the question is what Zanmai carries across sessions, and what it forgets.
+
+Four things survive the end of a session: how you work, what happened, what each specialist learned, and the hand-off from the session itself. They are kept in four places on purpose, because they age differently. A fifth is kept apart from all of them, because it is true of this computer rather than of you.
 
 ## What carries over
 
-Four kinds of thing survive the end of a session, and they are kept apart on purpose.
+Five kinds of thing survive the end of a session, and they are kept apart on purpose.
 
 - **How you work.** Preferences, decisions and corrections you gave: that you want plain answers, that a certain customer is always addressed formally, that a folder is off limits. Kept in one file and curated rather than piled up.
 - **What happened.** A running log of every notable write, with time, who did it and what it was. This is the record you can check when you want to know when something changed.
 - **What each specialist learned.** Every specialist has its own notes: quirks of a template, an approach that worked, a dead end not worth trying again. Kept per specialist so a design lesson does not muddy a filing decision. A note from work you have not looked at yet is marked as provisional, because the only judge so far was the specialist that did the work. When you later say the result was wrong, the note is struck with the date and the reason instead of quietly staying in force, which is how a wrong lesson would otherwise get more authoritative every time it is followed.
 - **Each session's hand-off.** What was done, what comes next, the reasoning behind it, and any corrections you gave. Written when you close a session, filed by year and month.
+- **What is true of this machine.** Which typefaces are installed, where a program sits, whether a helper is present. Each of those takes a minute to find out and answers the same every time, so it is written down once. It is kept apart from the four above and never travels: a note saying a program is installed is confidently wrong on a computer where it is not, which is worse than not knowing.
 
 Everything is a plain text file you can read and edit yourself. Correct something in there and it holds from the next session on.
 
@@ -25,7 +28,7 @@ The specialists' own notes are read when a conversation touches what they cover,
 
 ## Why it stays short
 
-Memory that is read at the start of a run costs something every time it is read. Three days of real use produced 678 lines of notes for one specialist, and all of them went into that specialist's context on every job. Left alone that is a file that quietly gets more expensive the more you use Zanmai, and harder to trust: forty rules read at once are not forty rules followed.
+Memory that is read at the start of a run costs something every time it is read. Left alone, a specialist's notes grow with every job and go into its context on every later one, so the file quietly gets more expensive the more you use Zanmai, and harder to trust: forty rules read at once are not forty rules followed.
 
 So there are two layers, and they are treated differently.
 
@@ -47,7 +50,7 @@ Closing a session properly is what does the sorting. It writes the hand-off and 
 
 Claude Code has its own automatic memory, and Zanmai switches it off deliberately, for two reasons.
 
-One fact should exist in one place. Automatic memory would write notes about your material into a folder outside your vault, so the same fact would exist twice with no link between them, and the copy outside would not travel with your notes.
+One fact should exist in one place. Automatic memory would write notes about your material into a folder outside your space, so the same fact would exist twice with no link between them, and the copy outside would not travel with your notes.
 
 And curated beats automatic for anything meant to last. Automatic memory keeps whatever seems worth keeping mid-conversation. Closing a session is a deliberate moment: what was actually achieved, what follows, what you corrected. That produces a record you can trust rather than a pile you have to sift.
 

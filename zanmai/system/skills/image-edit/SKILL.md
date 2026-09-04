@@ -25,7 +25,7 @@ The script is the reference for exact flags; this file is the map of what exists
 
 - **Right size at the source.** Generate or receive at the resolution the piece needs; do not upscale a small image to fake detail, that is a separate premium operation, not a resize. Downscaling for web or a deck is fine and belongs here.
 - **A consistent look across a set** is the LUT case: fix the look once as a `.cube`, then apply it to the whole folder so every image carries the same grade. Reference-matching is the looser cousin when there is no LUT, only a target image to move toward.
-- **See the result.** As with any render, read the edited file, do not trust the operation blind. A crop that cut the subject, a convert that flattened needed transparency, an over-optimized image with visible banding: caught by looking, per Hard Rule 10.
+- **See the result.** As with any render, read the edited file, do not trust the operation blind. A crop that cut the subject, a convert that flattened needed transparency, an over-optimized image with visible banding: caught by looking, per Hard Rule 9.
 - **Format honesty.** JPEG has no transparency; converting an image with alpha to JPEG flattens it onto white. When transparency matters, PNG or WebP. The script does the flatten so a convert never crashes, but the choice is yours to make on purpose.
 
 ## Marking still applies
@@ -36,7 +36,7 @@ A visible-label burn re-encodes the pixels, so if both an edit and a burned labe
 
 ## Output and provenance
 
-Intermediates render to the task's work folder (`zanmai/temp/<task>/`); the chosen result goes to `doing/<slug>/` for the user to pull, or into a design piece, where it sits in that piece's own bundle. Never write straight to the final place, show, then deliver on a yes.
+Intermediates render to the task's work folder (`zanmai/temp/<task>/`); the chosen result goes to `workbench/<slug>/` for the user to pull, or into a design piece, where it sits in that piece's own bundle. Never write straight to the final place, show, then deliver on a yes.
 
 ## Provisioning (just-in-time)
 

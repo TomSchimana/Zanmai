@@ -2,6 +2,8 @@
 
 # Research
 
+**Read this when:** an answer needs real sources rather than a guess.
+
 A sourced, written answer you can keep, rather than something that merely sounds right.
 
 ## When this runs
@@ -26,7 +28,7 @@ The question is split into its actual sub-questions first, where it has any, and
 
 Sources are then gathered with a preference for primary material, official documentation, original announcements, specifications, peer-reviewed work, over roundups and reviews. Every source gets a one-line note on how trustworthy it is. On a normal run, several candidates are collected per important claim before any filtering happens; on a quick look, the source that owns the fact is read first and that is the end of it.
 
-On a normal or deep run, each weighty claim is anchored in two sources that are not variations of each other. What that yields is stated plainly: high confidence when three or more independent sources agree, medium when two agree or one strong primary source carries it, low when only one source says it or sources contradict, in which case the contradiction is named instead of smoothed over.
+On a normal or deep run, each weighty claim is anchored in two sources that are not variations of each other. What that yields is stated plainly: high confidence when three or more independent sources agree, medium when two agree or one strong primary source carries it, low when only one source says it or sources contradict, in which case the contradiction is named instead of smoothed over. Where the answer carries real consequences, money, law, health, that grade stands next to every finding; on a question about a hobby it is stated once for the whole piece, and only an outlier gets its own.
 
 Nothing is cited that was not actually read, and different kinds of source are handled differently.
 
@@ -42,6 +44,7 @@ A written note with the citations, the confidence per weighty claim, and a short
 
 - [Connecting outside tools](connections.md), for sources behind a login
 - [Folder architecture](folder-architecture.md), where results are filed
+- [Documents written for you](writing.md), when the result becomes a document
 
 ---
 

@@ -10,14 +10,14 @@ A timed visual here is a small web page: markup for the content, a stylesheet fo
 Shared skill. Video editing reads it; so does anything else that has to make something move.
 
 **Check that the renderer is there before planning anything that needs it** (`tools preflight
-<expert> --capability motion`). Where it is missing, **the job stops here** (operating-principles §10): name what is
+<expert> --capability motion`). Where it is missing, **the job stops here** (operating-principles principle:tool-presence): name what is
 missing, name the one step that installs it, and hand it back. Not a substitute, not frames drawn
 by hand and composited, not "close enough". That worked once for a caption bar and produced exactly
 the wrong lesson: it looks like a result, it collapses at the first real graphic, and it hides the
 missing prerequisite so nobody ever installs it. The user can then fetch the renderer or decide the
 piece runs without motion graphics. Both are answers; improvising is not.
 
-**How it is driven.** `zanmai.py tools ensure hyperframes` installs the renderer into the vault's
+**How it is driven.** `zanmai.py tools ensure hyperframes` installs the renderer into the space's
 own runtime tree, pinned to one version; it lands at
 `zanmai/runtime/node/node_modules/.bin/hyperframes` and is not on the PATH, so it is called by that
 path. A piece is created once (`hyperframes init <name> --example blank --non-interactive`,

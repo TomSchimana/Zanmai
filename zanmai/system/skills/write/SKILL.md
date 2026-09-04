@@ -21,13 +21,13 @@ Underneath is one idea. Simplicity is not the absence of things. Stripping until
 
 One sentence naming the situation the document gets used in, not its topic. "Notes read on a phone during a one-to-one on Thursday" decides the form. "Preparation for the meeting" decides nothing.
 
-Work it out from the ask, the material and the vault. Where it is genuinely not there, ask, once, in the user's language. That is the one question worth interrupting for; a document written for a purpose nobody settled is thrown away whole rather than corrected.
+Work it out from the ask, the material and the space. Where it is genuinely not there, ask, once, in the user's language. That is the one question worth interrupting for; a document written for a purpose nobody settled is thrown away whole rather than corrected.
 
 ## 2. Take the level from something that works
 
-Find a document of the same kind with `zanmai.py index find` and read it. Where the piece carries a brand outward, its voice section (`trusted/brands/<brand>/design.md`) is the source and is binding. Otherwise the user's own template or earlier piece.
+Find a document of the same kind with `zanmai.py index find` and read it. Where the piece carries a brand outward, its voice section (`zanmai/design/<brand>/design.md`) is the source and is binding. Otherwise the user's own template or earlier piece.
 
-This step matters more than every rule in this file, and here is why. Writing well is a question of how much: how warm, how short, how direct, how much context. No list can carry an amount, and a rule pushed to its end always lands at the opposite failure, a telegram instead of a brochure. A document already in the vault is a measured amount. Copy the level, not the words.
+This step matters more than every rule in this file, and here is why. Writing well is a question of how much: how warm, how short, how direct, how much context. No list can carry an amount, and a rule pushed to its end always lands at the opposite failure, a telegram instead of a brochure. A document already in the space is a measured amount. Copy the level, not the words.
 
 Where nothing comparable exists, say so in the proposal and take the level from the purpose: how much does this reader, in this situation, actually need.
 
@@ -72,4 +72,4 @@ Nothing checks the document afterwards. A text judged by the same kind of thing 
 
 - `zanmai.py index find`, the search for the comparable document
 - `zanmai/system/experts/ben/ben.md`, who writes it when the material has to be read first
-- `zanmai/system/operating-principles.md` §7, how anything user-facing reads
+- `zanmai/system/operating-principles.md` principle:surfaces, how anything user-facing reads

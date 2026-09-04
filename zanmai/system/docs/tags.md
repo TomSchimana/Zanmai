@@ -2,7 +2,9 @@
 
 # Tags
 
-Why your tags stay usable instead of turning into three spellings of the same thing.
+**Read this when:** something is tagged, or two tags mean the same thing.
+
+Tags are consolidated as material comes in, so one idea does not end up split over `trip`, `travel` and `vacation`. What lands on a file is a short list you can actually search.
 
 ## The problem tags have
 
@@ -14,9 +16,9 @@ So tags are consolidated as material comes in, rather than left to accumulate.
 
 Every tag on an incoming file goes through three steps.
 
-First it is compared against the tags your vault already uses. If you have been writing `travel`, an incoming `trip` becomes `travel` rather than starting a second pile.
+First it is compared against the tags your space already uses. If you have been writing `travel`, an incoming `trip` becomes `travel` rather than starting a second pile.
 
-Then it is checked against a list of known equivalents, so common variants map onto one form even when your vault has not seen either yet:
+Then it is checked against a list of known equivalents, so common variants map onto one form even when your space has not seen either yet. The list lives in `zanmai/system/tag-synonyms.json`, so you can look at it and change it:
 
 | Kept as | Merged into it |
 | --- | --- |
@@ -32,7 +34,7 @@ Then it is checked against a list of known equivalents, so common variants map o
 
 Finally, tags that carry no information are dropped. What lands on the file is a short, consolidated list.
 
-If your vault works in another language, the list above simply does not match, and that is fine: the first time a real conflict comes up you are asked which form you want to keep, and your answer is added. The list grows into your vault rather than being imposed on it.
+If your space works in another language, the list above simply does not match, and that is fine: the first time a real conflict comes up you are asked which form you want to keep, and your answer is added. The list grows into your space rather than being imposed on it.
 
 ## What never becomes a tag
 
@@ -43,7 +45,7 @@ If your vault works in another language, the list above simply does not match, a
 
 ## When Zanmai is unsure
 
-A tag that is neither in use in your vault, nor a known variant, nor obviously droppable is not decided quietly. It appears in the plan you approve before an import, with three options: a suggested form, drop it, or keep it as it is. You decide there.
+A tag that is neither in use in your space, nor a known variant, nor obviously droppable is not decided quietly. It appears in the plan you approve before an import, with three options: a suggested form, drop it, or keep it as it is. You decide there.
 
 ## Related
 

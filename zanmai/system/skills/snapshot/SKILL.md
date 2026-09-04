@@ -1,6 +1,6 @@
 ---
 name: zanmai:snapshot
-description: Record the vault before a risky write, and restore from an earlier record. Triggers before bulk imports, cross-bundle moves, body rewrites, or `/zanmai-snapshot`.
+description: Record the space before a risky write, and restore from an earlier record. Triggers before bulk imports, cross-bundle moves, body rewrites, or `/zanmai-snapshot`.
 ---
 
 # snapshot
@@ -11,7 +11,7 @@ Make a rollback point. Always before risky writes, on demand otherwise.
 
 A snapshot exists as an entry in the history, written by the script. A conversational claim of having "taken a snapshot in memory" is not a snapshot. Run the script.
 
-It is not a copy of the vault. Every file is stored once by its content, so an unchanged file costs nothing on the second snapshot and a changed line costs the line. That is why taking one is never the expensive choice and why nothing has to be cleaned out afterwards. If nothing changed since the last one, none is taken and the script says so.
+It is not a copy of the space. Every file is stored once by its content, so an unchanged file costs nothing on the second snapshot and a changed line costs the line. That is why taking one is never the expensive choice and why nothing has to be cleaned out afterwards. If nothing changed since the last one, none is taken and the script says so.
 
 The single config flag `auto_snapshots` in `zanmai/user.md` is the master switch. `zanmai.py snapshot create` reads it every time and exits with `skip: auto_snapshots disabled` when set to `false`, including invocations of this skill. When the user has their own backup discipline they flip it via `zanmai.py snapshot disable` (and `enable` to turn back on). The script is what counts, no separate disable list.
 
@@ -22,7 +22,7 @@ way it cannot undo one file at a time.
 
 - Before a distribution update.
 - Before a bulk repair, one pattern applied across many files.
-- Before a rename that rewrites links throughout the vault.
+- Before a rename that rewrites links throughout the space.
 - Before restoring from an earlier snapshot, since that overwrites the current state.
 
 Plus the one case that is not a rule: the user asks for a rollback point in their own words.
@@ -36,7 +36,7 @@ user already had is being replaced.
   is nothing to roll back to. This used to be a trigger at "more than five files".
 - The start of a session, or a new day. Nothing has changed yet, and a snapshot per working day is a
   backup schedule, not a safety net. The user's own backup covers that case and covers it better.
-- Right after setup. The vault is an empty skeleton, and its state is already the first entry in the
+- Right after setup. The space is an empty skeleton, and its state is already the first entry in the
   history.
 - Single-file edits, reads, and anything the user waived.
 
@@ -44,13 +44,13 @@ user already had is being replaced.
 
 ### Step 1: pick the reason
 
-One to three kebab-case words saying why this snapshot exists, for example `pre-<theme>-import`, `pre-bulk-rename` or `pre-template-migration`. It is the only thing that will identify it in a list a year from now.
+One to three kebab-case words saying why this snapshot exists, for example `pre-<bundle>-import`, `pre-bulk-rename` or `pre-template-migration`. It is the only thing that will identify it in a list a year from now.
 
 Avoid generic words like `snapshot`, `backup` or `tmp`. They tell future readers nothing.
 
 ### Step 2: call the script
 
-From the vault root:
+From the space root:
 
 ```
 <python_cmd> zanmai/system/scripts/zanmai.py snapshot create --reason <reason-slug>
@@ -82,7 +82,7 @@ If the user asked for a snapshot on its own (not as a prelude to another operati
 
 ## Managing existing snapshots
 
-The script ships the rest of the surface. None of it removes vault content.
+The script ships the rest of the surface. None of it removes space content.
 
 - `zanmai.py snapshot list`, the snapshots newest first and what they occupy together.
 - `zanmai.py snapshot show --snapshot <name>`, what that one changed. With `--path`, one file as it was.
@@ -95,13 +95,13 @@ There is no delete subcommand and nothing to prune. Snapshots are not copies pil
 
 **One file the user named.** Run `snapshot restore`. It is reversible by construction, so it does not need a consultation: state which file, from which snapshot, and that the current version goes to the trash.
 
-**The whole vault.** Still a guided conversation, and still Pepper's. Rolling everything back also rolls back what the user did since, and that is a judgement about their work, not a flag.
+**The whole space.** `snapshot restore --all` does it in one operation. Still a guided conversation, and still Pepper's: rolling everything back also rolls back what the user did since, and that is a judgement about their work, not a flag. The command is built so the judgement is the only risk left. It snapshots the current state itself, and anything that exists now and did not exist then goes to the trash and is named in the output, one line each.
 
 1. **Never restore on a vague complaint.** "Something is broken" is not a restore trigger. Establish what is actually wrong, and whether a restore is the right tool at all.
 2. **Name the artefacts.** Which files, from which snapshot, in the user's words.
-3. **Take a fresh snapshot of the current state** before anything is overwritten: `zanmai.py snapshot create --reason pre-restore-<short-reason>`. Non-negotiable. State it in one line.
-4. **File by file, not wholesale.** Copying a whole snapshot over the vault re-introduces every other change made since.
-5. **Confirm at every step.** Which source goes over which target, what the user loses from the current version, and where that version now lives.
+3. **Say what the user loses.** Everything they changed since that snapshot goes back too, and everything they created since goes to the trash. Read the list out before, not after.
+4. **One file or all of them, never a hand-built middle.** A named path for a single file, `--all` for the space. Reconstructing a whole state out of single restores builds a half-and-half space nobody can describe afterwards.
+5. **Do not take a snapshot first.** The command does that itself, and a second one before it only adds a step that says nothing new.
 
 ## Files
 

@@ -85,7 +85,7 @@ The output of this step is a block plan: how many blocks, of what kind, in what
 structure, derived from the content, ready to carry the kit's values.
 
 ## 2. Decompose to concrete values, brand, then format
-Design reads two files under `trusted/brands/<brand>/`: `design.md`, the durable
+Design reads two files under `zanmai/design/<brand>/`: `design.md`, the durable
 identity (colour, type, voice, imagery, shape tokens, the never-list; `design-brand`
 template), and the per-format kit `<format>.md` (block geometry, page density and
 the form ceiling; `design-kit` template). Load what exists and add only what the
@@ -94,7 +94,7 @@ newly given material adds; both accumulate, curated, never rebuilt from zero.
 **Those two paths are the only place a kit lives.** A kit written next to the
 deliverable on the desk is not a kit, it is a file that gets carried off with the
 piece, and the next document starts from nothing again. So the kit is written under
-`trusted/brands/<brand>/` before the piece is built, and the build reads it from
+`zanmai/design/<brand>/` before the piece is built, and the build reads it from
 there.
 
 **Between the brand's own pieces and composing from nothing there is a third source: the
@@ -120,7 +120,7 @@ theme roles carrying the same value, which silently removes a distinction the wi
 After every migrate, run `overflow-check` and `layout-check` on the result.
 
 **Where the brand already has finished pieces, they are part of the kit.** A template or an
-approved deck is harvested into `trusted/brands/<brand>/slides/` (`slide-library.py harvest`),
+approved deck is harvested into `zanmai/design/<brand>/slides/` (`slide-library.py harvest`),
 which writes down per slide what it is, its text slots, and how much each slot measurably holds.
 A new piece then starts by taking the one that already carries this shape of content and
 swapping the text, and only composes where nothing fits. That is both the cheap path and the one

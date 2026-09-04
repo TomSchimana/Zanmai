@@ -8,7 +8,7 @@ version: "0.1.0"
 common:
   # every bundle file and entity file carries these
   required:
-    - kind         # one of: focus, doing, habit, knowledge, contact/person, contact/organization
+    - kind         # one of: workbench, life, knowledge, archive, contact/person, contact/organization
     - slug         # kebab-case, ASCII, matches filename without .md
     - created      # YYYY-MM-DD
   optional:
@@ -33,21 +33,7 @@ common:
 
 kinds:
 
-  focus:
-    description: active attention bundles. user is working on this.
-    # Only the bundle's truth file (`<bundle-slug>.md`) is required to carry goal/status.
-    # Member files inside the bundle inherit kind: focus from the bundle path but do not
-    # need their own goal/status. They are material, not separate focus instances.
-    required_for_hub_only:
-      - goal       # one-line statement of the outcome
-      - status     # planning, active, wrap-up, plus the shared lifecycle values above
-    required: []
-    optional:
-      - goal
-      - status
-      - due        # YYYY-MM-DD when applicable
-
-  doing:
+  workbench:
     description: the desk. one bundle per piece of work that has an end, with every draft of it together.
     # Nothing beyond the common fields is required, and that is deliberate: what clears a bundle
     # off the desk is read from the file dates, not from a field that has to be kept true by hand.
@@ -56,29 +42,30 @@ kinds:
       - status     # the shared lifecycle values above
       - due        # YYYY-MM-DD when the piece has a real deadline
 
-  habit:
-    description: recurring routines. user does this regularly.
-    # Same hub/member split as focus.
-    required_for_hub_only:
-      - cadence    # enum: daily, weekly, monthly, quarterly, irregular
+  life:
+    description: what is the user's own and matters now, at work or at home.
+    # Nothing is required: a goal, a routine and a plain folder of papers all live here, and
+    # demanding a goal of the folder of papers only teaches people to write one that means nothing.
+    # `goal` stays an option because a bundle that has one is worth more when it says so, and
+    # says so.
     required: []
     optional:
-      - cadence
-      - last_done  # YYYY-MM-DD
-      - status     # a routine that stopped says so here rather than being deleted
+      - goal       # one-line statement of the outcome, where there is one
+      - status     # the shared lifecycle values above
+      - due        # YYYY-MM-DD when applicable
 
   knowledge:
-    description: persistent reference. default class for unsure material.
+    description: what would still be right for someone else. lookup and rebuild, not the user's own affairs.
     required: []
     optional:
       - topic      # one-line topic descriptor
       - status     # awaiting-archive for a read-once briefing on the desk, plus the shared lifecycle values above
 
-  record:
-    description: a document kept because it has to be, or because it would be needed again.
+  archive:
+    description: kept because it is taken out again. an invoice, a policy, a certificate.
     # Nothing beyond the common fields is required. A scan that arrives before anyone has worked
-    # out what it is still has to be filable; what turns it into a record with a term on it is
-    # `retention_policy`, set once somebody knows.
+    # out what it is still has to be filable; what gives it a keeping reminder is
+    # `retention_policy`, set once somebody knows. The reminder reminds, it never deletes.
     required: []
     optional:
       - doc_type          # what it is: invoice, policy, contract, certificate, pay slip, notice

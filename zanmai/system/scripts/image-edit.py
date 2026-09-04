@@ -2,7 +2,7 @@
 """Local image editing for Loki, deterministic pixel work that needs no model.
 
 A standalone tool, separate from zanmai.py: the CLI here is a pixel workbench,
-not vault mechanics. Two tiers of operation:
+not space mechanics. Two tiers of operation:
 
   Core (Pillow only)   convert, resize, rotate, crop, grayscale, composite,
                        optimize, palette (dominant colours plus WCAG contrast

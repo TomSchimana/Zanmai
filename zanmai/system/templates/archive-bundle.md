@@ -1,5 +1,5 @@
 ---
-kind: record
+kind: archive
 slug: <kebab-case-slug>
 created: <YYYY-MM-DD>
 doc_type: <invoice | policy | contract | certificate | pay-slip | notice | receipt | correspondence>

@@ -4,7 +4,7 @@ The build layer for one format of one brand: block geometry and page density, th
 part that genuinely changes between a flyer, a deck, a trade-show wall. Values, not
 adjectives. Produced by the decompose step, consumed at build time, refined on
 session close, curated (stale patterns removed, not appended around). One file per
-brand × format. Store: `trusted/brands/<brand>/<format>.md`.
+brand × format. Store: `zanmai/design/<brand>/<format>.md`.
 
 Colour, type, voice, imagery, shape tokens and the never-list are **not** here, 
 they are brand-durable and live once in `design.md` (`design-brand` template). This

@@ -1,0 +1,51 @@
+{
+  "_comment": "One kept form per idea, and the spellings that fold into it. Read when material comes in, so the same idea does not end up split over three words. This is data, not documentation: the list a run works from lives here, and the page in the manual shows it. Where a space works in another language the list simply does not match, and the first real conflict is put to the user, whose answer is added here.",
+  "keep": {
+    "travel": [
+      "trip",
+      "vacation",
+      "holiday"
+    ],
+    "home": [
+      "house",
+      "household"
+    ],
+    "work": [
+      "job",
+      "career"
+    ],
+    "health": [
+      "medical"
+    ],
+    "learning": [
+      "education",
+      "studies",
+      "course"
+    ],
+    "food": [
+      "cooking",
+      "recipes",
+      "kitchen"
+    ],
+    "finance": [
+      "money",
+      "budget"
+    ],
+    "reading": [
+      "books",
+      "literature"
+    ],
+    "tech": [
+      "it",
+      "software",
+      "programming",
+      "technology"
+    ]
+  },
+  "never_a_tag": {
+    "dates": "a year, a month, a quarter belongs in the note's date fields",
+    "importance": "urgent, important, todo: if everything is important, nothing is",
+    "origin": "the name of the app it was exported from is recorded in the note's own fields",
+    "one_offs": "no context and no second use, unless the user says to keep it"
+  }
+}

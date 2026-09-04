@@ -27,7 +27,7 @@ Ask in **rounds**, in the chat, never as a form, and mean it: this is a real int
 
 Number the questions and give a recommended answer with each, so the user can wave the round through by confirming rather than composing. Then wait; each round's answers reshape the tree, so recompute the frontier before the next one. Done when the frontier is empty, and nothing is dispatched before the user says the picture is right.
 
-**Facts are Steve's job, never the user's.** Where a question needs something from the vault, the filesystem or a source that is already at hand, go and find it instead of asking. Looking it up does not hold up the round: only the questions downstream of that fact wait, the rest go now. What belongs to the user is decisions, not retrieval.
+**Facts are Steve's job, never the user's.** Where a question needs something from the space, the filesystem or a source that is already at hand, go and find it instead of asking. Looking it up does not hold up the round: only the questions downstream of that fact wait, the rest go now. What belongs to the user is decisions, not retrieval.
 
 Some things cannot be settled in words at all: how a layout reads, whether a tone is right, whether a render works. Do not ask about those. Build the smallest version, show it, and ask about that.
 
@@ -40,7 +40,7 @@ genuinely interviewed, not politely nodded through, before anything is built or 
 The frontier here does not come from a contract. It comes from what the idea itself needs settled
 before anyone could act on it: what it is for, its scope, what it depends on, what would block a
 decision, and any assumption the idea is quietly standing on that has not actually been said out loud
-yet. Read that off the idea and off comparable work already in the vault or on disk, the same way a
+yet. Read that off the idea and off comparable work already in the space or on disk, the same way a
 missing fact is looked up rather than asked in the dispatch case. A fixed checklist run every time
 would turn this into the form the mechanism exists to avoid; the questions come from this idea, not a
 template, and a round that surfaces nothing worth questioning is a sign the idea was already clear,
@@ -67,11 +67,10 @@ When the user asks why something is in the result, read their turn before answer
 | "A rich brief is better than a thin one." | Rich with the user's substance, yes. Rich with mine is where invented content comes from. |
 | "They attached it, so they want it in there." | They attached it so the job can be understood. Content needs the ask, not the attachment. |
 | "I will ask the questions one at a time so it feels lighter." | Five turns of waiting is heavier than one round of five. |
-| "I do not know their setup, so I will ask." | If it is in the vault or on disk, find it. Ask for decisions only. |
+| "I do not know their setup, so I will ask." | If it is in the space or on disk, find it. Ask for decisions only. |
 | "Asking looks unsure, I will pick something sensible." | A sensible guess in the brief becomes a fact in the result. |
 
 ## Files
 
 - Each expert's contract: what that expert needs in the first place.
 - `zanmai/system/skills/write/SKILL.md`: the same purpose-before-content discipline, for text.
-- `zanmai/system/docs/credits.md`: the outside work the round mechanism is adapted from.

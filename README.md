@@ -1,74 +1,19 @@
 # Zanmai
 
-**Zanmai** (三昧) is Japanese for being completely absorbed in one thing. You never get there while
-part of you is holding twenty others in place.
+**Zanmai holds everything you would otherwise have to carry in your head, and an AI works with it
+instead of just storing it.** What comes back is the thing you were actually after: an answer out of
+your own things, a decision you can now make, a finished piece of work built from what you already
+have.
 
-**A folder on your machine that AI can actually work in.** You throw things in, it files them. You
-ask in your own words, it answers from your own material. It builds new things out of what is
-already there.
-
-Everything in it opens in any editor, with or without this. The AI is Claude, through
-[Claude Code](https://claude.com/claude-code).
-
-## What it does, and where things land
-
-The folders are named after what is going on rather than what stage a file is at, so the right one is
-obvious and nothing has to move later. Everything about one matter stays together in it, whatever the
-file type, because sorting by type would cut apart the very thing you were keeping.
-[How the vault is organised](zanmai/system/docs/folder-architecture.md) ·
-[why it is built this way](zanmai/system/docs/philosophy.md).
-
-**What comes out**
-
-- **[Documents in your own design](zanmai/system/docs/design.md)**: it measures the templates you already use and builds in that language. Print-ready PDF, or PowerPoint and Affinity to keep editing.
-- **[Text written for its purpose](zanmai/system/docs/writing.md)**: minutes from a recording, a handover, copy for a page. It settles what the document is used for before the first sentence, asks if that is not findable, and gives you the points without a frame, a derivation or advice on how to run your own meeting.
-- **[A finished cut](zanmai/system/docs/video.md)**: footage and your notes in, a video out, with captions and levelled sound. Delete a paragraph from the transcript and exactly that leaves the video.
-- **[A summary of a video](zanmai/system/docs/research.md)**: it reads the picture as well, so what is only on a slide still lands in the text.
-- **[Research you can check](zanmai/system/docs/research.md)**: real sources, cited only where it actually read them.
-- **[Images](zanmai/system/docs/images.md)**: generated through Higgsfield or Magnific, or edited on your own machine for free.
-
-**What it does with what you have**
-
-- **[Anything you drop in gets filed](zanmai/system/docs/importing.md)**, in whatever state it arrives.
-- **A photo of a business card becomes [a contact](zanmai/system/docs/contacts.md)**, a booking confirmation a note with the real dates in it.
-- **[Speak instead of typing](zanmai/system/docs/voice.md)**: turned into text on your own machine, nothing uploaded.
-- **[Ask instead of remembering](zanmai/system/docs/finding.md)**: it searches everything, including inside files your editor cannot open.
-- **[One matter stays in one folder](zanmai/system/docs/folder-architecture.md)**: note, PDF, photo and recording together.
-- **[Your brand comes out of your own material](zanmai/system/docs/brand.md)**: colour, type and tone read off a logo and an old document, kept in one file, so a document, an image and a video look like the same company.
-- **[Specialists](zanmai/system/docs/specialists.md)** instead of one model for everything, each on a model you pick.
-- **[It tells you what is waiting](zanmai/system/docs/sessions.md)** without being asked: what came in, what has sat on your desk for weeks.
-- **[Nothing is ever deleted](zanmai/system/docs/snapshots.md)**, and you can pull a single file out of an earlier state of the vault.
-- **[Reaches what is outside](zanmai/system/docs/connections.md)**: the sources you hooked up yourself.
-- **[Updates](zanmai/system/docs/updates.md) never touch your own material.**
-
-## Requirements
-
-Three things, with a command for each. Homebrew comes from [brew.sh](https://brew.sh); `winget`
-ships with Windows 10 and 11 already, or get it from the [Microsoft
-Store](https://apps.microsoft.com/detail/9nblggh4nns1) if it is missing.
-
-| what you need | macOS | Windows (PowerShell) |
-| --- | --- | --- |
-| **Python** 3.10 or newer | `brew install python` | `winget install Python.Python.3.12` |
-| **Git** | `brew install git` | `winget install Git.Git` |
-| **Claude Code** | `brew install --cask claude-code` | `winget install Anthropic.ClaudeCode` |
-
-On Linux, install Python and git with your package manager and Claude Code with
-`curl -fsSL https://claude.ai/install.sh | bash`, which also works on macOS. Without Homebrew or
-winget, take Python from [python.org](https://www.python.org/downloads/), ticking "Add python.exe to
-PATH" on Windows, and install Claude Code with `irm https://claude.ai/install.ps1 | iex` there.
-
-Optional: **Node.js** for connected features such as image generation. Anything else a job needs,
-Zanmai names with its size and fetches on your go, and `zanmai.py tools list` shows the whole set at
-any time: what each one is for, how big it is, and whether it is already on your machine. Nothing is
-installed from a question you cannot see the contents of.
-[What gets installed](zanmai/system/docs/tools.md) ·
-[requirements and installation](zanmai/system/docs/install/index.md).
+It runs on your own computer, on ordinary files in ordinary folders, through
+[Claude Code](https://claude.com/claude-code) (more AI tools to follow, local ones included).
 
 ## Install
 
-Clone it where your vault should live, then start a session in that folder. The archive works too,
-and updates run either way.
+You need Python 3.10 or newer, git, and Claude Code on the machine; the
+[installation guide](zanmai/system/docs/install/index.md) has the one command per system for each.
+Then clone Zanmai where your space should live and open a session in that folder. The downloaded
+archive works too, and updates run either way.
 
 ```bash
 git clone https://github.com/TomSchimana/Zanmai.git
@@ -76,20 +21,84 @@ cd Zanmai
 claude
 ```
 
-Say hello in your own language and setup starts. When it finishes, close the session and open a new
-one: that is when the guards load.
+Say hello in your own language and setup starts: who you are, what the space is for, which areas to
+begin with, and what to install for the things you want to do. When it finishes, close the session
+and open a new one, which is when the guards load.
 
 From then on you ask instead of reading. "Show me everything I can do with Zanmai" is a good first
-line. End the day with `/zanmai-close-session` so the next one picks up where you left off.
+line, and `/zanmai-close-session` at the end of the day is what lets the next one pick up where you
+left off.
 
-If the approval prompts get tiring, press `Shift+Tab` and pick auto mode. Zanmai's own guards keep
-working, so [nothing gets less safe](zanmai/system/docs/troubleshooting.md).
+## What you can do with it
+
+- **Throw things in and stop thinking about them.** A receipt, a rental contract, forty documents
+  off an old laptop, a voice note from the car. You are told what each one was and where it went.
+  [Importing and filing](zanmai/system/docs/importing.md)
+- **Ask instead of remembering where you put it.** "Does the household insurance still run?" comes
+  out of the matter itself, not out of twenty letters searched for the word "cancelled".
+  [Finding things again](zanmai/system/docs/finding.md)
+- **Speak instead of typing.** Transcribed on your own machine, nothing uploaded, your names spelled
+  the way you write them. [Speaking instead of typing](zanmai/system/docs/voice.md)
+- **Have a document written.** Minutes of a recorded conversation, a handover before you go on
+  leave, written for the situation you will use it in rather than about a topic.
+  [Documents written for you](zanmai/system/docs/writing.md)
+- **Have it designed like the rest of your things.** Colour, type and tone read once out of a logo
+  and a document you already have. [Designing documents](zanmai/system/docs/design.md) ·
+  [your brand](zanmai/system/docs/brand.md)
+- **Have something researched.** Real sources, cited only where they were read, with how sure each
+  claim is and what was left out. [Research](zanmai/system/docs/research.md)
+- **Turn footage into a finished cut.** Delete a sentence from the transcript and it leaves the
+  video. [Editing video](zanmai/system/docs/video.md) ·
+  [images and video](zanmai/system/docs/images.md)
+- **Keep what has to be kept.** A date and a keeping reminder on every piece, so nothing needed
+  disappears and nothing sits there for ever. [What you keep](zanmai/system/docs/archive.md)
+- **Write down a day without filing it.** One entry per day, your words, unchanged, and nothing is
+  ever taken back out. [The journal](zanmai/system/docs/daily-capture.md)
+- **Get told what is waiting.** What falls due, what has sat on the desk untouched, what came in
+  overnight. [A working session](zanmai/system/docs/sessions.md)
+
+## Where your things live
+
+Eight areas, and what decides which one is right is what happens to something next, not how
+important it is. Importance changes without anyone noticing; what happens next you can answer
+without judging yourself.
+
+| | |
+| --- | --- |
+| `inbox` | it arrived and has not been sorted yet |
+| `workbench` | you are working on it and it has an end |
+| `life` | it is yours and matters now: the flat, the car, your health, your own role at work |
+| `knowledge` | it would still be right for somebody else, so it can be looked up |
+| `archive` | it is finished and kept, because you will take it out again |
+| `journal` | it happened on a day |
+| `contacts` | people and organisations, one note each |
+| `zanmai` | the machine's own, and you never open it by hand |
+
+Only the desk empties. Inside an area, everything you make is a bundle: one folder for one matter,
+with the note, the PDF, the photo and the recording in it together. Any Markdown editor opens the
+lot. [How the space is organised](zanmai/system/docs/folder-architecture.md) ·
+[the idea behind it](zanmai/system/docs/philosophy.md) ·
+[your editor](zanmai/system/docs/editors.md)
+
+## Who does the work
+
+You talk to one of them. He does the plain work himself and hands the rest to whoever owns it:
+filing, keeping, writing, research, connections, brand, documents, images, video, and anything that
+could lose something. Where a job fits none of them, a new one is built for it.
+[Who does what](zanmai/system/docs/specialists.md) ·
+[how Zanmai grows](zanmai/system/docs/growing.md)
+
+## The name
+
+三昧 (zanmai) is the Japanese word for being completely taken up by one thing, samadhi in Buddhism,
+and in ordinary speech an ending hung on a word to say nothing but that. It only happens when the
+other twenty things are not pulling at you, which is what the space is for.
 
 ## Documentation
 
 You do not have to read any of it. The documentation ships inside Zanmai and asking is the intended
 way in: "how do I import a folder", "what happens when I update". The answer comes from these same
-pages, in your language and shaped to your vault. It also reads fine here on GitHub.
+pages, in your language and shaped to your space. It also reads fine here on GitHub.
 
 → **[Zanmai Documentation](zanmai/system/docs/index.md)**
 

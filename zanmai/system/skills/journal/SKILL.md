@@ -1,6 +1,6 @@
 ---
 name: zanmai:journal
-description: Capture freeform input into today's journal entry, or a named period, and write rollups. Triggers on `/zanmai-journal`, any "log this" intent, a due rollup.
+description: Capture freeform input into today's journal entry, verbatim. Triggers on `/zanmai-journal` and on any "log this" intent.
 ---
 
 # journal
@@ -17,7 +17,7 @@ The journal is always there, so there is nothing to check first. Capture happens
 
 ## Hard rules
 
-0. **Every state change is a `zanmai.py journal` call.** The path, the bundle folder, whether a rollup is due, whether one already exists: all of that is worked out by the command, not by the AI. What is left to judgement is the wording of a summary, and nothing else.
+0. **Every state change is a `zanmai.py journal` call.** The path, whether one already exists: all of that is worked out by the command, not by the AI. What is left to judgement is the wording of a summary, and nothing else.
 1. **Append-only.** Past entries are never edited. A correction is a new entry that wikilinks back (`Correction to [[2026-06-22]]`). Today's daily grows through the day; each new input goes below what is already there.
 2. **Verbatim capture.** The input enters the note unchanged in wording. No marker symbols, no reformatting into task/event/note categories, no forced headings. Preserve the paragraph and line breaks the input already carries; add no structure the user did not write.
 3. **No silent overwrite.** If the target note already holds user content, append below it. If appending would clash with something the user looks to be mid-edit (one coherent prose block), name the situation to the user and let them pick append, hold, or replace-with-explicit-yes. Empty or template-shell-only notes may be filled.
@@ -29,36 +29,18 @@ The journal is always there, so there is nothing to check first. Capture happens
 
 ## Capture workflow
 
-In order, every input.
+In order, every input. Each step says whether it is mechanics or judgement. **[SCRIPT]** means the step has one defined outcome and a command that produces it, so nothing here is decided by the run. **[JUDGEMENT]** means the outcome depends on reading the situation. A step marked [SCRIPT] that names no command is a rule sitting in prose, and prose at that position does not hold.
 
-1. **Resolve target.** Default today's daily, today meaning the day the words were said or written, not the day they are read. That is the same day for a live chat dump, so the default holds for the normal case without anyone thinking about it. If the trigger names the weekly, the monthly, the yearly, or a specific past period, use that (past periods only on explicit request). Read the target entry and classify its state: missing, shell only, has user content.
-2. **Append verbatim.** `zanmai.py journal append --kind <daily|weekly|monthly|yearly> --text "<the user's words>"`, unchanged. The command creates the bundle folder and the entry if they are not there, appends below whatever is already in it, and logs the write. Never assemble the path by hand: the ISO week is the trap, the week of 1 January belongs to the previous year more often than not. Text read off a voice recording is the one case where the day of writing and the day of speaking can genuinely differ: use `zanmai.py voice journal-append` instead (`voice` skill Step 5), it derives the target day from the recording rather than defaulting to today.
-3. **Mirror mood.** If the input carries a mood signal, stated ("müde", "on fire") or clearly implied, write it into the note's frontmatter via `Edit` on the frontmatter block, never into the body as a reshaped line.
-4. **Habit side effects.** For an activity that matches an existing habit bundle in `habits/`, write `- [x] [[<habit-slug>]]` as a pointer and update the habit bundle's `last_done:` field. The bundle is the canonical completion record; the note holds the pointer.
-5. **Entities.** For a clearly identified person or organization with no contact file, create the stub (Hard Rule 5). For entity-shaped but uncertain names, prepare a flag for the user. For entities that already have files, propose `[[wikilink]]`s. Read `zanmai/memory/patterns.json` once to match known slugs.
-6. **Confirm to the user.** One short line naming what was captured, where, which wikilinks were proposed, which stubs were created, and what was flagged. No execute-question, the dispatch already happened by the user's trigger.
-
-## Period rollups
-
-A rollup is a synthesis of the layer one step below, written upward.
-
-- **Weekly rollup** at the first session of a new ISO week, from the prior week's daily entries.
-- **Monthly rollup** at the first session of a new month, from the prior month's weekly entries.
-- **Yearly rollup** at the first session of a new year, from the prior year's monthly entries.
-
-Rules:
-
-- **One level down only.** Weekly reads dailies, monthly reads weeklies, yearly reads monthlies. If the finer layer holds nothing for that period, no rollup runs; monthly never falls back to dailies.
-- **The decision is not yours to make.** `zanmai.py journal rollup-due` says which rollups are due and names the entries each one reads. It checks whether the period entry already carries a rollup and whether the layer below holds anything at all. Do not work that out from dates in your head.
-- **Automatic, because non-destructive.** `zanmai.py journal rollup --kind <kind> --text "<summary>"` writes it without an approval gate: it appends below existing content, never overwrites, never edits, never touches the source entries. Since nothing is lost, no confirmation is needed.
-- **Quote, do not invent.** Quote the user's own phrasing from the source entries, recurring themes, tasks still open versus done, the mood arc from the frontmatter mirrors, notable events. Add no theme the user did not write.
-- **Once per period.** The command refuses a second rollup for the same period, so this cannot double up even if the skill is run twice.
-
-Writing directly into a weekly or monthly note (the user dumps into it) is plain capture, same verbatim behavior as the daily.
+1. [JUDGEMENT] **Resolve target.** Today's entry, today meaning the day the words were said or written, not the day they are read. That is the same day for a live chat dump, so the default holds for the normal case without anyone thinking about it. If the trigger names a past day, use that day instead, and only when it was asked for. Read the target entry and classify its state: missing, or holding something already.
+2. [SCRIPT] **Append verbatim.** `zanmai.py journal append --text "<the user's words>"`, unchanged. The command creates the entry if it is not there, appends below whatever is already in it, and logs the write. A day exists as a file only once something has been written into it, so nothing creates an empty one. Never assemble the path by hand. Text read off a voice recording is the one case where the day of writing and the day of speaking can genuinely differ: use `zanmai.py voice journal-append` instead (`voice` skill Step 5), it derives the target day from the recording rather than defaulting to today.
+3. [JUDGEMENT] **Mirror mood.** If the input carries a mood signal, stated ("müde", "on fire") or clearly implied, write it into the note's frontmatter via `Edit` on the frontmatter block, never into the body as a reshaped line.
+4. [JUDGEMENT] **Habit side effects.** For an activity that matches an existing bundle in `life/`, write `- [x] [[<habit-slug>]]` in the day's entry as a pointer to it. The day is the record: it happened on that day and stays there. Nothing is written into the bundle for it, and no field there tracks when it last happened.
+5. [JUDGEMENT] **Entities.** For a clearly identified person or organization with no contact file, create the stub (Hard Rule 4). For entity-shaped but uncertain names, prepare a flag for the user. For entities that already have files, propose `[[wikilink]]`s. Read `zanmai/memory/patterns.json` once to match known slugs.
+6. [JUDGEMENT] **Confirm to the user.** One short line naming what was captured, where, which wikilinks were proposed, which stubs were created, and what was flagged. No execute-question, the dispatch already happened by the user's trigger.
 
 ## Session-start reconciliation
 
-At session start the briefing may list **journal link candidates**, existing contacts or bundles that recent entries name in plain text but do not yet wikilink, ranked by how often they recur (computed by the session-start hook, not guessed). This is the journal working as an indirect day-memory: what currently moves the user, held against what the vault already holds.
+At session start the briefing may list **journal link candidates**, existing contacts or bundles that recent entries name in plain text but do not yet wikilink, ranked by how often they recur (computed by the session-start hook, not guessed). This is the journal working as an indirect day-memory: what currently moves the user, held against what the space already holds.
 
 When candidates are present, Steve may offer once to connect them, a proposal, never automatic. Recurrence is the signal: a name in one note is a passing mention; a name across several is worth connecting. Two ways to connect, both user-gated:
 
@@ -67,24 +49,21 @@ When candidates are present, Steve may offer once to connect them, a proposal, n
 
 ## Tone
 
-Warm, present, brief. Short sentences. No em dash as a casual separator (operating-principles §7). Reflective questions stay plain ("how is today?"), never clinical. In a rollup, quote the user rather than paraphrase.
+Warm, present, brief. Short sentences. No em dash as a casual separator (operating-principles principle:surfaces). Reflective questions stay plain ("how is today?"), never clinical. Quote the user rather than paraphrase.
 
 ## The commands, all of them
 
 Everything the journal does is a subcommand, and nothing about it is left to be worked out at the moment of use.
 
 ```
-zanmai.py journal path       --kind <kind> [--date YYYY-MM-DD]   where the entry is, creates nothing
-zanmai.py journal ensure     --kind <kind> [--date]              create the entry and its bundle
-zanmai.py journal append     --kind <kind> [--date] --text "…"   the user's words, verbatim, below
-zanmai.py journal read       --kind <kind> [--date]              print it, or say it holds nothing
-zanmai.py journal list       --kind <kind> [--limit N]           what exists, with bundle contents
-zanmai.py journal rollup-due [--date]                            which rollups are due, and from what
-zanmai.py journal rollup     --kind <kind> --text "…"            write it, once per period
+zanmai.py journal path       [--date YYYY-MM-DD]   where the entry is, creates nothing
+zanmai.py journal append     [--date] --text "…"   the user's words, verbatim, below
+zanmai.py journal read       [--date]              print it, or say it holds nothing
+zanmai.py journal list       [--limit N]           what exists
 zanmai.py voice journal-append --file <recording> --text "…"     voice-derived only, dates by the recording
 ```
 
-`<kind>` is `daily`, `weekly`, `monthly` or `yearly`. Use `Edit` on an entry only for something no
+One entry per day, named by its date, under its year. Use `Edit` on an entry only for something no
 subcommand covers, and only on the user's instruction.
 
 ## When not to use
@@ -94,7 +73,6 @@ subcommand covers, and only on the user's instruction.
 ## Files
 
 - `zanmai/system/scripts/zanmai.py`: the `journal` subcommands, the whole surface.
-- `zanmai/system/docs/daily-capture.md`: background on verbatim capture and the period rollups.
-- `zanmai/system/operating-principles.md`: §6 (the journal is the user's, and the rollup exception), §8 (checkboxes are the user's).
+- `zanmai/system/operating-principles.md`: principle:journal (the journal is the user'sn), principle:tasks (checkboxes are the user's).
 - `zanmai/system/experts/reed/reed.md`: audio transcription handoff.
 - `zanmai/system/experts/hank/hank.md`: filing handoff if a note mention crystallises into a multi-file move.

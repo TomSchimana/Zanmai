@@ -2,17 +2,19 @@
 
 # Your brand
 
+**Read this when:** a piece has to look like it comes from the same house, or the brand is not established yet.
+
 One file holds what your things look and sound like, and everything Zanmai produces for you reads it: documents, images, video, and whatever gets built next.
 
 ## Why it is separate from the people who use it
 
-Carol lays out documents, Loki generates images, Luis cuts video. If each of them settled the colours and the tone for their own piece, you would end up with three brands that almost match. So the identity sits above all three, in one place, and none of them may change it. Shuri owns that file. She writes it and produces nothing with it; the others produce and never write it.
+Three different specialists produce things that carry your brand: documents, images, video. If each of them settled the colours and the tone for its own piece, you would end up with three brands that almost match. So the identity sits above all three, in one file, and none of the three may change it. A fourth one owns that file, writes it, and produces nothing with it.
 
-That also means you can ask her things the others cannot answer: is this piece actually on brand, what is still undefined, what should we pin down before the website gets built.
+That also means you can ask that one things the others cannot answer: is this piece actually on brand, what is still undefined, what should we pin down before the website gets built.
 
 ## Where it lives
 
-`trusted/brands/<your brand>/design.md`. In your own folders, not in Zanmai's system folder, because it is yours: you can open it, read it and disagree with it. `trusted/` is the part of the vault for what you have settled on, and a brand is exactly that.
+`zanmai/design/<your brand>/design.md`. It sits with what Zanmai keeps, because four specialists read it by path and one writes it, and a brand split over two places is a brand settled twice. That is where it sits, not who it belongs to: it is yours, you open it, read it and disagree with it whenever you want, and no update ever replaces it.
 
 If you have more than one brand, each gets its own folder. Alongside `design.md` sit the per-format build values and, for slides, the layouts harvested from your own decks.
 

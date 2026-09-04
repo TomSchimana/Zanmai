@@ -2,24 +2,34 @@
 
 # What you keep
 
+**Read this when:** something has to be kept and found again years later, or a keeping term has to be decided.
+
 Contracts, policies, tax papers, certificates, the receipt you would need if the washing machine
-broke. Things you hold on to because a law says so, because a contract runs, or because you would
-be stuck without them.
+broke. Things you hold on to because a contract runs, because someone may still ask for them, or
+because you would be stuck without them.
 
-## Why this is not the archive
+## These are not legal deadlines
 
-They look alike from outside, and the difference decides what may happen to them.
+The three periods are Zanmai's own, chosen so that nothing you need disappears: kept for good, ten
+years, four years. They are not statutory retention periods, they are not tied to any country, and
+they are not advice about what a law requires of you. Where a rule genuinely applies to you, the
+figure you were given applies and not this one. Nothing here is ever presented as a deadline, and
+no period is ever named as if it came from a law.
 
-The archive holds what answers no question any more. You may clear it out, and one day you will.
-`records` holds what has to stay: the tax papers for as long as the tax office may ask, the policy
-for as long as a claim can be made on it, the birth certificate for good. Every piece carries a
-term, and throwing one away is a decision with a date attached rather than tidying up.
+## Why nothing here is ever cleared out on its own
 
-That is also why it sits beside the archive and not inside it. Anything that clears out an archive
-would otherwise reach into the one folder that must not be cleared out.
+The word archive suggests something you are done with. This one is not that. It is the filing
+cabinet: things go in because you take them out again, and what makes them worth keeping is a
+running contract, an open question, or the fact that you would be stuck without them. The tax papers stay for as long
+as the tax office may ask, the policy for as long as a claim can be made on it, the birth
+certificate for good.
 
-The other difference is pace. Everywhere else in the vault something happens daily. Here a document
-arrives, and then nothing happens to it for years. What eventually moves it is a term running out.
+So every piece carries a date and a keeping reminder, and letting one go is a decision with a date
+attached rather than tidying up. The reminder reminds; it never deletes.
+
+The other thing that sets this area apart is its pace. Everywhere else in the space something
+happens daily. Here a document arrives, and then nothing happens to it for years. What eventually
+moves it is a term running out, not a change of mind.
 
 ## Setting it up
 
@@ -36,14 +46,14 @@ things about it. Not a form and not a list to tick: it states the picture and yo
   a normal answer. Zanmai does not ask which country you are in: it is not giving legal advice, and
   a list of legal areas would be wrong for everybody not on it.
 
-The name is not asked. The area is called `records`.
+The name is not asked. The area is called `archive`.
 
 What you confirm lands in `zanmai/retention.json`, and that file is what applies. The suggestions
 shipped with Zanmai apply to nothing until you have been through them. Nothing is filed before that.
 
 ## What happens to a document
 
-It arrives the way everything arrives, through `import`. A scanner drops a PDF there, you drop a
+It arrives the way everything arrives, through `inbox`. A scanner drops a PDF there, you drop a
 photo of a receipt, a mail export lands in it. It gets read, and then it gets a place and a term.
 
 **The original is not rewritten.** What gets written is a note about the matter it belongs to: the
@@ -74,8 +84,8 @@ because a wrong merge is invisible afterwards and takes both matters with it.
 
 ## Getting documents in
 
-A pile at a time, not a document at a time. Point Zanmai at the folder and say which section of
-the area it belongs in; the folders you already sorted it into are kept, because you have already
+A pile at a time, not a document at a time. Point Zanmai at the folder and say which bundle in
+the archive it belongs in; the folders you already sorted it into are kept, because you have already
 answered the question of what belongs together. Everything filed is read straight away, so it
 answers a search the moment it lands.
 
@@ -93,7 +103,7 @@ seconds. PDFs with a text layer are read directly, scans are read by machine, ma
 
 "Does this still apply" is not a search question, and no index answers it. That is what the notes
 are for: a policy that says it was cancelled, a contract with an end date, a case that closed.
-Marcus, the curator, answers from those.
+The curator of this area answers from those.
 
 ## Keeping terms
 
@@ -112,7 +122,7 @@ names how many pieces and which terms it rests on, and waits. Nothing is discard
 
 ## Related
 
-- [Folder architecture](folder-architecture.md), why this is a root of its own
+- [How the space is organised](folder-architecture.md), where this area sits among the others
 - [Importing and filing material](importing.md), how things get in
 - [Who does what](specialists.md)
 

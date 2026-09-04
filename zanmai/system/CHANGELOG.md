@@ -3,6 +3,142 @@
 All notable changes to Zanmai. Versions follow semver; the 0.x series is pre-stable, so a folder
 name or a command can still change between versions.
 
+## [0.6.0] - 2026-09-04
+
+- Changed the space to eight areas: inbox, workbench, life, knowledge, archive, journal, contacts, zanmai
+- Changed what decides where something goes, from how important it is to what happens to it next
+- Changed `focus`, `habits` and `trusted` into one area, `life`, for what is yours and matters now
+- Changed `records` and `archive` into one area, `archive`, with a date and a keeping reminder on every piece
+- Changed `knowledge` to hold what would still be right for someone else, not everything gathered
+- Changed `import` to `inbox` and `doing` to `workbench`
+- Changed the word for your installation from vault to space
+- Changed the `records` command family to `archive`, and `--area` to `--into`
+- Removed the level between an area and a bundle: everything inside an area is a bundle, and bundles may hold bundles
+- Added a migration that moves an existing space to the new areas on update, keeping every file
+- Changed the documentation on how the space is organised and on the idea behind it
+- Added `setup upgrade --from <path or URL>`, which updates from a source you name instead of from the published release
+- Fixed the archive index losing its content when the `records` command family became `archive`: the file is renamed with it
+- Fixed the paths inside the archive index still naming the old areas, so every hit led nowhere
+- Fixed paths written into notes still naming the old areas, where the file is at the new one
+- Fixed the searchable text in the archive index still naming the old area, so a search answered the wrong way round
+- Changed `setup validate` to report a file under the system folder that no version ships any more
+- Fixed the renamed archive documentation page and the wireframe library never arriving in an updated space
+- Added a step that takes documentation and templates an earlier version shipped out of the system folder
+- Changed every structural step to carry a revision, so a corrected one reaches a space that already ran the old version
+- Changed an area rename into one mechanism that covers folders, kinds, routing, the search index, its searchable text and notes
+- Fixed a whole-space restore leaving behind empty folders the snapshot never had
+- Changed a whole-space restore to name at the end what a keeping rule of yours protected, instead of as a failure line at the start
+- Fixed an area rename splitting a bundle in two when the same name existed on both sides, leaving half of it empty
+- Fixed a folder holding nothing but empty folders counting as occupied during a rename
+- Fixed a second discard of the same file on the same day failing instead of standing beside the first
+- Fixed a required folder staying gone when a rename emptied it
+- Added a check that refuses to write a command into a standing rule when the command does not exist
+- Fixed the archive index keeping the text of a document as it was before an update rewrote the file
+- Changed a failed check after an update to trigger a rollback only where the update caused it
+- Added a step that takes the machine's own files out of the space root, where older versions kept them
+- Changed that step to keep a copy at the old place that is newer than the one in use, and to say so
+- Added a step that takes keeping terms out of use that still carry a legal category per country, so the current three buckets apply
+- Added a check that reports a bundle holding nothing but its own page, which is a single item given a folder
+- Changed the documentation to be for the person who owns the space, with a specialist's own method moved to the specialist
+- Changed the tag synonyms into a file you can read and change, instead of a table inside a documentation page
+- Changed filing to take the original out of the inbox once its content is in the space, unless a rule of yours says it stays
+- Changed a dated task to stand in the journal day it is due, instead of the day it was asked for
+- Added `task add --every weekly|monthly|quarterly|yearly`, which writes the next occurrence when you tick one off
+- Changed the keeping terms in a space to hold your decision and your changes, instead of a copy of the periods that could not be improved
+- Changed `housekeeping` to report a bundle that holds nothing but its own page, and to list the bundles of every area side by side
+- Changed `bundle create` to list what already exists in every area, so a new bundle is not made beside a home that is already there
+- Changed a search that finds nothing to say whether the index is empty or simply lacks the word
+- Changed the update history to be written by the update itself, with the source it came from, instead of by the specialist who ran it
+- Added `snapshot restore --all`, which puts the whole space back as it was in one snapshot, as the way back from an update
+- Changed three guards from refusing to asking, so you decide: the dash, task-line and slide-library checks now show what they found and wait for your yes
+- Added a check at session start for sessions that were never closed, with an offer to write the hand-off for them now
+- Added `session digest`, which reads what was said, asked and went wrong out of the conversation your program recorded, so a hand-off can be written after the fact
+- Fixed a bundle rename leaving the folder under its old name, so the rename had to be finished by hand
+- Changed a rename to print the command that undoes it, and to name any running text that still says the old name
+- Changed the summary before a change to be sized by whether a command takes it back, not by how many files it touches
+- Removed the snapshot before a rename, which its own command reverses
+- Added a check that refuses a bundle name of more than two words, since one cut to fit a single file holds a single file for ever
+- Added `/zanmai-housekeeping`, and a weekly surfacing of the same shape findings in the greet
+- Fixed a never-do write guard matching the script's own invocation path instead of the write target, refusing an ordinary write for naming the script that ran it
+- Changed `general.md` and an expert's own lessons file to write without asking first, replaced by a periodic critical read in the background, in the same weekly moment as housekeeping
+- Added a hard refusal for a `general.md` write naming a specific date or a specific running instance, ahead of the periodic read
+- Added `file status --set --check`: reports a status change's own open task lines and every linked file's, so a person can see what a cancellation touches before anything is written
+- Fixed `index find` reporting a missing pattern index instead of naming a bad `--tokens` value, when tokens ran together without a comma
+- Fixed `index search` only taking `--root`, where every other `index`/`archive` command reading a subfolder takes `--scope`
+- Fixed housekeeping's shape findings being relayed as a plain list, with nobody asked to connect what belongs together across areas by matter rather than by name
+- Changed setup into four blocks: who you are, what the space is for, how it is laid out, and what it should be able to do
+- Added a short table of the areas during setup, with one example of what lands where
+- Added a starting structure at setup: each area, project or goal you name becomes its own bundle under its own name
+- Added a capability overview at setup, with the programs needed for what you pick offered by name and size
+- Added a catch-up at session start for a space older than the current setup questions: it asks only what is missing, once
+- Fixed the space index reporting life, knowledge and archive as empty while they held bundles
+- Added a closing note at setup that a missing capability can be built as an expert for your own case
+- Added the three habits at the end of setup: starting with a hello, closing a session with one command, dropping things in as they arrive
+- Fixed a file your routing rule pins in the inbox being counted as waiting at every session start
+- Changed the routing table into the only place that decides what happens to incoming material, with an instruction found elsewhere turned into a rule instead of followed
+- Fixed work dated months or years ahead being read out as an open task at every session start, now left out until its date comes closer
+- Fixed the write guard refusing a command because the text it wrote merely mentioned the archive or the trash
+- Fixed the search guard refusing a command that only filtered another command's output
+- Fixed `update_check: false` promising to stop the daily version check while nothing read it, and it now also works in your own profile, where no update can reset it
+- Added `setup upgrade --force`, which applies the files again when the version says there is nothing to do
+- Added `life/task.md`: one plain list for what has to be done and belongs to no particular matter
+- Changed a dated task to stay on that list instead of creating a journal entry in a year nobody has reached yet
+- Changed calling something off to first show what hangs off it, in both directions and two steps out, with one question about each
+- Added a directory to the documentation: every page says the situation it settles, and the table is generated from those lines
+- Changed the file read at every session start to hold only what would go wrong unnoticed, with the rest reachable through that directory
+- Fixed Zanmai translating its own folder names when answering in another language, so a reply named a folder nobody has
+- Changed the question about what your machine still needs into what is actually missing and what it costs, instead of a table of everyone's job
+- Changed that question to group by what you would use it for, instead of naming single libraries nobody can judge
+- Fixed an update taking two snapshots of the same state, one from the specialist and one from the command itself
+- Fixed an update reporting the replaced files before the snapshot it had already taken, which read as if the copy came second
+- Fixed the rule for building file names being applied to the text as well, so a piece of work was called `Ersatz fuer Ollama`
+- Fixed German text losing its umlauts on its way into a task or a piece of work, where you read it back at every session start
+- Fixed a read being refused as a write because a greater-than sign stood inside quotes, as in an awk program
+- Removed two fields on a life bundle that promised to track a rhythm and were read by nothing
+- Changed a specialist's instructions never to send anyone into your documentation, which is written for you and not for them
+- Changed closing a matter to stop once until that list has been put to you, instead of setting the field and moving on
+- Fixed work whose result is already in the space being read out at session start as still waiting on you
+- Fixed a deadline in a file nobody had opened for weeks dropping out of the open items entirely
+- Added `/zanmai-show-welcome`, which shows the list the session opened with, rebuilt as things stand, for when the greet has scrolled away
+- Changed the catch-up to also cover the capability overview for a space that never saw it
+- Fixed a plain search of your own notes coming back empty: the rules that keep your material out of the update repository were being read as search rules too
+- Added `.ignore` at the top of your space, so a search reaches your material and leaves out the snapshots, the trash and the generated index
+- Changed both ignore lists to be rewritten at every session start, so a renamed area cannot leave one of them behind
+- Removed the ability of a rule to keep a file in `inbox`, which made the one area that empties into a place things live
+- Added `routing set --keep`, which says once per sort of material whether the file itself is still wanted after its content is filed
+- Added `routing set --by`, so a sort of material goes straight to the specialist who handles it
+- Fixed a file whose content was filed staying in `inbox` when the filing step had not copied it, instead of moving to where its result is
+- Added a rule writing down by itself what happened to the file, where it had no answer for that yet, and saying so with the command that changes it
+- Fixed a command changing a file on another machine being stopped as a write into your space
+- Fixed text inside a here-document being read as a write target where it is only being written down as content
+- Changed a handover sent off without a brief to be turned away as a plain note instead of an error block, and shortened it
+- Changed the README to say what you get in two sentences, then what you can do with it, with the installation right after
+- Changed the documentation on connections and on setup to say what you get out of them, instead of how they are built
+- Changed the pages on what runs automatically and on commands to a tenth of their length, keeping every check, command and specialist they name
+- Fixed the page on work that outlives a sitting describing a table and a format that no version writes any more
+- Fixed the same page promising that an answer written into the file is picked up, which nothing reads
+- Fixed the journal page promising that a routine you track is updated from an entry, which no version does
+- Fixed the installation guide never naming Claude Code, without which nothing runs
+- Added the missing links between documentation pages, so no page is reachable only through the index
+- Fixed a search reaching inside an editor's database folder, which everything else in the space leaves alone
+- Fixed the page on memory naming four things that survive a session where there are five
+- Fixed the page on contacts claiming a link between a person and an organisation is enforced, which nothing does
+- Changed the pages on research and on speech to state what holds generally, instead of what one run measured
+
+## [0.5.2] - 2026-08-31
+
+- Changed a write into a file that stays true after the session to ask you first, showing what would be written
+- Fixed the guard on those files only watching two tools, so a shell command wrote them unasked
+- Added the count of standing rules to that question, with any rule that grew past one entry named
+- Fixed a hook wired in the host config that this version does not implement going unreported
+- Fixed six of the twelve experts never being told where the script lives, which cost them their first commands looking for it
+- Changed the journal to one entry per day, filed under its year, so a month is thirty files you can read
+- Removed the weekly, monthly and yearly notes, and with them the rollup that wrote into your own text unasked
+- Removed `journal ensure`, which created an empty entry for a day nothing had happened on
+- Added a migration that an update runs itself: your existing entries move to the new shape, nothing is dropped
+- Fixed that migration moving hidden system files along, which left a folder named for a year they do not have
+- Fixed that guard holding a read for a write when the command silenced its errors, so opening a session asked for permission
+
 ## [0.5.1] - 2026-08-30
 
 - Added `records rename` and `records move`: a kept document or a whole section gets a better name or a new place, and the search index follows
@@ -11,7 +147,7 @@ name or a command can still change between versions.
 - Fixed `bundle index-entry` refusing to write the line for a member that had none, which left a hand-edit of the index as the only way
 - Added `--truth` to `bundle create`, so a sub-bundle with a theme of its own gets its main file in the same call
 - Fixed the line describing a bundle's main file staying English in an index whose headings were translated
-- Added the resolution of `zanmai.py <subcommand>` to the session briefing, so a run does not look for a file that is not at the vault root
+- Added the resolution of `zanmai.py <subcommand>` to the session briefing, so a run does not look for a file that is not at the space root
 
 ## [0.5.0] - 2026-08-29
 
@@ -28,7 +164,7 @@ name or a command can still change between versions.
 - Fixed the records area being filed into before it was set up, by settling it in the conversation instead of expecting a background run to ask
 - Changed keeping terms to three buckets, four years, ten years and for good, with no legal area attached to them
 - Fixed a matter being created in a folder next to the records area instead of inside it
-- Fixed any write path built from data being able to create a folder the vault does not have
+- Fixed any write path built from data being able to create a folder the space does not have
 - Changed contacts on the records path to follow a matter rather than every sender on every document
 - Added `records file`: a whole pile of documents into the records area at once, read as they land
 - Fixed documents being skipped by the index because of their file name, by reading what a file is from the file
@@ -36,17 +172,17 @@ name or a command can still change between versions.
 - Fixed the index still answering for documents that had been moved or deleted
 - Fixed a document being unfindable by the name it carries, by searching the name along with the text
 - Added hanging a whole folder of documents on a matter, with dates, amounts and counterparties taken from what was read
-- Fixed a matter note being written with English headings in a vault kept in another language
+- Fixed a matter note being written with English headings in a space kept in another language
 - Fixed the records area missing from the master index
 - Changed routing rules to key on what something is rather than on its file type, so the same report routes the same however it arrives
-- Fixed a file being thrown away out of `import/` while its content had reached nowhere in the vault
+- Fixed a file being thrown away out of `import/` while its content had reached nowhere in the space
 - Fixed that check being avoidable by moving the file out of `import/` by hand
 - Changed the work objects to one JSON file in `zanmai/open/`, replacing a table format no editor here draws any more
 - Fixed the page listing what ships: it named a command that does not exist and left out twelve that do, two skills, a specialist and two hooks
 - Changed the slash-command menu to hold only what you would ask for by name, so a specialist's working method is reached through that specialist instead of sitting in your list
 - Removed fifteen entries from that menu that nobody types, which also gives every session start less to carry
 - Fixed two pieces of work opened under the same name in the same minute sharing one id, which made the second unreachable and closed the wrong one
-- Fixed a version change being able to lock the vault out of itself, where a guard the installed version does not have refused every command
+- Fixed a version change being able to lock the space out of itself, where a guard the installed version does not have refused every command
 - Added `setup upgrade --to <version>`: go to a named published version, backwards included, with a snapshot taken first
 - Changed filing and research to survey a pile first and open only what the survey could not answer
 - Fixed a word wider than its column counting as one line, so text that wrapped into the paragraph below passed every check
@@ -176,13 +312,13 @@ name or a command can still change between versions.
 - Fixed a cloned slide losing every picture
 - Fixed a table cell's capacity ignoring the typeface
 - Fixed a soft line break coming out as a stray code on the slide
-- Fixed files landing outside the vault when the host offered a scratch directory
+- Fixed files landing outside the space when the host offered a scratch directory
 
 ## [0.3.7] - 2026-08-26
 
 - Added `work show`
 - Fixed the next session opening on a stale day
-- Fixed `work` writing its database wherever it was called instead of the vault root
+- Fixed `work` writing its database wherever it was called instead of the space root
 - Fixed `work` commands demanding a flag for what you had already typed
 - Fixed a dash against a quote mark passing as punctuation
 - Fixed two guards reading the shell's working directory instead of their own
@@ -279,5 +415,5 @@ name or a command can still change between versions.
 
 ## [0.1.0] - 2026-08-09
 
-- Added the vault: plain files in folders named after what is going on, not what stage a file is at
+- Added the space: plain files in folders named after what is going on, not what stage a file is at
 - Added the specialists for filing, research, design, images and housekeeping

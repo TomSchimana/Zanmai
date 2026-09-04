@@ -9,6 +9,8 @@ Add an expert so the roster stays consistent and the spec is not a generic stub.
 
 This is the one way an expert is built, whether Stan adds it for the user or it ships with Zanmai. Same procedure, same shape, same budget. That shared discipline is what lets Zanmai grow itself without bloating: an expert added the disciplined way stays lean by construction.
 
+Registering a skill also gives it a `/zanmai-<name>` command, and that command menu belongs to the user: it answers "what can I ask for". **So only what the user would ask for by name is registered.** A specialist's working method is not; it is named with its full path in the contract of the expert who runs it, and that expert reads it when the job needs it. What is registered is in `_SKILL_SYMLINK_MAP`; everything else is reached through the contract that names it.
+
 ## When to use
 
 - The user needs a capability no current expert covers, and Steve could name it in one sentence.
@@ -45,7 +47,7 @@ An expert is not real until all of these are in lockstep. Miss one and it crashe
 - `zanmai.py` `_ROSTER`, one entry `(name, adapter, memory)`; `_AGENT_NAMES`, the memory folders and both lessons loops all derive from it, so this single edit wires them together.
 - `manifest.yaml` `distribution_paths`, the contract path (and any new skill).
 - `steve.md`, one row in the Routing table so Steve routes the right intent to the expert (a row, not a section: the depth is the expert's own contract).
-- `CLAUDE.md` pointer list and `docs/skills-and-scripts.md`.
+- `CLAUDE.md` pointer list. The user documentation lists the shipped set too and is kept in step from the doc side, not from here: a contract never sends anybody into the manual.
 
 **Then grep-sweep the whole tree for the new name** and confirm every reference agrees. An identifier change ends with a full-tree grep and a verify grep, never a single representative edit, that rule exists because this exact drift has bitten before.
 

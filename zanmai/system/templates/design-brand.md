@@ -101,7 +101,7 @@ The durable identity of one brand, read out of its own material and kept as the 
 
 The block above carries the machine-readable values in the shape a coding agent expects, so a colour or a spacing step can be handed to a stylesheet without being retyped. The sections below carry what a token cannot hold: what each value is for, where it was read from, how binding that reading is, and what the brand never does.
 
-Store: `trusted/brands/<brand>/design.md` · format kits: `trusted/brands/<brand>/<format>.md`
+Store: `zanmai/design/<brand>/design.md` · format kits: `zanmai/design/<brand>/<format>.md`
 The kit path is fixed, so this file never points somewhere else for one. A kit that
 sits next to a delivered piece leaves with it, and the next document starts from zero.
 Read from: <the templates or CI document this was taken from>

@@ -117,9 +117,9 @@ researcher: reed
 
 Length scales with scope. Narrow questions resolve at 200 to 400 words; broader work runs 600 to 1200, longer only when the brief genuinely demands it. Citations are mandatory. Every weighty claim ships with its source and its confidence.
 
-Checkboxes are the user's (operating-principles section 8, enforced by `hook checkbox-guard`). Reed writes none, in any deliverable. Findings are prose with citations; where one calls for action, that is a sentence and the user decides whether it becomes a task of theirs.
+Checkboxes are the user's (operating-principles, principle:tasks, enforced by `hook checkbox-guard`). Reed writes none, in any deliverable. Findings are prose with citations; where one calls for action, that is a sentence and the user decides whether it becomes a task of theirs.
 
-When the source is visual (video, screencast, slide deck, infographic), the evidence section embeds the frames that carry the claim, with the wikilink embed next to the timestamp citation. The reader verifies without leaving the vault. Audio sources quote the transcript span. Code sources quote file lines with a SHA-pinned citation.
+When the source is visual (video, screencast, slide deck, infographic), the evidence section embeds the frames that carry the claim, with the wikilink embed next to the timestamp citation. The reader verifies without leaving the space. Audio sources quote the transcript span. Code sources quote file lines with a SHA-pinned citation.
 
 ### Phase 5: surface entities for the network
 
@@ -127,24 +127,24 @@ When Reed surfaces new entities (people, organisations, products) that Zanmai mi
 
 ## Filing target picking
 
-Knowledge files live inside theme bundles, never as their own top-level bundle. The user's mental model is broad-to-specific. A top-level theme holds specific items as members. A specific item (a particular medication, appliance, product model, destination) is never the top-level bundle.
+Knowledge files live inside bundles, never as their own top-level bundle. The user's mental model is broad-to-specific. A top-level bundle holds specific items as members. A specific item (a particular medication, appliance, product model, destination) is never the top-level bundle.
 
 Steve picks the target path via this procedure (also applies when Reed has to pick because Steve delegated the choice).
 
-1. Match an existing theme bundle. Look at the bundles under `knowledge/`. If one fits, the file becomes a member of it.
-2. Propose a new theme. Steve names one inferred from the topic and confirms with the user before dispatching Reed.
-3. Emergency landing flat at `knowledge/<topic-slug>.md`, only when no theme makes sense yet. This is a transitional state, not the resting place. The user gets a "homeless item to file later" prompt in the briefing.
+1. Match an existing bundle. Look at the bundles under `knowledge/`. If one fits, the file becomes a member of it.
+2. Propose a new bundle. Steve names one inferred from the topic and confirms with the user before dispatching Reed.
+3. Emergency landing flat at `knowledge/<topic-slug>.md`, only when no bundle makes sense yet. This is a transitional state, not the resting place. The user gets a "homeless item to file later" prompt in the briefing.
 
-The deliverable lands as a file inside the matching theme bundle: `<kind>/<theme>/<topic-slug>.md`. Binary material the source brings (transcripts, frame images, repo snippet archives, domain page captures) lies flat in the same bundle as the deliverable, because it is the same matter.
+The deliverable lands as a file inside the matching bundle: `<kind>/<bundle>/<topic-slug>.md`. Binary material the source brings (transcripts, frame images, repo snippet archives, domain page captures) lies flat in the same bundle as the deliverable, because it is the same matter.
 
-The full folder-architecture rules (theme-truth-file initial boilerplate, sub-bundle distinction, sub-theme growth, where attachments live) live in `zanmai/system/docs/folder-architecture.md`. Reed follows it.
+Where a file that is not a note goes: flat inside the bundle it belongs to, beside the note about it, with its line in the bundle's `INDEX.md`. No attachment folder, no `files/`. Reed follows it.
 
 ## Two filing kinds
 
 The brief's filing target carries a kind in addition to the path.
 
 - Reference (default): a stand-the-test-of-time knowledge note the user will come back to later. The path is inside `knowledge/`.
-- Read-once briefing (explicit): a temporary summary for a single decision (consolidation before a meeting, a one-shot answer the user will read and dispatch). The path is `doing/<slug>/<slug>.md` with `status: awaiting-archive`. The user reads it once, then it moves to `zanmai/logs/` via `zanmai.py review archive`. Read-once does not pollute the knowledge corpus.
+- Read-once briefing (explicit): a temporary summary for a single decision (consolidation before a meeting, a one-shot answer the user will read and dispatch). The path is `workbench/<slug>/<slug>.md` with `status: awaiting-archive`. The user reads it once, then it moves to `zanmai/logs/` via `zanmai.py review archive`. Read-once does not pollute the knowledge corpus.
 
 Steve sets the kind in the brief. Default is reference. Read-once is picked when the user phrased the request as a temporary summary for a specific upcoming use, not as a permanent reference need.
 

@@ -2,6 +2,8 @@
 
 # Credits and third-party material
 
+**Read this when:** somebody asks what Zanmai is built on.
+
 Who and what Zanmai builds on. Everything Zanmai ships is written from scratch, apart from the one set of files under "Bundled material" and one borrowed idea of layout, both named below. This page names the rest anyway, because the people and projects behind them earned it.
 
 ## Bundled material
@@ -29,9 +31,6 @@ Who and what Zanmai builds on. Everything Zanmai ships is written from scratch, 
 
 - **EU AI Act, Article 50**, the transparency obligations for AI-generated and AI-manipulated content, and the accompanying Code of Practice on transparency.
 - **C2PA / Content Credentials** (ISO/IEC 21694), the open provenance standard Zanmai writes into generated and edited media.
-
-## Companion app
-
 
 ## Tools Zanmai calls
 

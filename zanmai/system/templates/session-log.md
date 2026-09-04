@@ -5,7 +5,7 @@ created: <YYYY-MM-DD>
 session_type: close-session
 ---
 
-# Session log: <session theme>
+# Session log: <what it was about>
 
 ## Done
 

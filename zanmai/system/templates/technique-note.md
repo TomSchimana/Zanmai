@@ -1,6 +1,6 @@
 # Technique, <tool>
 
-Runtime field notes for one tool, learned in this vault and kept because a shipped
+Runtime field notes for one tool, learned in this space and kept because a shipped
 skill cannot hold what only a real run reveals. User-immune, updates never touch
 it. Curated overriding: a corrected entry replaces the wrong one, it does not
 accrete beside it. A mixed "verified" pile with no dates and no confidence is what

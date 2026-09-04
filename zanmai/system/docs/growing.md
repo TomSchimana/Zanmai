@@ -2,7 +2,9 @@
 
 # How Zanmai grows
 
-What happens when you need something none of the specialists covers.
+**Read this when:** the space needs something it cannot do yet.
+
+When a job fits none of the specialists, Zanmai builds a new one for it. The role is researched first, so it comes out with a real method rather than general knowledge.
 
 ## A missing capability is not a no
 

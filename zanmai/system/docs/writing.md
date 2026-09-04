@@ -2,13 +2,15 @@
 
 # Documents written for you
 
-Minutes from a meeting recording, a write-up of a video, an overview of material you already have, a handover, a letter, copy for a page. Anything longer than a line that is not filing, a design piece or a research report is written here.
+**Read this when:** a document has to be written from material that is already here.
+
+Zanmai writes the longer pieces for you: minutes from a recording, a write-up of a video, an overview of material you already have, a handover. The first question is never what it is about, it is what situation you will use it in, a letter, copy for a page. Anything longer than a line that is not filing, a design piece or a research report is written here.
 
 ## First: what is it for?
 
 Not what it is about. What situation you use it in. "Points I read on my phone during a one-to-one on Thursday" decides how the document looks. "Preparation for the meeting" decides nothing, and a document written against nothing comes back as an essay: a frame around the subject, the reasoning behind it, a recap at the end.
 
-That sentence is worked out from what you asked, from the material, and from your vault. Where none of them answer it, **you get asked**, once. It is the one question worth interrupting for, because a document written for a purpose nobody settled is thrown away whole rather than corrected.
+That sentence is worked out from what you asked, from the material, and from your space. Where none of them answer it, **you get asked**, once. It is the one question worth interrupting for, because a document written for a purpose nobody settled is thrown away whole rather than corrected.
 
 Once it exists, it decides what goes in. Something you hold while doing something else gets the points and nothing around them: no preamble, no derivation, no closing summary. Something for a reader who was not there gets the context they are missing, and still nothing you already know yourself. There is no house register and no internal-versus-external version. Plain language and short sentences are the constant; what changes with the reader is only how much goes in.
 
@@ -26,15 +28,15 @@ It does not transcribe what you attached. A screenshot or a file you send along 
 
 ## What it sounds like
 
-Where you have a brand, its voice section is binding for anything that carries the brand outward. Otherwise a comparable document in your vault sets the structure and the voice, and the proposal tells you which one it is shaped like. Where you have neither, your own templates get read and worked out. Only what none of that answers is asked.
+Where you have a brand, its voice section is binding for anything that carries the brand outward. Otherwise a comparable document in your space sets the structure and the voice, and the proposal tells you which one it is shaped like. Where you have neither, your own templates get read and worked out. Only what none of that answers is asked.
 
 ## When other people are in it
 
-A summary of a meeting is read by the people who were in it, and it stays in your vault. People said, described, asked and proposed things; they did not insist, concede or hold their ground, because what was observed is that a sentence was spoken. No rankings nobody asked for, no sharpest point, no turning point. Opinions are attributed rather than filtered out: a quote with the name behind it, or one person's view stated plainly. Timestamps per statement only if you asked.
+A summary of a meeting is read by the people who were in it, and it stays in your space. People said, described, asked and proposed things; they did not insist, concede or hold their ground, because what was observed is that a sentence was spoken. No rankings nobody asked for, no sharpest point, no turning point. Opinions are attributed rather than filtered out: a quote with the name behind it, or one person's view stated plainly. Timestamps per statement only if you asked.
 
 ## From a recording to the minutes
 
-Put the recording in `import/`, or point at a file wherever it sits. It is transcribed on your own machine and read against your vault, so the names come out the way you write them; nothing is uploaded, and the recording is kept. [Speaking instead of typing](voice.md) covers that side in full.
+Put the recording in `inbox/`, or point at a file wherever it sits. It is transcribed on your own machine and read against your space, so the names come out the way you write them; nothing is uploaded, and the recording is kept. [Speaking instead of typing](voice.md) covers that side in full.
 
 The write-up is made from the transcript, not from listening a second time. A video is read on both tracks, the words and the picture, which is why a number that was only ever on a slide still lands in the text. [Research](research.md) describes that reading.
 
@@ -48,7 +50,7 @@ When the material sits in files nobody has read yet, a transcript, a bundle of f
 
 ## Where it ends up
 
-In `doing/`, one folder per piece, with the drafts beside the finished file. You get a short summary in the reply, the path, and an offer to open it. It only opens if you say yes.
+In `workbench/`, one folder per piece, with the drafts beside the finished file. You get a short summary in the reply, the path, and an offer to open it. It only opens if you say yes.
 
 ## Asking for one
 

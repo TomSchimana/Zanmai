@@ -35,7 +35,7 @@ The single most important next step for the next session. Plus one backup item i
 
 **Before this section is written, every open point of the session goes onto a work object.** For each one that is still open: `zanmai.py work open` where no object exists yet, then `zanmai.py work ask --id <id> --question "<what only the user can settle>"` for anything that waits on them, and `work log` for what was done. That is what makes the point survive the session and reachable at the next start, in the editor or on a phone. Prose in this log is the narrative, and the object is the state; the state is written first, and this section is then read off it.
 
-Read it off `zanmai.py work list`, do not compose it from memory of the conversation. Anything still waiting on the user is named here with its short id, because that is the one class of open item the next session cannot work out for itself: the work is done as far as it can go and stopped on a decision. A specialist parked on such a decision does not survive the close (operating-principles §12), so the object and its workshop are what the next session picks up from.
+Read it off `zanmai.py work list`, do not compose it from memory of the conversation. Anything still waiting on the user is named here with its short id, because that is the one class of open item the next session cannot work out for itself: the work is done as far as it can go and stopped on a decision. A specialist parked on such a decision does not survive the close (operating-principles principle:parking), so the object and its workshop are what the next session picks up from.
 
 ### Intent
 
@@ -55,9 +55,20 @@ This rule exists because close-session is a wrap-up, not a planning step. A draf
 
 The only exception. If a realignment from this session is genuinely ambiguous (the user gave contradicting feedback), Steve writes the log without the contested item and notes in the confirmation that one item was left out because of ambiguity, asking the user (in their writing language) to say so if it should be added.
 
+**Closing a session that already ended.** A session ends when somebody shuts the window, and that
+writes no hand-off. The session start says so when it finds one, and the way back in is
+`zanmai.py session digest`: it reads what the user said, what they were asked and where something
+failed, out of the host's own record of those conversations. Compose the four sections from that
+instead of from a session that is no longer there, and say in the log which session it covers.
+
+Two limits worth knowing. The record belongs to the program that held the conversation, not to the
+space, so on a host that keeps none the command says so plainly and the activity log is what is
+left. And a digest carries what happened, never what it meant: the meaning is the part being
+written here.
+
 ### Step 2: write the log file
 
-Path: `zanmai/logs/YYYY/MM/YYYY-MM-DD-HHMM-<slug>.md`. The slug is one to three kebab-case words capturing the session theme.
+Path: `zanmai/logs/YYYY/MM/YYYY-MM-DD-HHMM-<slug>.md`. The slug is one to three kebab-case words capturing what the session was about.
 
 Frontmatter:
 
@@ -84,11 +95,11 @@ If a realignment is a permanent rule, not a one-off correction, put it into `zan
 2. **Does it change what somebody does?** A rule nobody can act differently on is a note about the past. Those live in the session log, which is what the session log is for.
 3. **Is it already there?** Read the section first. Where an entry says the same thing, the new wording either **replaces** it or is dropped. It never stands beside it.
 
-**Refining an existing rule means rewriting that rule, not adding one under it.** One vault held four entries saying "do not act unasked" in four vocabularies, and the fourth stated in its own text that it refined the first while standing next to it. That is not memory growing, it is the same rule paid for four times on every dispatch that reads the file.
+**Refining an existing rule means rewriting that rule, not adding one under it.** One space held four entries saying "do not act unasked" in four vocabularies, and the fourth stated in its own text that it refined the first while standing next to it. That is not memory growing, it is the same rule paid for four times on every dispatch that reads the file.
 
 Everything appended here is read at the start of a later run, so its size is paid for on every dispatch. This is the high-signal layer: what is written down has to earn the whole file being longer.
 
-**Then keep those files to their rules.** On a real vault after three days, one specialist's lessons had reached 678 lines and all of it went into that specialist's context each time. So the close runs `zanmai.py memory curate --file <the file just written to>`, which moves struck entries and long reasoning into a dated archive beside the file and leaves the rule and its bounds in place. What it cannot decide it reports: an entry still marked provisional from an earlier month is put to the user, because dropping a lesson nobody ever checked would lose exactly the ones that were never checked. A standing rule is never rotated out by date; a rule has no expiry, and "do not suggest that again" retired after two months means it gets suggested again.
+**Then keep those files to their rules.** On a real space after three days, one specialist's lessons had reached 678 lines and all of it went into that specialist's context each time. So the close runs `zanmai.py memory curate --file <the file just written to>`, which moves struck entries and long reasoning into a dated archive beside the file and leaves the rule and its bounds in place. What it cannot decide it reports: an entry still marked provisional from an earlier month is put to the user, because dropping a lesson nobody ever checked would lose exactly the ones that were never checked. A standing rule is never rotated out by date; a rule has no expiry, and "do not suggest that again" retired after two months means it gets suggested again.
 
 `curate` also counts the rules in the file and names repeated wording and time words where it finds them. Past its mark it says the file is worth reading through, and then it is read through: two rules saying one thing in different words are found by reading, never by counting, and the count exists to trigger that reading rather than to stand in for it. What is merged is merged in this step, not left for a later one.
 
@@ -104,7 +115,7 @@ Appending is the easy half. Where an expert did work this session and the user s
 - An entry marked `provisional` that this session's feedback bears out becomes `confirmed`. One the user has now contradicted is struck as above.
 - A new lesson from work the user has not seen or judged is written `provisional`, whatever the run looked like from the inside.
 
-The cost of skipping this is not a missing note, it is a wrong instruction that gets more authoritative every session. An agent's own account of its work is the weakest evidence in the vault; the user's reaction to the result is the strongest, and this is the one step where the two meet.
+The cost of skipping this is not a missing note, it is a wrong instruction that gets more authoritative every session. An agent's own account of its work is the weakest evidence in the space; the user's reaction to the result is the strongest, and this is the one step where the two meet.
 
 ### Step 4: confirm
 
@@ -126,13 +137,13 @@ This is silent infrastructure, the user sees nothing about it. If close-session 
 
 ### Step 6: rebuild the briefing
 
-The briefing file (`zanmai/memory/briefing.md`) is Steve's session-start context for the next session. Close-session is one of two atomic triggers (the other is `zanmai.py memory report`). Rebuild it now from current vault state:
+The briefing file (`zanmai/memory/briefing.md`) is Steve's session-start context for the next session. Close-session is one of two atomic triggers (the other is `zanmai.py memory report`). Rebuild it now from current space state:
 
 ```
-<python_cmd> zanmai/system/scripts/zanmai.py memory briefing <vault>
+<python_cmd> zanmai/system/scripts/zanmai.py memory briefing <space>
 ```
 
-Atomic rebuild, around 30 lines, three sections: current state, open items, gaps and hints. No human input needed, the script reads vault state and synthesises. If this step is skipped, the next session's greet falls back to whatever briefing was there last, possibly outdated.
+Atomic rebuild, around 30 lines, three sections: current state, open items, gaps and hints. No human input needed, the script reads space state and synthesises. If this step is skipped, the next session's greet falls back to whatever briefing was there last, possibly outdated.
 
 The transient workspace `zanmai/temp/` is not cleared here, the session-start hook prunes it (age-based, keeping recent unfinished work). One rule, one place.
 
